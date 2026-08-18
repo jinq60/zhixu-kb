@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Node
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json?*
+
+# Build outputs
+dist
+build
+target
+*.jar
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+!.env.secrets.example
+
+# IDE
+.vscode
+.idea
+*.iml
+
+# Logs
+*.log
+logs
+
+# Runtime data
+uploads
+tmp
+temp
+backups
+project-data
+
+# Legacy archives
+legacy
+
+# Test / coverage
+__tests__
+coverage
+.nyc_output
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,212 @@
+-- =====================================================================
+-- 知序智能知识库系统 - MySQL 初始化脚本（统一 schema）
+-- 在线知识体系整理平台：用户/角色、笔记（采集→OCR→AI整理→大纲→图谱→发布）、
+--       个人知识库问答（RAG）
+-- 数据库：zhixu_kb（UTF-8 全文检索依赖 ngram 解析器，MySQL 8.0）
+-- =====================================================================
+CREATE DATABASE IF NOT EXISTS zhixu_kb CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+USE zhixu_kb;
+
+-- ---------- 用户 ----------
+CREATE TABLE IF NOT EXISTS sys_user (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '用户ID',
+    username VARCHAR(50) NOT NULL UNIQUE COMMENT '用户名',
+    password VARCHAR(100) NOT NULL COMMENT '密码(BCrypt)',
+    email VARCHAR(100) UNIQUE COMMENT '邮箱',
+    avatar VARCHAR(255) COMMENT '头像URL',
+    status TINYINT DEFAULT 1 COMMENT '状态(0禁用 1正常)',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_username (username),
+    INDEX idx_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
+
+CREATE TABLE IF NOT EXISTS sys_role (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '角色ID',
+    role_name VARCHAR(50) NOT NULL COMMENT '角色名称',
+    role_key VARCHAR(50) NOT NULL UNIQUE COMMENT '角色标识',
+    status TINYINT DEFAULT 1 COMMENT '状态(0禁用 1正常)',
+    remark VARCHAR(255) COMMENT '备注',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色表';
+
+CREATE TABLE IF NOT EXISTS sys_user_role (
+    user_id BIGINT NOT NULL COMMENT '用户ID',
+    role_id BIGINT NOT NULL COMMENT '角色ID',
+    PRIMARY KEY (user_id, role_id),
+    FOREIGN KEY (user_id) REFERENCES sys_user(id) ON DELETE CASCADE,
+    FOREIGN KEY (role_id) REFERENCES sys_role(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户角色关联表';
+
+-- ---------- 用户多方式认证绑定 ----------
+CREATE TABLE IF NOT EXISTS sys_user_auth (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '绑定ID',
+    user_id BIGINT NOT NULL COMMENT '用户ID',
+    provider VARCHAR(32) NOT NULL COMMENT '认证方式(password/email_code/sms_code/google/github/qq)',
+    account VARCHAR(128) NOT NULL COMMENT '账号标识(邮箱/手机号/第三方账号ID)',
+    credential VARCHAR(255) COMMENT '预留凭据字段',
+    is_deleted TINYINT DEFAULT 0 COMMENT '是否删除(0否 1是)',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    FOREIGN KEY (user_id) REFERENCES sys_user(id) ON DELETE CASCADE,
+    INDEX idx_user_provider (user_id, provider),
+    INDEX idx_provider_account (provider, account),
+    UNIQUE KEY uk_provider_account (provider, account, is_deleted)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户认证方式绑定表';
+
+-- ---------- 笔记（个人知识库） ----------
+CREATE TABLE IF NOT EXISTS category (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '分类ID',
+    user_id BIGINT NOT NULL COMMENT '所属用户ID',
+    name VARCHAR(100) NOT NULL COMMENT '分类名称',
+    description VARCHAR(255) COMMENT '分类描述',
+    sort_order INT DEFAULT 0 COMMENT '排序号',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_deleted TINYINT DEFAULT 0 COMMENT '是否删除(0否 1是)',
+    FOREIGN KEY (user_id) REFERENCES sys_user(id),
+    INDEX idx_user_id (user_id),
+    UNIQUE KEY uk_user_name (user_id, name, is_deleted)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='笔记分类表';
+
+CREATE TABLE IF NOT EXISTS note (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '笔记ID',
+    user_id BIGINT NOT NULL COMMENT '所属用户ID',
+    category_id BIGINT COMMENT '分类ID',
+    title VARCHAR(255) NOT NULL COMMENT '笔记标题',
+    content MEDIUMTEXT COMMENT '笔记内容(编辑后)',
+    ocr_text MEDIUMTEXT COMMENT 'OCR识别原文',
+    summary TEXT COMMENT '笔记摘要/概览',
+    keywords VARCHAR(255) COMMENT '关键词（逗号分隔）',
+    cover_image VARCHAR(500) COMMENT '封面图/首图',
+    status TINYINT DEFAULT 0 COMMENT '状态(0草稿 1已发布)',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_deleted TINYINT DEFAULT 0 COMMENT '是否删除(0否 1是)',
+    FOREIGN KEY (user_id) REFERENCES sys_user(id),
+    FOREIGN KEY (category_id) REFERENCES category(id) ON DELETE SET NULL,
+    INDEX idx_user_id (user_id),
+    INDEX idx_category_id (category_id),
+    INDEX idx_create_time (create_time),
+    FULLTEXT INDEX ft_content (title, content) WITH PARSER ngram
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='笔记表';
+
+CREATE TABLE IF NOT EXISTS file_info (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '文件ID',
+    note_id BIGINT COMMENT '关联笔记ID',
+    original_name VARCHAR(255) NOT NULL COMMENT '原始文件名',
+    stored_name VARCHAR(255) NOT NULL COMMENT '存储文件名',
+    file_path VARCHAR(500) NOT NULL COMMENT '文件存储路径',
+    file_size BIGINT COMMENT '文件大小(字节)',
+    mime_type VARCHAR(100) COMMENT '文件MIME类型',
+    upload_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
+    FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE,
+    INDEX idx_note_id (note_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件信息表';
+
+CREATE TABLE IF NOT EXISTS note_section (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '章节ID',
+    note_id BIGINT NOT NULL COMMENT '关联笔记ID',
+    parent_id BIGINT COMMENT '父章节ID',
+    title VARCHAR(255) NOT NULL COMMENT '章节标题',
+    content MEDIUMTEXT COMMENT '章节内容',
+    level TINYINT DEFAULT 1 COMMENT '层级深度',
+    sort_order INT DEFAULT 0 COMMENT '排序号',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_deleted TINYINT DEFAULT 0 COMMENT '是否删除(0否1是)',
+    FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES note_section(id) ON DELETE SET NULL,
+    INDEX idx_note_sort (note_id, sort_order),
+    INDEX idx_parent (parent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='笔记章节/段落表';
+
+CREATE TABLE IF NOT EXISTS note_mindmap (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '思维导图ID',
+    note_id BIGINT NOT NULL COMMENT '关联笔记ID',
+    map_type VARCHAR(50) NOT NULL COMMENT '导图类型(xmind/json/image/mermaid)',
+    map_data LONGTEXT COMMENT '导图数据(JSON或mermaid)',
+    map_url VARCHAR(500) COMMENT '导图文件/图片URL',
+    thumbnail_url VARCHAR(500) COMMENT '导图缩略图',
+    version INT DEFAULT 1 COMMENT '版本号',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_note (note_id),
+    FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='思维导图表';
+
+CREATE TABLE IF NOT EXISTS note_structure (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '结构ID',
+    note_id BIGINT NOT NULL COMMENT '关联笔记ID',
+    outline_json LONGTEXT COMMENT '内容大纲(JSON树)',
+    architecture_img_url VARCHAR(500) COMMENT '内容组织架构图URL',
+    updated_by BIGINT COMMENT '最后更新人',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_note (note_id),
+    FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内容组织结构表';
+
+-- ---------- 知识问答（基于个人知识库的 RAG） ----------
+CREATE TABLE IF NOT EXISTS ask_records (
+    id VARCHAR(36) PRIMARY KEY COMMENT '问答ID(UUID)',
+    user_id BIGINT NOT NULL COMMENT '用户ID',
+    question TEXT COMMENT '问题(加密存储)',
+    answer MEDIUMTEXT COMMENT '回答(加密存储)',
+    related_notes TEXT COMMENT '引用笔记JSON',
+    status VARCHAR(20) DEFAULT 'processing' COMMENT '状态(processing/completed)',
+    confidence_level VARCHAR(20) COMMENT '可信度(NORMAL/LOW)',
+    risk_flags TEXT COMMENT '风险标记JSON',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    completed_at DATETIME COMMENT '完成时间',
+    INDEX idx_user_id (user_id),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识问答记录表';
+
+-- ---------- 用户级 AI 配置（多厂商 API Key，加密存储） ----------
+CREATE TABLE IF NOT EXISTS ai_user_config (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '配置ID',
+    user_id BIGINT NOT NULL UNIQUE COMMENT '用户ID',
+    provider VARCHAR(50) DEFAULT 'deepseek' COMMENT '厂商(deepseek/openai/moonshot/zhipu/qwen/siliconflow/custom)',
+    base_url VARCHAR(255) COMMENT '接口地址',
+    api_key VARCHAR(500) COMMENT 'API Key(加密存储)',
+    model VARCHAR(100) COMMENT '模型名称',
+    enabled TINYINT DEFAULT 1 COMMENT '是否启用',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户AI配置表';
+
+-- ---------- 平台 AI 端点（多厂商，管理后台维护） ----------
+CREATE TABLE IF NOT EXISTS ai_endpoints (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '端点ID',
+    base_url VARCHAR(255) NOT NULL COMMENT '接口地址',
+    api_key VARCHAR(500) NOT NULL COMMENT 'API Key(加密存储)',
+    model VARCHAR(100) NOT NULL COMMENT '模型名称',
+    enabled TINYINT DEFAULT 1 COMMENT '是否启用',
+    remark VARCHAR(255) COMMENT '备注',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台AI端点表';
+
+-- ---------- 操作日志 ----------
+CREATE TABLE IF NOT EXISTS operation_log (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '日志ID',
+    user_id BIGINT COMMENT '操作用户ID',
+    operation_type VARCHAR(50) COMMENT '操作类型',
+    operation_desc VARCHAR(255) COMMENT '操作描述',
+    request_method VARCHAR(10) COMMENT '请求方法',
+    request_url VARCHAR(255) COMMENT '请求URL',
+    request_params MEDIUMTEXT COMMENT '请求参数',
+    response_result MEDIUMTEXT COMMENT '响应结果',
+    ip_address VARCHAR(50) COMMENT 'IP地址',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+    INDEX idx_user_id (user_id),
+    INDEX idx_create_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='操作日志表';
+
+-- ---------- 初始数据 ----------
+INSERT INTO sys_role (role_name, role_key, remark) VALUES
+('管理员', 'admin', '系统管理员'),
+('普通用户', 'user', '普通用户')
+ON DUPLICATE KEY UPDATE role_name = VALUES(role_name), remark = VALUES(remark);

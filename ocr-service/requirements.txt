@@ -1,0 +1,14 @@
+# =====================================================================
+# OCR 服务依赖（Docker 容器默认路线：RapidOCR / onnxruntime）
+# 纯 CPU、跨平台稳定（无 Paddle 的 WSL2 SIGILL 兼容问题），模型内置
+# 如需 PaddleOCR 路线（本机或 GPU），使用 requirements-paddle-legacy.txt
+# =====================================================================
+flask==2.3.3
+flask-cors==4.0.0
+gunicorn==23.0.0
+Pillow==10.0.1
+requests==2.31.0
+numpy==1.24.4
+python-dotenv==1.0.1
+opencv-python==4.8.0.76
+rapidocr-onnxruntime==1.3.24

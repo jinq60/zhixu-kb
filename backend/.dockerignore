@@ -1,0 +1,37 @@
+.git
+.gitignore
+.gitattributes
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
+target
+*.jar
+!target/*.jar
+
+# IDE
+.vscode
+.idea
+*.iml
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs
+
+# Runtime data
+uploads
+tmp
+temp
+backups
+
+# Test
+test
+src/test
+
+# OS
+.DS_Store
+Thumbs.db

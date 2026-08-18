@@ -1,0 +1,194 @@
+/* 控制台页面通用布局：笔记管理、分类管理、AI 设置等 */
+
+.console-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.console-hero,
+.panel {
+  background: #ffffff;
+  border: 1px solid #ebeef5;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+
+.console-hero {
+  padding: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.console-hero h1 {
+  font-size: 28px;
+  color: #111827;
+  margin: 12px 0 8px;
+  line-height: 1.25;
+}
+
+.console-hero > div:first-child {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.console-hero p {
+  color: #606266;
+  line-height: 1.7;
+  max-width: 760px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.eyebrow {
+  width: fit-content;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.stat-card {
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid #ebeef5;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stat-label {
+  color: #909399;
+  font-size: 13px;
+}
+
+.stat-value {
+  margin: 10px 0 8px;
+  font-size: 32px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1.2;
+}
+
+.stat-desc {
+  color: #606266;
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.panel {
+  padding: 22px;
+}
+
+.toolbar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.toolbar-heading h2,
+.table-header h2 {
+  margin: 0 0 8px;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.toolbar-heading p,
+.table-header p {
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.toolbar > .el-input,
+.toolbar > .el-select {
+  flex: 1 1 240px;
+  min-width: 180px;
+  max-width: none;
+}
+
+.toolbar > .el-button {
+  flex-shrink: 0;
+}
+
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.table-count {
+  color: #909399;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.pager {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1200px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .console-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .hero-actions {
+    width: 100%;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar > .el-input,
+  .toolbar > .el-select {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .table-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .pager {
+    justify-content: center;
+  }
+}

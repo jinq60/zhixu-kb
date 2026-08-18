@@ -1,0 +1,11 @@
+flask==2.3.3
+flask-cors==4.0.0
+Pillow==10.0.1
+requests==2.31.0
+numpy==1.24.4
+python-dotenv==1.0.1
+opencv-python-headless==4.8.0.76
+
+# Stable Windows CPU combo for this project
+paddlepaddle==2.6.2
+paddleocr==2.7.3

@@ -1,0 +1,42 @@
+# ---------- 环境变量（含密钥，不入库） ----------
+.env.local
+.env.secrets.local
+.env
+!**/.env.example
+
+# ---------- Java ----------
+backend/target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+backend/uploads/images/*
+!backend/uploads/images/.gitkeep
+
+# ---------- Node ----------
+frontend/node_modules/
+frontend/dist/
+admin-frontend/node_modules/
+admin-frontend/dist/
+npm-debug.log*
+
+# ---------- Python ----------
+**/__pycache__/
+*.pyc
+ocr-service/.venv/
+ocr-service/tmp/
+ocr-service/models/
+
+# ---------- IDE ----------
+.idea/
+.vscode/
+*.iml
+
+# ---------- 日志与临时 ----------
+*.log
+tmp/
+
+# ---------- 数据库备份 ----------
+backups/
+
+# ---------- 旧原型代码 ----------
+legacy/

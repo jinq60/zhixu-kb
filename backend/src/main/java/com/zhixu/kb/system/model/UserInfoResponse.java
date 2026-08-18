@@ -1,0 +1,16 @@
+package com.zhixu.kb.system.model;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+import java.util.List;
+
+@Data
+@AllArgsConstructor
+public class UserInfoResponse {
+    private Long id;
+    private String username;
+    private String email;
+    private String avatar;
+    private List<String> roles;
+}

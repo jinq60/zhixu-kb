@@ -1,0 +1,156 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: zhixu-kb
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${DB_URL:jdbc:mysql://localhost:3306/zhixu_kb?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    timeout: 2000ms
+
+  # ---------- SMTP 邮件（QQ 邮箱等） ----------
+  mail:
+    host: ${SMTP_HOST:smtp.qq.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    protocol: smtp
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.zhixu.kb.**.entity
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# ---------- JWT ----------
+jwt:
+  secret: ${JWT_SECRET:}
+  expiration: ${JWT_EXPIRATION:86400000} # 24 hours, milliseconds
+
+security:
+  crypto:
+    aes-key: ${CRYPTO_AES_KEY:}
+
+# ---------- 文件上传（OCR 图片等） ----------
+file:
+  upload:
+    path: ${FILE_UPLOAD_PATH:./uploads/images/}
+    allowed-types:
+      - jpg
+      - jpeg
+      - png
+      - txt
+      - md
+      - markdown
+      - pdf
+      - docx
+    max-size: 20971520 # 20MB
+
+# ---------- OCR 服务（Flask） ----------
+ocr:
+  service:
+    url: ${OCR_SERVICE_URL:http://localhost:5001}
+    timeout: 60000 # milliseconds
+    engine: auto
+    fallback-engine: paddle
+
+# ---------- AI 引擎（云端 OpenAI 兼容 API，多厂商） ----------
+ai:
+  engine-type: ${AI_ENGINE_TYPE:api}
+  endpoints-json: ${AI_ENDPOINTS:}
+  api:
+    base-url: ${AI_API_BASE_URL:https://api.deepseek.com}
+    api-key: ${AI_API_KEY:}
+    model: ${AI_MODEL:deepseek-chat}
+    timeout-ms: 120000
+    max-retries: 3
+
+# ---------- 应用级参数（限流/监控/缓存） ----------
+app:
+  rate-limit:
+    per-minute: 120
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5175}
+  monitor:
+    enabled: true
+    slow-request-ms: 1000
+    resource-threshold-percent: 80
+    resource-check-interval-ms: 30000
+    alert-cooldown-ms: 300000
+    alert-retention: 200
+  admin:
+    bootstrap-key: ${ADMIN_BOOTSTRAP_KEY:}
+    bootstrap-first-admin-only: true
+  oauth:
+    frontend-callback: ${OAUTH_FRONTEND_CALLBACK:http://localhost:5173/oauth-callback}
+    github:
+      enabled: ${OAUTH_GITHUB_ENABLED:false}
+      client-id: ${OAUTH_GITHUB_CLIENT_ID:}
+      client-secret: ${OAUTH_GITHUB_CLIENT_SECRET:}
+      redirect-uri: ${OAUTH_GITHUB_REDIRECT_URI:http://localhost:8080/api/auth/oauth/github/callback}
+    google:
+      enabled: ${OAUTH_GOOGLE_ENABLED:false}
+      client-id: ${OAUTH_GOOGLE_CLIENT_ID:}
+      client-secret: ${OAUTH_GOOGLE_CLIENT_SECRET:}
+      redirect-uri: ${OAUTH_GOOGLE_REDIRECT_URI:http://localhost:8080/api/auth/oauth/google/callback}
+    qq:
+      enabled: ${OAUTH_QQ_ENABLED:false}
+      client-id: ${OAUTH_QQ_CLIENT_ID:}
+      client-secret: ${OAUTH_QQ_CLIENT_SECRET:}
+      redirect-uri: ${OAUTH_QQ_REDIRECT_URI:http://localhost:8080/api/auth/oauth/qq/callback}
+
+# ---------- Neo4j 知识图谱 ----------
+neo4j:
+  uri: ${NEO4J_URI:bolt://localhost:7687}
+  username: ${NEO4J_USERNAME:neo4j}
+  password: ${NEO4J_PASSWORD:neo4j}
+  enabled: ${NEO4J_ENABLED:true}
+
+logging:
+  level:
+    com.zhixu.kb: info
+    org.springframework.security: info
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
