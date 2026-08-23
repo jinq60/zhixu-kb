@@ -22,6 +22,12 @@
         <jqwik.version>1.7.4</jqwik.version>
         <poi.version>5.2.5</poi.version>
         <neo4j-driver.version>4.4.15</neo4j-driver.version>
+        <!-- 依赖加固：覆盖 Boot 2.7.18（EOL）管理的版本，修复已知 CVE
+             （Spring 5.3.31→5.3.39、Tomcat 9.0.83→9.0.98、SnakeYAML 1.30→1.33、Spring Security 5.7.11→5.7.12） -->
+        <spring-framework.version>5.3.39</spring-framework.version>
+        <tomcat.version>9.0.98</tomcat.version>
+        <snakeyaml.version>1.33</snakeyaml.version>
+        <spring-security.version>5.7.12</spring-security.version>
     </properties>
 
     <dependencies>
@@ -74,6 +80,13 @@
             <groupId>org.neo4j.driver</groupId>
             <artifactId>neo4j-java-driver</artifactId>
             <version>${neo4j-driver.version}</version>
+        </dependency>
+
+        <!-- Milvus 向量数据库 SDK（RAG 语义检索） -->
+        <dependency>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>2.4.10</version>
         </dependency>
 
         <!-- JWT -->
@@ -141,6 +154,13 @@
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
             <version>2.0.31</version>
+        </dependency>
+
+        <!-- OWASP Java HTML Sanitizer：公开笔记 HTML 白名单清洗（防存储型 XSS） -->
+        <dependency>
+            <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
+            <artifactId>owasp-java-html-sanitizer</artifactId>
+            <version>20240325.1</version>
         </dependency>
 
         <!-- Spring Boot Actuator -->

@@ -21,6 +21,9 @@ public class AiUserConfigEntity {
     private String baseUrl;
     private String apiKey;
     private String model;
+    private String embeddingBaseUrl;
+    private String embeddingApiKey;
+    private String embeddingModel;
     private Integer enabled;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

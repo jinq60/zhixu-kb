@@ -11,6 +11,8 @@ public class AiEndpointSaveRequest {
     private String baseUrl;
     private String apiKey;
     private String model;
+    /** 向量化模型（可选） */
+    private String embeddingModel;
     private Boolean enabled;
     private String remark;
 }

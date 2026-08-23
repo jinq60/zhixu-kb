@@ -39,7 +39,7 @@ public class AskController {
 
     @PostMapping
     public Result<AskRecord> ask(@Valid @RequestBody AskRequest request) {
-        return Result.success(askService.ask(SecurityUtils.getUserId(), request.getQuestion()));
+        return Result.success(askService.ask(SecurityUtils.getUserId(), request.getQuestion(), request.getConversationId()));
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_PLAIN_VALUE)
@@ -47,9 +47,10 @@ public class AskController {
         Long userId = SecurityUtils.getUserId();
         StreamingResponseBody body = outputStream -> {
             try {
-                askService.askStreaming(userId, request.getQuestion(), chunk -> {
+                askService.askStreaming(userId, request.getQuestion(), request.getConversationId(), chunk -> {
                     try {
-                        outputStream.write(chunk.getBytes(StandardCharsets.UTF_8));
+                        // SSE 格式：前端按 "data: <内容>\n" 解析；非 JSON 内容由前端原文输出
+                        outputStream.write(("data: " + chunk + "\n\n").getBytes(StandardCharsets.UTF_8));
                         outputStream.flush();
                     } catch (Exception ex) {
                         if (isClientAbort(ex)) {

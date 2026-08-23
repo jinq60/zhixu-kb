@@ -22,12 +22,14 @@ class NoteRetrievalServiceTest {
 
     @Mock
     private NoteMapper noteMapper;
+    @Mock
+    private com.zhixu.kb.note.service.NoteEmbeddingService noteEmbeddingService;
 
     private NoteRetrievalService retrievalService;
 
     @BeforeEach
     void setUp() {
-        retrievalService = new NoteRetrievalService(noteMapper);
+        retrievalService = new NoteRetrievalService(noteMapper, noteEmbeddingService);
     }
 
     private Note note(Long id, String title, String content, String summary) {

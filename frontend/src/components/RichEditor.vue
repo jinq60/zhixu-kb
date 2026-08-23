@@ -1,8 +1,9 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '@wangeditor/editor/dist/css/style.css'
-import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
+import { createEditor, createToolbar, type IDomEditor } from '@wangeditor/editor'
 import { ElMessage } from 'element-plus'
+import DOMPurify from 'dompurify'
 import { uploadFile } from '../api/file'
 
 const props = defineProps<{
@@ -14,10 +15,14 @@ const emits = defineEmits<{
   (e: 'update:modelValue', val: string): void
 }>()
 
-const editorRef = shallowRef<any>()
+const editorRef = ref<IDomEditor | null>(null)
 const hostRef = ref<HTMLElement | null>(null)
+const toolbarRef = ref<HTMLElement | null>(null)
+const editorContainerRef = ref<HTMLElement | null>(null)
 const fallbackFullscreen = ref(false)
 const nativeFullscreen = ref(false)
+
+
 
 const getFileContentPath = (src?: string | null): string | null => {
   if (!src) return null
@@ -37,8 +42,18 @@ const getFileContentPath = (src?: string | null): string | null => {
 const rewriteImageUrls = (html: string, appendToken: boolean) => {
   if (!html || typeof document === 'undefined') return html
 
+  // 先通过 DOMPurify 清洗，移除事件处理器等潜在 XSS 载体
+  const safeHtml = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
+      'p', 'br', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'ul', 'ol', 'li', 'strong', 'b', 'em', 'i', 'u', 's', 'strike',
+      'a', 'img', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'pre', 'code', 'blockquote'
+    ],
+    ALLOWED_ATTR: ['src', 'alt', 'href', 'title', 'target', 'class', 'style', 'data-*']
+  })
+
   const root = document.createElement('div')
-  root.innerHTML = html
+  root.innerHTML = safeHtml
 
   root.querySelectorAll('img[src]').forEach((img) => {
     const current = img.getAttribute('src')
@@ -53,27 +68,32 @@ const rewriteImageUrls = (html: string, appendToken: boolean) => {
 const toEditorHtml = (html?: string) => rewriteImageUrls(html || '', true)
 const toStorageHtml = (html?: string) => rewriteImageUrls(html || '', false)
 
-const valueHtml = ref(toEditorHtml(props.modelValue || ''))
+const onChange = (editor?: IDomEditor) => {
+  if (destroyed) return
+  // 编辑器销毁过程中 wangeditor 可能触发无参 change 事件，忽略之
+  if (!editor) return
+  emits('update:modelValue', toStorageHtml(editor.getHtml()))
+}
+
+/** 应用内容：统一使用 setHtml（wangeditor 内部会处理大文档，避免自行分片破坏标签结构） */
+let destroyed = false
+const applyContent = (html: string) => {
+  const editor = editorRef.value
+  if (!editor || destroyed) return
+  editor.setHtml(html)
+}
 
 watch(
   () => props.modelValue,
   (val) => {
-    const next = toEditorHtml(val || '')
-    if (next !== valueHtml.value) {
-      valueHtml.value = next
+    const html = toEditorHtml(val || '')
+    const editor = editorRef.value
+    if (editor && html !== editor.getHtml()) {
+      applyContent(html)
     }
-  }
+  },
+  { immediate: true }
 )
-
-const onChange = (editor: any) => {
-  const html = editor.getHtml()
-  valueHtml.value = html
-  emits('update:modelValue', toStorageHtml(html))
-}
-
-const handleCreated = (editor: any) => {
-  editorRef.value = editor
-}
 
 const editorStyle = computed(() => {
   if (nativeFullscreen.value || fallbackFullscreen.value) {
@@ -151,11 +171,29 @@ const onKeydown = (e: KeyboardEvent) => {
 }
 
 onMounted(() => {
+  const container = editorContainerRef.value
+  if (!container) return
+  const editor = createEditor({
+    selector: container,
+    html: '',
+    config: editorConfig.value,
+    mode: 'default'
+  })
+  editorRef.value = editor
+  editor.on('change', onChange)
+  if (toolbarRef.value) {
+    createToolbar({ editor, selector: toolbarRef.value, config: toolbarConfig })
+  }
+  const initial = toEditorHtml(props.modelValue || '')
+  if (initial) {
+    applyContent(initial)
+  }
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('fullscreenchange', syncNativeFullscreen)
 })
 
 onBeforeUnmount(() => {
+  destroyed = true
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('fullscreenchange', syncNativeFullscreen)
   document.body.style.overflow = ''
@@ -210,19 +248,12 @@ const editorConfig = computed(() => ({
     :class="{ 'is-fallback-fullscreen': fallbackFullscreen, 'is-fill-height': fillHeight }"
   >
     <div class="toolbar-wrap">
-      <Toolbar :editor="editorRef" :default-config="toolbarConfig" style="border-bottom: 1px solid #ebeef5" />
+      <div ref="toolbarRef" class="rich-toolbar"></div>
       <button class="fullscreen-btn" type="button" @click="toggleFullscreen">
         {{ isFullscreen ? '\u9000\u51fa\u5168\u5c4f' : '\u5168\u5c4f' }}
       </button>
     </div>
-
-    <Editor
-      v-model="valueHtml"
-      :style="editorStyle"
-      :default-config="editorConfig"
-      @onCreated="handleCreated"
-      @onChange="onChange"
-    />
+    <div ref="editorContainerRef" class="rich-editor-body" :style="editorStyle"></div>
   </div>
 </template>
 
@@ -238,6 +269,14 @@ const editorConfig = computed(() => ({
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.rich-toolbar {
+  position: relative;
+}
+
+.rich-editor-body {
+  position: relative;
 }
 
 .toolbar-wrap {
@@ -270,6 +309,10 @@ const editorConfig = computed(() => ({
   z-index: 3000;
   border-radius: 0;
   border: none;
+}
+
+:deep(.rich-editor-body) {
+  border-top: 1px solid #ebeef5;
 }
 
 :deep(button[data-menu-key='fullScreen']) {

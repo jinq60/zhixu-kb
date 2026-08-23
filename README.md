@@ -179,12 +179,13 @@ schtasks /Create /TN "zhixu-mysql-backup" /SC DAILY /ST 03:00 /TR "powershell -E
 - **AI Key 轮换**：仓库内多处保存真实 Key（.env / AI_ENDPOINTS），
   泄露后请立即在厂商控制台轮换
 
-### 认证与多用户（免登录模式）
+### 认证与多用户
 
-- **免登录**：打开即进入工作台，无需账号密码。首次访问自动生成本机设备身份并注册为访客用户
-- **数据隔离**：不同身份（设备）拥有独立的数据空间——笔记、问答、图谱互不干扰（后端按用户隔离，身份仅存于本机浏览器 localStorage）
-- **身份管理**：点击侧边栏底部当前身份即可切换 / 新建 / 重命名身份；昵称同步保存到后端
-- 原有登录/注册接口保留（`/api/auth/login`、`/api/auth/register` 携带 `adminBootstrapKey` 可创建管理员），供管理员引导使用
+- **登录方式**：账号密码（账号不存在时自动注册）、邮箱验证码、短信验证码、GitHub/Google/QQ OAuth 登录
+- **数据隔离**：不同用户拥有独立的数据空间——笔记、问答、图谱互不干扰（后端按用户隔离）
+- **注册限流**：单 IP 每日自动注册次数上限（`app.registration.max-per-day`，默认 10），防刷号
+- **管理员**：注册时携带 `ADMIN_BOOTSTRAP_KEY` 创建管理员，或由管理员在管理后台变更角色
+- **安全**：JWT 认证、登出即撤销 Token、验证码错误次数限制、OAuth state 防 CSRF + 一次性 code 换发
 
 ### AI 模型：云端 API（平台默认 + 用户自配）
 

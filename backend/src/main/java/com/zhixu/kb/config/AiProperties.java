@@ -11,6 +11,7 @@ public class AiProperties {
     private String engineType = "api";
     private String endpointsJson;
     private Api api = new Api();
+    private Embedding embedding = new Embedding();
 
     public String getEngineType() {
         return engineType;
@@ -40,6 +41,14 @@ public class AiProperties {
 
     public void setApi(Api api) {
         this.api = api;
+    }
+
+    public Embedding getEmbedding() {
+        return embedding;
+    }
+
+    public void setEmbedding(Embedding embedding) {
+        this.embedding = embedding;
     }
 
     public static class Api {
@@ -87,6 +96,39 @@ public class AiProperties {
 
         public void setMaxRetries(Integer maxRetries) {
             this.maxRetries = maxRetries;
+        }
+    }
+
+    /**
+     * 向量化（RAG embedding）配置：复用端点池的 baseUrl + apiKey 调 /embeddings。
+     */
+    public static class Embedding {
+        private boolean enabled = true;
+        private String model = "openai/text-embedding-3-small";
+        private int maxChunkChars = 2000;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+
+        public int getMaxChunkChars() {
+            return maxChunkChars;
+        }
+
+        public void setMaxChunkChars(int maxChunkChars) {
+            this.maxChunkChars = maxChunkChars;
         }
     }
 }

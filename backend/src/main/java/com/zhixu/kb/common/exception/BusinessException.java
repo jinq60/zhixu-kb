@@ -19,6 +19,12 @@ public class BusinessException extends RuntimeException {
 
     public BusinessException(String code, String message) {
         super(message);
-        this.code = ResultCode.BAD_REQUEST.getCode();
+        Integer parsed = null;
+        try {
+            parsed = Integer.valueOf(code);
+        } catch (NumberFormatException ignored) {
+            // 非数字错误码按 BAD_REQUEST 处理
+        }
+        this.code = parsed != null ? parsed : ResultCode.BAD_REQUEST.getCode();
     }
 }

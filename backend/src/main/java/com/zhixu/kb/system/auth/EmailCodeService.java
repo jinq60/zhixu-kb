@@ -12,14 +12,19 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.Iterator;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 邮箱验证码服务：生成、发送、校验。
- * 优先使用 Redis，未连接 Redis 时降级为内存存储。
+ * 优先使用 Redis，Redis 故障时降级为内存存储（带 TTL 与惰性清理）。
+ * 安全加固：SecureRandom 生成、恒定时间比对、单验证码失败次数上限、日志脱敏。
  */
 @Slf4j
 @Service
@@ -31,7 +36,10 @@ public class EmailCodeService {
     private static final String BIND_REDIS_SEND_PREFIX = "auth:email:bind:send:";
     private static final Duration CODE_TTL = Duration.ofMinutes(5);
     private static final Duration RESEND_INTERVAL = Duration.ofSeconds(60);
-    private static final Random RANDOM = new Random();
+    private static final int CODE_LENGTH = 6;
+    private static final int MAX_VERIFY_ATTEMPTS = 5;
+    private static final int MEMORY_CLEANUP_THRESHOLD = 1000;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final StringRedisTemplate redisTemplate;
     private final JavaMailSender mailSender;
@@ -40,6 +48,7 @@ public class EmailCodeService {
     private final Map<String, Long> memorySendTime = new ConcurrentHashMap<>();
     private final Map<String, CodeEntry> bindMemoryStore = new ConcurrentHashMap<>();
     private final Map<String, Long> bindMemorySendTime = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> verifyAttempts = new ConcurrentHashMap<>();
 
     private static final class CodeEntry {
         private final String code;
@@ -61,54 +70,72 @@ public class EmailCodeService {
 
     public String send(String email) {
         return doSend(email, REDIS_PREFIX, REDIS_SEND_PREFIX, memoryStore, memorySendTime,
+                "login:" + email,
                 "知序智能知识库 - 登录验证码", "您的验证码是：%s，5 分钟内有效，请勿泄露给任何人。");
     }
 
     public String sendBindCode(String email) {
         return doSend(email, BIND_REDIS_PREFIX, BIND_REDIS_SEND_PREFIX, bindMemoryStore, bindMemorySendTime,
+                "bind:" + email,
                 "知序智能知识库 - 邮箱绑定验证码", "您的邮箱绑定验证码是：%s，5 分钟内有效，请勿泄露给任何人。");
     }
 
     public void verify(String email, String code) {
-        doVerify(email, code, REDIS_PREFIX, memoryStore);
+        doVerify(email, code, REDIS_PREFIX, memoryStore, "login:" + email);
     }
 
     public void verifyBindCode(String email, String code) {
-        doVerify(email, code, BIND_REDIS_PREFIX, bindMemoryStore);
+        doVerify(email, code, BIND_REDIS_PREFIX, bindMemoryStore, "bind:" + email);
     }
 
     private String doSend(String email, String redisPrefix, String redisSendPrefix,
                           Map<String, CodeEntry> storeMap, Map<String, Long> sendMap,
+                          String attemptsKey,
                           String subject, String bodyTemplate) {
         if (email == null || !email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$")) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "邮箱格式不正确");
         }
         checkResend(email, redisSendPrefix, sendMap);
+        if (mailSender == null || !StringUtils.hasText(mailUsername)) {
+            log.warn("SMTP 未配置，邮箱验证码功能不可用 email={}", maskEmail(email));
+            throw new BusinessException(ResultCode.SERVER_ERROR, "邮件服务未配置，请联系管理员");
+        }
         String code = generateCode();
+        // 新验证码发放即重置失败计数，避免旧码的错误尝试把新码也锁死
+        verifyAttempts.remove(attemptsKey);
         store(email, code, redisPrefix, storeMap);
-        sendMap.put(email, System.currentTimeMillis());
-        if (redisTemplate != null) {
-            redisTemplate.opsForValue().set(redisSendPrefix + email, String.valueOf(System.currentTimeMillis()), RESEND_INTERVAL);
+        long now = System.currentTimeMillis();
+        if (!redisSet(redisSendPrefix + email, String.valueOf(now), RESEND_INTERVAL)) {
+            sendMap.put(email, now);
         }
-        if (mailSender != null && StringUtils.hasText(mailUsername)) {
-            sendRealEmail(email, code, subject, bodyTemplate);
-        } else {
-            log.info("邮箱验证码已生成（SMTP 未配置，仅日志输出）email={} code={}", email, code);
-        }
+        sendRealEmail(email, code, subject, bodyTemplate);
+        log.info("邮箱验证码已发送 email={}", maskEmail(email));
         return code;
     }
 
-    private void doVerify(String email, String code, String redisPrefix, Map<String, CodeEntry> storeMap) {
+    private void doVerify(String email, String code, String redisPrefix,
+                          Map<String, CodeEntry> storeMap, String attemptsKey) {
         if (email == null || code == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "邮箱或验证码不能为空");
+        }
+        // 防内存无限增长：超出阈值时整体清空（计数仅用于限错，清空只影响极端攻击场景）
+        if (verifyAttempts.size() > MEMORY_CLEANUP_THRESHOLD * 10) {
+            verifyAttempts.clear();
+        }
+        AtomicInteger attempts = verifyAttempts.computeIfAbsent(attemptsKey, k -> new AtomicInteger(0));
+        if (attempts.get() >= MAX_VERIFY_ATTEMPTS) {
+            remove(email, redisPrefix, storeMap);
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
         }
         String stored = fetch(email, redisPrefix, storeMap);
         if (stored == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码已过期，请重新获取");
         }
-        if (!stored.equalsIgnoreCase(code)) {
+        if (!constantTimeEquals(stored, code)) {
+            attempts.incrementAndGet();
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误");
         }
+        verifyAttempts.remove(attemptsKey);
         remove(email, redisPrefix, storeMap);
     }
 
@@ -120,20 +147,22 @@ public class EmailCodeService {
             message.setSubject(subject);
             message.setText(String.format(bodyTemplate, code));
             mailSender.send(message);
-            log.info("邮件已发送 email={} subject={}", email, subject);
         } catch (MailException e) {
-            log.error("发送邮件失败 email={}", email, e);
+            log.error("发送邮件失败 email={}", maskEmail(email), e);
             throw new BusinessException(ResultCode.SERVER_ERROR, "邮件发送失败，请检查 SMTP 配置");
         }
     }
 
     private void checkResend(String email, String redisSendPrefix, Map<String, Long> sendMap) {
         if (redisTemplate != null) {
-            Boolean exists = redisTemplate.hasKey(redisSendPrefix + email);
-            if (Boolean.TRUE.equals(exists)) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
+            try {
+                Boolean exists = redisTemplate.hasKey(redisSendPrefix + email);
+                if (Boolean.TRUE.equals(exists)) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
+                }
+            } catch (Exception e) {
+                log.warn("Redis 检查发送频率失败，降级内存判断");
             }
-            return;
         }
         Long last = sendMap.get(email);
         if (last != null && System.currentTimeMillis() - last < RESEND_INTERVAL.toMillis()) {
@@ -142,16 +171,19 @@ public class EmailCodeService {
     }
 
     private void store(String email, String code, String redisPrefix, Map<String, CodeEntry> storeMap) {
-        if (redisTemplate != null) {
-            redisTemplate.opsForValue().set(redisPrefix + email, code, CODE_TTL);
+        if (redisSet(redisPrefix + email, code, CODE_TTL)) {
             return;
         }
+        cleanupIfNeeded(storeMap);
         storeMap.put(email, new CodeEntry(code, System.currentTimeMillis() + CODE_TTL.toMillis()));
     }
 
     private String fetch(String email, String redisPrefix, Map<String, CodeEntry> storeMap) {
         if (redisTemplate != null) {
-            return redisTemplate.opsForValue().get(redisPrefix + email);
+            String value = redisGet(redisPrefix + email);
+            if (value != null) {
+                return value;
+            }
         }
         CodeEntry entry = storeMap.get(email);
         if (entry == null) {
@@ -166,17 +198,77 @@ public class EmailCodeService {
 
     private void remove(String email, String redisPrefix, Map<String, CodeEntry> storeMap) {
         if (redisTemplate != null) {
-            redisTemplate.delete(redisPrefix + email);
-            return;
+            try {
+                redisTemplate.delete(redisPrefix + email);
+            } catch (Exception ignored) {
+            }
         }
         storeMap.remove(email);
     }
 
+    private boolean redisSet(String key, String value, Duration ttl) {
+        if (redisTemplate == null) {
+            return false;
+        }
+        try {
+            redisTemplate.opsForValue().set(key, value, ttl);
+            return true;
+        } catch (Exception e) {
+            log.warn("Redis 写入失败，验证码降级为内存存储");
+            return false;
+        }
+    }
+
+    private String redisGet(String key) {
+        if (redisTemplate == null) {
+            return null;
+        }
+        try {
+            return redisTemplate.opsForValue().get(key);
+        } catch (Exception e) {
+            log.warn("Redis 读取失败，验证码降级为内存存储");
+            return null;
+        }
+    }
+
+    private void cleanupIfNeeded(Map<String, CodeEntry> storeMap) {
+        if (storeMap.size() <= MEMORY_CLEANUP_THRESHOLD) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<String, CodeEntry>> it = storeMap.entrySet().iterator();
+        while (it.hasNext()) {
+            if (now > it.next().getValue().expiresAt) {
+                it.remove();
+            }
+        }
+    }
+
     private String generateCode() {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 6; i++) {
-            sb.append(RANDOM.nextInt(10));
+        StringBuilder sb = new StringBuilder(CODE_LENGTH);
+        for (int i = 0; i < CODE_LENGTH; i++) {
+            sb.append(SECURE_RANDOM.nextInt(10));
         }
         return sb.toString();
+    }
+
+    private boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String maskEmail(String email) {
+        if (!StringUtils.hasText(email) || !email.contains("@")) {
+            return "***";
+        }
+        int at = email.indexOf('@');
+        String local = email.substring(0, at);
+        String domain = email.substring(at);
+        if (local.length() <= 2) {
+            return local.charAt(0) + "***" + domain;
+        }
+        return local.substring(0, 2) + "***" + domain;
     }
 }

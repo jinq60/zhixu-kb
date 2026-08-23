@@ -36,7 +36,9 @@ public class AiApiPool {
     }
 
     /**
-     * 从数据库加载端点（管理后台维护）。数据库为空时保留静态配置端点。
+     * 从数据库加载端点（管理后台维护）。数据库为空（全部删除/停用）时
+     * 回退到静态配置端点：确保管理后台停用/下线泄露 Key 的操作能真正生效，
+     * 且系统始终有可用端点来源。
      */
     public synchronized void refreshFromDb(List<AiEndpointEntity> enabledEntities) {
         if (enabledEntities != null && !enabledEntities.isEmpty()) {
@@ -44,9 +46,15 @@ public class AiApiPool {
             cursor.set(0);
             for (AiEndpointEntity entity : enabledEntities) {
                 endpoints.add(new Endpoint(entity.getId(), entity.getBaseUrl().trim(),
-                        entity.getApiKey(), entity.getModel()));
+                        entity.getApiKey(), entity.getModel(),
+                        entity.getEmbeddingModel() == null ? null : entity.getEmbeddingModel().trim()));
             }
             log.info("AiApiPool refreshed from DB: {} endpoint(s)", endpoints.size());
+        } else {
+            endpoints.clear();
+            cursor.set(0);
+            loadFromStaticConfig();
+            log.info("AiApiPool DB endpoint list empty, fallback to static config: {} endpoint(s)", endpoints.size());
         }
     }
 
@@ -62,7 +70,8 @@ public class AiApiPool {
                         continue;
                     }
                     staticEndpoints.add(new Endpoint(null, entry.getBaseUrl().trim(), entry.getApiKey().trim(),
-                            StringUtils.hasText(entry.getModel()) ? entry.getModel().trim() : "deepseek-chat"));
+                            StringUtils.hasText(entry.getModel()) ? entry.getModel().trim() : "deepseek-chat",
+                            null));
                 }
             } catch (Exception ex) {
                 log.warn("AI_ENDPOINTS parse failed: {}", ex.getMessage());
@@ -75,7 +84,7 @@ public class AiApiPool {
             String model = aiProperties.getApi().getModel();
             if (StringUtils.hasText(baseUrl) && StringUtils.hasText(apiKey)) {
                 staticEndpoints.add(new Endpoint(null, baseUrl.trim(), apiKey.trim(),
-                        StringUtils.hasText(model) ? model.trim() : "deepseek-chat"));
+                        StringUtils.hasText(model) ? model.trim() : "deepseek-chat", null));
             }
         }
         endpoints.addAll(staticEndpoints);
@@ -83,7 +92,9 @@ public class AiApiPool {
     }
 
     /**
-     * 选择当前可用端点（轮询 + 跳过冷却）。
+     * 选择当前可用端点（主备模式）：
+     * 始终优先下标靠前（配置中的主端点）的未冷却端点；
+     * 仅当主端点失败进入冷却（60s）时才回退到备用端点，避免不同模型轮询导致效果不稳定。
      */
     public Endpoint select() {
         int size = endpoints.size();
@@ -91,17 +102,15 @@ public class AiApiPool {
             return null;
         }
         long now = System.currentTimeMillis();
-        int start = Math.floorMod(cursor.getAndIncrement(), size);
         for (int i = 0; i < size; i++) {
-            int index = (start + i) % size;
-            Endpoint endpoint = endpoints.get(index);
+            Endpoint endpoint = endpoints.get(i);
             if (!endpoint.isCooldown(now)) {
                 endpoint.touch(now);
                 return endpoint;
             }
         }
-        // 全部冷却：回退到起始端点（强制重试）
-        Endpoint fallback = endpoints.get(start);
+        // 全部冷却：回退到主端点（强制重试）
+        Endpoint fallback = endpoints.get(0);
         fallback.touch(now);
         return fallback;
     }
@@ -146,6 +155,13 @@ public class AiApiPool {
     }
 
     /**
+     * 当前端点快照（向量化服务按顺序探测各端点的 embedding 能力时使用）。
+     */
+    public List<Endpoint> listEndpoints() {
+        return new java.util.ArrayList<>(endpoints);
+    }
+
+    /**
      * AI 端点。
      */
     public static class Endpoint {
@@ -153,14 +169,16 @@ public class AiApiPool {
         private final String baseUrl;
         private final String apiKey;
         private final String model;
+        private final String embeddingModel;
         private volatile long cooldownUntilMs = 0L;
         private volatile long lastUsedMs = 0L;
 
-        Endpoint(Long dbId, String baseUrl, String apiKey, String model) {
+        Endpoint(Long dbId, String baseUrl, String apiKey, String model, String embeddingModel) {
             this.dbId = dbId;
             this.baseUrl = baseUrl;
             this.apiKey = apiKey;
             this.model = model;
+            this.embeddingModel = embeddingModel;
         }
 
         boolean isCooldown(long now) {
@@ -193,6 +211,10 @@ public class AiApiPool {
 
         public String getModel() {
             return model;
+        }
+
+        public String getEmbeddingModel() {
+            return embeddingModel;
         }
 
         public long getLastUsedMs() {

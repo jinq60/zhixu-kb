@@ -157,11 +157,75 @@ CREATE TABLE IF NOT EXISTS ask_records (
     status VARCHAR(20) DEFAULT 'processing' COMMENT '状态(processing/completed)',
     confidence_level VARCHAR(20) COMMENT '可信度(NORMAL/LOW)',
     risk_flags TEXT COMMENT '风险标记JSON',
+    conversation_id VARCHAR(36) COMMENT '会话ID(多轮对话上下文)',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     completed_at DATETIME COMMENT '完成时间',
     INDEX idx_user_id (user_id),
-    INDEX idx_created_at (created_at)
+    INDEX idx_created_at (created_at),
+    INDEX idx_conversation (user_id, conversation_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识问答记录表';
+
+-- ---------- 笔记向量块（RAG 向量检索；每篇可多块，支持后续分块策略） ----------
+CREATE TABLE IF NOT EXISTS note_embedding_chunk (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '块ID',
+    note_id BIGINT NOT NULL COMMENT '笔记ID',
+    user_id BIGINT NOT NULL COMMENT '用户ID(隔离)',
+    chunk_index INT DEFAULT 0 COMMENT '块序号',
+    chunk_text TEXT COMMENT '块文本(用于溯源/展示)',
+    vector BLOB COMMENT 'embedding 向量(float32 数组)',
+    dimension INT DEFAULT 0 COMMENT '向量维度',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_user_note (user_id, note_id),
+    FOREIGN KEY (note_id) REFERENCES note(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='笔记向量块表';
+
+-- ---------- 文档处理状态机（上传→解析→清洗→切割→向量化，全部异步可重试可恢复） ----------
+CREATE TABLE IF NOT EXISTS document_process_task (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '任务ID',
+    user_id BIGINT NOT NULL COMMENT '用户ID',
+    note_id BIGINT NOT NULL COMMENT '关联笔记ID',
+    file_id BIGINT COMMENT '关联文件ID',
+    file_name VARCHAR(255) COMMENT '文件名',
+    status VARCHAR(20) DEFAULT 'PENDING' COMMENT 'PENDING/PARSING/CLEANING/CHUNKING/EMBEDDING/COMPLETED/FAILED',
+    current_stage VARCHAR(20) DEFAULT 'PENDING' COMMENT '当前阶段',
+    progress INT DEFAULT 0 COMMENT '进度0-100',
+    fail_reason TEXT COMMENT '失败原因',
+    retry_count INT DEFAULT 0 COMMENT '已重试次数',
+    max_retry INT DEFAULT 5 COMMENT '最大重试次数',
+    parsed_text MEDIUMTEXT COMMENT '解析后的纯文本(阶段检查点)',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_user_status (user_id, status),
+    INDEX idx_status_update (status, update_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档处理主任务表';
+
+CREATE TABLE IF NOT EXISTS clean_chunk_task (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '明细ID',
+    task_id BIGINT NOT NULL COMMENT '主任务ID',
+    chunk_index INT NOT NULL COMMENT '粗切序号',
+    raw_content MEDIUMTEXT COMMENT '原始粗切内容',
+    cleaned_content MEDIUMTEXT COMMENT 'LLM清洗后内容',
+    status VARCHAR(20) DEFAULT 'PENDING' COMMENT 'PENDING/PROCESSING/SUCCESS/FAILED',
+    retry_count INT DEFAULT 0,
+    error_msg TEXT,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_task_status (task_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM清洗明细表';
+
+CREATE TABLE IF NOT EXISTS embed_chunk_task (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '明细ID',
+    task_id BIGINT NOT NULL COMMENT '主任务ID',
+    chunk_index INT NOT NULL COMMENT '最终切割序号',
+    content MEDIUMTEXT COMMENT '待向量化文本',
+    status VARCHAR(20) DEFAULT 'PENDING' COMMENT 'PENDING/SUCCESS/FAILED',
+    milvus_id VARCHAR(64) COMMENT 'Milvus写入ID(可选)',
+    retry_count INT DEFAULT 0,
+    error_msg TEXT,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_task_status (task_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='向量化明细表';
 
 -- ---------- 用户级 AI 配置（多厂商 API Key，加密存储） ----------
 CREATE TABLE IF NOT EXISTS ai_user_config (
@@ -171,6 +235,9 @@ CREATE TABLE IF NOT EXISTS ai_user_config (
     base_url VARCHAR(255) COMMENT '接口地址',
     api_key VARCHAR(500) COMMENT 'API Key(加密存储)',
     model VARCHAR(100) COMMENT '模型名称',
+    embedding_base_url VARCHAR(255) COMMENT '向量化接口地址(可选，默认回落平台端点)',
+    embedding_api_key VARCHAR(500) COMMENT '向量化API Key(加密存储，可选)',
+    embedding_model VARCHAR(100) COMMENT '向量化模型(可选)',
     enabled TINYINT DEFAULT 1 COMMENT '是否启用',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -183,6 +250,7 @@ CREATE TABLE IF NOT EXISTS ai_endpoints (
     base_url VARCHAR(255) NOT NULL COMMENT '接口地址',
     api_key VARCHAR(500) NOT NULL COMMENT 'API Key(加密存储)',
     model VARCHAR(100) NOT NULL COMMENT '模型名称',
+    embedding_model VARCHAR(100) COMMENT '向量化模型(可选，为空自动探测)',
     enabled TINYINT DEFAULT 1 COMMENT '是否启用',
     remark VARCHAR(255) COMMENT '备注',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

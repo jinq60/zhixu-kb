@@ -11,5 +11,8 @@ public class AiUserConfigSaveRequest {
     private String baseUrl;
     private String apiKey;
     private String model;
+    private String embeddingBaseUrl;
+    private String embeddingApiKey;
+    private String embeddingModel;
     private Boolean enabled;
 }

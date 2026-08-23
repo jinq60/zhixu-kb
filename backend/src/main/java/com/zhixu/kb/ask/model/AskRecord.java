@@ -18,6 +18,7 @@ public class AskRecord {
     private String status;
     private String confidenceLevel;
     private List<String> riskFlags;
+    private String conversationId;
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
 

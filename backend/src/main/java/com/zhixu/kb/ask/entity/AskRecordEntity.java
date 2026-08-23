@@ -22,6 +22,7 @@ public class AskRecordEntity {
     private String status;
     private String confidenceLevel;
     private String riskFlags;
+    private String conversationId;
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
 }

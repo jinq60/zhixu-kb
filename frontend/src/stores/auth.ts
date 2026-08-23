@@ -7,7 +7,8 @@ import {
   sendEmailCode as apiSendEmailCode,
   smsCodeLogin as apiSmsCodeLogin,
   sendSmsCode as apiSendSmsCode,
-  fetchUserInfo
+  fetchUserInfo,
+  logout as apiLogout
 } from '../api/auth'
 
 export interface UserInfo {
@@ -124,7 +125,13 @@ export const useAuthStore = defineStore('auth', {
         // 用户信息拉取失败不阻塞
       }
     },
-    logout() {
+    async logout() {
+      // 先通知后端撤销 Token，再清理本地状态，避免会话在有效期内仍可用
+      try {
+        await apiLogout()
+      } catch {
+        // 后端撤销失败不影响本地登出
+      }
       this.token = null
       this.user = null
       router.push('/home')

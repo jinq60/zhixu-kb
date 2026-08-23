@@ -1,15 +1,37 @@
 package com.zhixu.kb.common.utils;
 
 import com.zhixu.kb.common.exception.BusinessException;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.net.InetAddress;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class SafeUrlValidatorTest {
 
+    @BeforeEach
+    void setUp() {
+        // 用固定解析器替代真实 DNS，保证测试确定性且不依赖外部网络
+        SafeUrlValidator.setHostResolver(host -> new InetAddress[]{InetAddress.getByName("8.8.8.8")});
+    }
+
+    @AfterEach
+    void tearDown() {
+        SafeUrlValidator.setHostResolver(null);
+    }
+
     @Test
     void validate_httpsPublicUrl_shouldPass() {
         assertDoesNotThrow(() -> SafeUrlValidator.validateOrThrow("https://api.deepseek.com"));
+    }
+
+    @Test
+    void validate_domainResolvingToPrivateIp_shouldThrow() {
+        SafeUrlValidator.setHostResolver(host -> new InetAddress[]{InetAddress.getByName("192.168.1.1")});
+        assertThrows(BusinessException.class,
+                () -> SafeUrlValidator.validateOrThrow("https://evil.example.com"));
     }
 
     @Test

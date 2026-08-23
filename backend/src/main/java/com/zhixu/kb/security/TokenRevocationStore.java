@@ -42,8 +42,10 @@ public class TokenRevocationStore {
         if (redisTemplate != null) {
             try {
                 redisTemplate.opsForValue().set(redisKey(key), "1", REVOKED_TOKEN_TTL);
-            } catch (Exception ignored) {
-                // fallback to in-memory only
+            } catch (Exception ex) {
+                // 本地缓存已记录（单实例部署下即全部生效），Redis 失败仅影响多实例场景，记录错误日志
+                org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
+                        .error("Token revocation Redis write failed: {}", ex.getMessage());
             }
         }
     }
@@ -59,7 +61,11 @@ public class TokenRevocationStore {
         if (redisTemplate != null) {
             try {
                 return Boolean.TRUE.equals(redisTemplate.hasKey(redisKey(key)));
-            } catch (Exception ignored) {
+            } catch (Exception ex) {
+                // 单实例部署下本地缓存即权威；Redis 故障时按"未撤销"处理，
+                // 避免 Redis 抖动导致全部用户被误判登出（可用性优先），同时记录错误日志便于告警
+                org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
+                        .error("Token revocation Redis check failed: {}", ex.getMessage());
                 return false;
             }
         }

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.ResultCode;
+import com.zhixu.kb.common.utils.HtmlSanitizer;
 import com.zhixu.kb.common.utils.SecurityUtils;
 import com.zhixu.kb.note.entity.Category;
 import com.zhixu.kb.note.entity.FileInfo;
@@ -17,8 +18,11 @@ import com.zhixu.kb.note.model.NoteResponse;
 import com.zhixu.kb.note.model.NoteStatsResponse;
 import com.zhixu.kb.note.model.OutlineNode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.util.HtmlUtils;
@@ -28,9 +32,11 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -38,6 +44,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class NoteService {
     private static final Pattern FILE_CONTENT_PATTERN = Pattern.compile("/api/files/(\\d+)/content");
 
@@ -53,6 +60,39 @@ private final AiAnalysisTaskManager aiAnalysisTaskManager;
 private final AiAnalysisTaskRunner aiAnalysisTaskRunner;
 private final DocumentNormalizeTaskManager documentNormalizeTaskManager;
 private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
+private final HtmlSanitizer htmlSanitizer;
+private final TransactionTemplate transactionTemplate;
+private final FileService fileService;
+private final com.zhixu.kb.graph.service.GraphService graphService;
+private final NoteVectorizeTaskRunner noteVectorizeTaskRunner;
+private final MilvusVectorStore milvusVectorStore;
+private final DocumentProcessTaskService documentProcessTaskService;
+
+    /**
+     * 提交笔记向量化任务（异步，失败自动降级关键词检索）。
+     * 若处于事务中（创建/更新笔记），延迟到事务提交后提交，
+     * 避免异步线程读到未提交数据导致向量化静默丢失。
+     */
+    private void submitVectorize(Long noteId) {
+        try {
+            if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                noteVectorizeTaskRunner.run(noteId);
+                            }
+                        });
+            } else {
+                noteVectorizeTaskRunner.run(noteId);
+            }
+        } catch (Exception e) {
+            log.warn("submit vectorize failed: noteId={}", noteId, e.getMessage());
+        }
+    }
+
+    /** 单次 OCR 最大图片数，防止请求线程被长时间占用 */
+    private static final int MAX_OCR_BATCH = 10;
 
     public Page<Note> list(int page, int size, Long categoryId) {
         Long userId = getUserIdOrThrow();
@@ -127,16 +167,20 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
         Note note = new Note();
         note.setUserId(userId);
         note.setCategoryId(resolveCategoryId(request.getCategoryId(), userId));
-        note.setTitle(request.getTitle().trim());
+        note.setTitle(request.getTitle() == null ? "" : request.getTitle().trim());
         note.setContent(request.getContent());
         note.setSummary(request.getSummary());
         note.setKeywords(request.getKeywords());
         note.setCoverImage(request.getCoverImage());
         note.setStatus(request.getStatus() == null ? 0 : normalizeStatus(request.getStatus()));
+        if (note.getStatus() != null && note.getStatus() == 1) {
+            note.setContent(htmlSanitizer.sanitizeRich(note.getContent()));
+        }
         noteMapper.insert(note);
         if (!CollectionUtils.isEmpty(request.getOutline())) {
             noteStructureService.saveStructure(note.getId(), request.getOutline(), null);
         }
+        submitVectorize(note.getId());
 
         // 注意：不再在创建时同步调用 AI 元数据分析（本地模型耗时数分钟会阻塞请求），
         // 摘要/关键词/分类由用户显式执行"AI 整理"完成。
@@ -156,7 +200,7 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
     public Note update(Long id, NoteRequest request) {
         Note note = findOwnNote(id);
         note.setCategoryId(resolveCategoryId(request.getCategoryId(), note.getUserId()));
-        note.setTitle(request.getTitle().trim());
+        note.setTitle(request.getTitle() == null ? "" : request.getTitle().trim());
         note.setContent(request.getContent());
         note.setSummary(request.getSummary());
         note.setKeywords(request.getKeywords());
@@ -164,10 +208,14 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
         if (request.getStatus() != null) {
             note.setStatus(normalizeStatus(request.getStatus()));
         }
+        if (note.getStatus() != null && note.getStatus() == 1) {
+            note.setContent(htmlSanitizer.sanitizeRich(note.getContent()));
+        }
         noteMapper.updateById(note);
         if (request.getOutline() != null) {
             noteStructureService.saveStructure(note.getId(), request.getOutline(), null);
         }
+        submitVectorize(note.getId());
         noteHistoryService.recordNoteSnapshot(
                 note.getId(),
                 "NOTE_SAVE",
@@ -181,15 +229,35 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
     @Transactional
     public void softDelete(Long id) {
         Note note = findOwnNote(id);
+        // 级联清理：结构/文件/图谱 + Milvus 向量 + 文档处理任务（防僵尸数据）
+        noteStructureService.clearStructure(note.getId());
+        fileService.deleteByNoteId(note.getId());
+        try {
+            graphService.delete(note.getId());
+        } catch (Exception ex) {
+            log.warn("Cascade delete graph failed (best-effort): noteId={}", note.getId(), ex);
+        }
+        try {
+            milvusVectorStore.deleteByNote(note.getId());
+        } catch (Exception ex) {
+            log.warn("Cascade delete vectors failed (best-effort): noteId={}", note.getId(), ex);
+        }
+        documentProcessTaskService.deleteByNote(note.getId());
         int rows = noteMapper.deleteById(note.getId());
         if (rows <= 0) {
             throw new BusinessException(ResultCode.SERVER_ERROR, "Delete note failed");
         }
     }
 
-    @Transactional
+    /**
+     * 触发 OCR：外部 OCR 调用（最长 120s/张）在数据库事务外执行，
+     * 结果写回使用短事务，避免长事务占用连接池与行锁。
+     */
     public String triggerOCR(Long id, String engine, List<Long> fileIds) {
         Note note = findOwnNote(id);
+        if (fileIds != null && fileIds.size() > MAX_OCR_BATCH) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "单次 OCR 最多支持 " + MAX_OCR_BATCH + " 张图片");
+        }
         List<FileInfo> files = fileInfoMapper.selectList(new LambdaQueryWrapper<FileInfo>()
                 .eq(FileInfo::getNoteId, id)
                 .orderByAsc(FileInfo::getUploadTime)
@@ -206,22 +274,30 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
             throw new BusinessException(ResultCode.BAD_REQUEST, "No OCR candidate image found");
         }
 
+        List<FileInfo> targets = resolveOcrTargets(files, candidates, embeddedFileIds, fileIds);
+        if (targets.size() > MAX_OCR_BATCH) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "单次 OCR 最多支持 " + MAX_OCR_BATCH + " 张图片");
+        }
+
         try {
-            List<FileInfo> targets = resolveOcrTargets(files, candidates, embeddedFileIds, fileIds);
             String text = runBatchOCR(targets, engine);
-            note.setOcrText(text);
-            if (!StringUtils.hasText(note.getContent())) {
-                note.setContent(text);
-            }
-            noteMapper.updateById(note);
-            noteHistoryService.recordNoteSnapshot(
-                    note.getId(),
-                    "NOTE_OCR",
-                    "Run OCR on note image",
-                    "/api/notes/" + note.getId() + "/ocr",
-                    fileIds
-            );
-            return text;
+            return transactionTemplate.execute(status -> {
+                Note fresh = findOwnNote(id);
+                fresh.setOcrText(text);
+                if (!StringUtils.hasText(fresh.getContent())) {
+                    fresh.setContent(text);
+                }
+                noteMapper.updateById(fresh);
+                noteHistoryService.recordNoteSnapshot(
+                        fresh.getId(),
+                        "NOTE_OCR",
+                        "Run OCR on note image",
+                        "/api/notes/" + fresh.getId() + "/ocr",
+                        fileIds
+                );
+                submitVectorize(fresh.getId());
+                return text;
+            });
         } catch (IOException e) {
             throw new BusinessException(ResultCode.SERVER_ERROR, "Read file failed");
         }
@@ -235,7 +311,13 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
         if (!documentNormalizeTaskManager.tryStart(note.getId())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "该笔记正在清洗中，请稍候");
         }
-        documentNormalizeTaskRunner.run(note.getId(), documentNormalizeTaskManager, SecurityUtils.getLoginUser());
+        long generation = documentNormalizeTaskManager.generationOf(note.getId());
+        try {
+            documentNormalizeTaskRunner.run(note.getId(), documentNormalizeTaskManager, generation, SecurityUtils.getLoginUser());
+        } catch (TaskRejectedException e) {
+            documentNormalizeTaskManager.release(note.getId(), generation);
+            throw new BusinessException(ResultCode.BAD_REQUEST, "系统繁忙，请稍后再试");
+        }
         return true;
     }
 
@@ -310,7 +392,6 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
         return String.join("\n\n", pageTexts);
     }
 
-    @Transactional
     public AIAnalysisResult triggerAIAnalysis(Long id) {
         Note note = findOwnNote(id);
         Long userId = getUserIdOrThrow();
@@ -323,16 +404,64 @@ private final DocumentNormalizeTaskRunner documentNormalizeTaskRunner;
     public boolean submitAIAnalysis(Long id) {
         Note note = findOwnNote(id);
         Long userId = getUserIdOrThrow();
-        if (!aiAnalysisTaskManager.tryStart(note.getId())) {
+        if (!aiAnalysisTaskManager.tryStart(userId, note.getId(), note.getTitle())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "该笔记正在整理中，请稍候");
         }
-        aiAnalysisTaskRunner.run(userId, note.getId(), aiAnalysisTaskManager, SecurityUtils.getLoginUser());
+        long generation = aiAnalysisTaskManager.generationOf(note.getId());
+        try {
+            aiAnalysisTaskRunner.run(userId, note.getId(), aiAnalysisTaskManager, generation, SecurityUtils.getLoginUser());
+        } catch (TaskRejectedException e) {
+            aiAnalysisTaskManager.release(note.getId(), generation);
+            throw new BusinessException(ResultCode.BAD_REQUEST, "系统繁忙，请稍后再试");
+        }
         return true;
     }
 
     public AiAnalysisTaskManager.TaskState getAIAnalysisStatus(Long id) {
         findOwnNote(id);
         return aiAnalysisTaskManager.get(id);
+    }
+
+    /**
+     * 当前用户的 AI 整理任务列表（进行中 + 保留期内的最近任务），
+     * 供顶部任务面板统一展示任务状态与失败重试入口。
+     */
+    public Map<String, Object> listAIAnalysisTasks() {
+        Long userId = getUserIdOrThrow();
+        List<AiAnalysisTaskManager.TaskState> active = aiAnalysisTaskManager.listActiveTasks(userId);
+        List<AiAnalysisTaskManager.TaskState> recent = aiAnalysisTaskManager.listRecentTasks(userId);
+        Map<String, Object> data = new HashMap<>();
+        data.put("active", active.stream().map(this::toAiTaskView).collect(Collectors.toList()));
+        data.put("recent", recent.stream().map(this::toAiTaskView).collect(Collectors.toList()));
+        return data;
+    }
+
+    /**
+     * 删除指定笔记的 AI 整理任务记录（任务中心）。归属校验失败返回 false。
+     */
+    public boolean deleteAIAnalysisTask(Long noteId) {
+        Long userId = getUserIdOrThrow();
+        return aiAnalysisTaskManager.remove(userId, noteId);
+    }
+
+    private Map<String, Object> toAiTaskView(AiAnalysisTaskManager.TaskState state) {
+        Map<String, Object> view = new HashMap<>();
+        view.put("noteId", state.getNoteId());
+        view.put("noteTitle", state.getNoteTitle());
+        view.put("running", state.isRunning());
+        view.put("stage", state.getStage());
+        view.put("error", state.getError());
+        view.put("startedAt", state.getStartedAt());
+        view.put("finishedAt", state.getFinishedAt());
+        long elapsed = 0;
+        if (state.getStartedAt() > 0) {
+            long endAt = state.isRunning() ? System.currentTimeMillis() : state.getFinishedAt();
+            if (endAt > 0) {
+                elapsed = Math.max(0, (endAt - state.getStartedAt()) / 1000);
+            }
+        }
+        view.put("elapsedSeconds", elapsed);
+        return view;
     }
 
     private void applyAIAnalysis(Note note, AIAnalysisResult analysis, Long userId) {

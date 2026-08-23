@@ -11,6 +11,7 @@ public class AiEndpointView {
     private String baseUrl;
     private String apiKeyMasked;
     private String model;
+    private String embeddingModel;
     private Boolean enabled;
     private String remark;
     private Boolean cooldown;

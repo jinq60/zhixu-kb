@@ -88,6 +88,7 @@ export interface AiEndpoint {
   baseUrl: string
   apiKeyMasked: string
   model: string
+  embeddingModel?: string
   enabled: boolean
   remark?: string
   cooldown: boolean
@@ -101,6 +102,7 @@ export interface AiEndpointSavePayload {
   baseUrl: string
   apiKey?: string
   model: string
+  embeddingModel?: string
   enabled?: boolean
   remark?: string
 }

@@ -181,8 +181,14 @@ const openOAuth = (provider: 'github' | 'google' | 'qq') => {
     return
   }
 
+  // 移除上一次未完成流程遗留的监听器，避免重复触发
+  if (oauthListener) {
+    window.removeEventListener('message', oauthListener)
+  }
   oauthListener = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return
+    // 校验消息确实来自本次打开的 OAuth 弹窗，防止同域其他窗口干扰
+    if (event.source !== popup) return
     const { token, error } = event.data || {}
     if (error) {
       ElMessage.error(error)

@@ -49,9 +49,20 @@ export function oauthAuthorizeUrl(provider: 'github' | 'google' | 'qq'): string 
   return `${import.meta.env.VITE_API_BASE || ''}/api/auth/oauth/${provider}/authorize`
 }
 
+/** OAuth 回调：用一次性 code 换取 JWT */
+export async function oauthExchange(code: string): Promise<string> {
+  const { data } = await http.post('/api/auth/oauth/exchange', { code })
+  return data.data.token
+}
+
 export async function fetchUserInfo(): Promise<UserInfo> {
   const { data } = await http.get('/api/auth/info')
   return data.data
+}
+
+/** 调用后端撤销当前 Token */
+export async function logout(): Promise<void> {
+  await http.post('/api/auth/logout')
 }
 
 export interface UserProfile {

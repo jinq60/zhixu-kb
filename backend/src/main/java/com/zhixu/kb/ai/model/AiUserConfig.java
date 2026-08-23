@@ -11,6 +11,9 @@ public class AiUserConfig {
     private String baseUrl;
     private String apiKeyMasked;
     private String model;
+    private String embeddingBaseUrl;
+    private String embeddingApiKeyMasked;
+    private String embeddingModel;
     private Boolean enabled;
     private Boolean configured;
 }

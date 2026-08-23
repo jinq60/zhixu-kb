@@ -2,13 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import DOMPurify from 'dompurify'
 import {
   getReadableNote,
   getReadableNoteStructure,
-  type NoteSectionItem,
-  type NoteStructureResponse,
-  type PublicNoteDetail
+  type PublicNoteDetail,
+  type NoteStructureResponse
 } from '../api/note'
 
 interface TocItem {
@@ -24,11 +24,7 @@ const noteId = computed(() => Number(route.params.id))
 const loading = ref(false)
 const exporting = ref(false)
 const note = ref<PublicNoteDetail | null>(null)
-const structure = ref<NoteStructureResponse>({
-  outline: [],
-  sections: [],
-  mermaid: ''
-})
+const structure = ref<NoteStructureResponse | null>(null)
 const exportRef = ref<HTMLElement | null>(null)
 const activeTocId = ref('')
 const renderedContentHtml = ref('')
@@ -44,18 +40,24 @@ const keywordList = computed(() =>
 const hasSummary = computed(() => Boolean(note.value?.summary?.trim()))
 const hasKeywords = computed(() => keywordList.value.length > 0)
 
-const sectionAnchorId = (section: NoteSectionItem) => `toc-section-${section.id}`
-
-const tocItems = computed<TocItem[]>(() => {
-  const visibleSectionIds = new Set(anchoredSectionIds.value)
-  return (structure.value.sections || [])
-    .filter((section) => section.id != null && visibleSectionIds.has(section.id))
-    .map((section) => ({
-      id: sectionAnchorId(section),
-      title: section.title || '\u672A\u547D\u540D\u7AE0\u8282',
-      level: Math.min(Math.max(section.level || 1, 1), 4)
-    }))
+/** 正文区域最终 HTML：无可见内容时展示友好占位，避免空白/塌陷 */
+const safeContentHtml = computed(() => {
+  const html = renderedContentHtml.value
+  if (!html || !html.trim()) {
+    return '<p>\u6682\u65E0\u6B63\u6587\u5185\u5BB9</p>'
+  }
+  if (typeof document !== 'undefined') {
+    const div = document.createElement('div')
+    div.innerHTML = html
+    if (!div.textContent?.trim() && !div.querySelector('img,table,br,hr')) {
+      return '<p>\u6682\u65E0\u6B63\u6587\u5185\u5BB9</p>'
+    }
+  }
+  return html
 })
+
+/** 目录优先使用笔记结构表的大纲（AI/手动整理），无结构时从正文标题兜底 */
+const tocItems = ref<TocItem[]>([])
 
 const escapeHtml = (raw: string) =>
   raw
@@ -117,53 +119,39 @@ const buildRenderedContent = async () => {
   if (!html || typeof document === 'undefined') {
     renderedContentHtml.value = html
     anchoredSectionIds.value = []
+    tocItems.value = []
     return
   }
 
   const root = document.createElement('div')
   root.innerHTML = html
 
-  const candidates = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote'))
+  // 先收集正文中真实存在的标题
+  const headings = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6'))
     .filter((element) => normalizePlainText(element.textContent || '').length > 0)
 
-  const anchoredIds: number[] = []
-  let cursor = 0
-
-  for (const section of structure.value.sections || []) {
-    if (section.id == null || !section.title) continue
-    const targetTitle = normalizePlainText(section.title)
-    if (!targetTitle) continue
-
-    let targetIndex = -1
-    for (let index = cursor; index < candidates.length; index += 1) {
-      const candidateText = normalizePlainText(candidates[index].textContent || '')
-      if (
-        candidateText === targetTitle ||
-        candidateText.startsWith(targetTitle) ||
-        candidateText.includes(targetTitle)
-      ) {
-        targetIndex = index
-        break
-      }
+  // 阅读页目录统一从正文真实标题生成，保证与正文 100% 对应、点击必跳转。
+  // 结构表中的 AI/清洗大纲仅用于编辑页结构面板与导图，不再作为阅读页目录来源，
+  // 避免标题截断、HTML 实体、AI 幻觉等导致目录与正文对不上的问题。
+  const nextToc = headings.map((heading, index) => {
+    const tag = heading.tagName.toLowerCase()
+    const levelMatch = tag.match(/h([1-6])/)
+    return {
+      id: `toc-heading-${index + 1}`,
+      title: (heading.textContent || '').trim(),
+      level: Math.min(Math.max(levelMatch ? Number(levelMatch[1]) : 1, 1), 4)
     }
+  })
 
-    if (targetIndex === -1) {
-      targetIndex = cursor < candidates.length ? cursor : -1
-    }
-
-    if (targetIndex === -1) {
-      continue
-    }
-
-    const target = candidates[targetIndex]
-    target.setAttribute('id', sectionAnchorId(section))
-    target.setAttribute('data-toc-anchor', 'true')
-    anchoredIds.push(section.id)
-    cursor = targetIndex + 1
-  }
+  // 给所有标题设置锚点 ID
+  headings.forEach((heading, index) => {
+    heading.setAttribute('id', `toc-heading-${index + 1}`)
+    heading.setAttribute('data-toc-anchor', 'true')
+  })
 
   renderedContentHtml.value = DOMPurify.sanitize(root.innerHTML)
-  anchoredSectionIds.value = anchoredIds
+  anchoredSectionIds.value = []
+  tocItems.value = nextToc
 }
 
 const PRINT_DOCUMENT_STYLES = `
@@ -353,7 +341,7 @@ const buildPrintableDocument = () => {
       </section>
     `
     : ''
-  const contentHtml = renderedContentHtml.value || '<p>\u6682\u65E0\u6B63\u6587\u5185\u5BB9</p>'
+  const contentHtml = safeContentHtml.value
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -442,6 +430,12 @@ const updateActiveToc = () => {
 }
 
 const fetchNote = async () => {
+  // 非法 id（如 /notes/view/abc）不发起 NaN 请求
+  if (!Number.isFinite(noteId.value)) {
+    ElMessage.error('笔记不存在')
+    router.replace('/home')
+    return
+  }
   loading.value = true
   try {
     const [detail, readableStructure] = await Promise.all([
@@ -455,10 +449,11 @@ const fetchNote = async () => {
     note.value = detail
     structure.value = readableStructure
     await buildRenderedContent()
+    await nextTick()
     updateActiveToc()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || '\u52A0\u8F7D\u7B14\u8BB0\u5931\u8D25')
-    router.push('/')
+    router.push('/notes')
   } finally {
     loading.value = false
   }
@@ -497,6 +492,7 @@ onMounted(() => {
 
 watch(noteId, () => {
   note.value = null
+  structure.value = null
   renderedContentHtml.value = ''
   anchoredSectionIds.value = []
   fetchNote()
@@ -509,36 +505,50 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="viewer-page" v-loading="loading">
-    <div class="viewer-toolbar">
-      <div>
-        <el-button text @click="router.push('/')">&#x8FD4;&#x56DE;&#x5DE5;&#x4F5C;&#x53F0;</el-button>
-        <el-button v-if="note?.editable" text @click="router.push(`/notes/${noteId}`)">&#x8FD4;&#x56DE;&#x7F16;&#x8F91;</el-button>
-      </div>
-      <div class="toolbar-actions">
-        <el-tag :type="note?.published ? 'success' : 'info'">{{ note?.published ? '\u5DF2\u53D1\u5E03' : '\u8349\u7A3F' }}</el-tag>
-        <el-button type="primary" :loading="exporting" @click="onExportPdf">&#x5BFC;&#x51FA; PDF</el-button>
-      </div>
-    </div>
-
     <div class="viewer-layout" v-if="note">
-      <aside class="toc-panel" v-if="tocItems.length">
+      <aside class="toc-panel">
+        <div class="action-card">
+          <div class="action-group">
+            <el-button class="action-btn" text @click="router.push('/notes')">
+              <el-icon><ArrowLeft /></el-icon>
+              <span>&#x8FD4;&#x56DE;&#x5DE5;&#x4F5C;&#x53F0;</span>
+            </el-button>
+            <el-button v-if="note?.editable" class="action-btn" text @click="router.push(`/notes/${noteId}`)">
+              <el-icon><Edit /></el-icon>
+              <span>&#x8FD4;&#x56DE;&#x7F16;&#x8F91;</span>
+            </el-button>
+          </div>
+          <div class="action-divider"></div>
+          <div class="action-status">
+            <el-tag :type="note?.published ? 'success' : 'info'" effect="light">
+              {{ note?.published ? '\u5DF2\u53D1\u5E03' : '\u8349\u7A3F' }}
+            </el-tag>
+            <el-button type="primary" :loading="exporting" @click="onExportPdf">
+              &#x5BFC;&#x51FA; PDF
+            </el-button>
+          </div>
+        </div>
+
         <div class="toc-card">
-          <div class="toc-title">&#x7AE0;&#x8282;&#x76EE;&#x5F55;</div>
-          <button
-            v-for="item in tocItems"
-            :key="item.id"
-            class="toc-link"
-            :class="{ active: activeTocId === item.id }"
-            type="button"
-            :style="{ paddingLeft: `${16 + (item.level - 1) * 18}px` }"
-            @click="scrollToAnchor(item.id)"
-          >
-            {{ item.title }}
-          </button>
+          <div class="toc-title">&#x76EE;&#x5F55;</div>
+          <div v-if="tocItems.length" class="toc-tree">
+            <button
+              v-for="item in tocItems"
+              :key="item.id"
+              class="toc-link"
+              :class="{ active: activeTocId === item.id }"
+              type="button"
+              :style="{ paddingLeft: `${14 + (item.level - 1) * 16}px` }"
+              @click="scrollToAnchor(item.id)"
+            >
+              {{ item.title }}
+            </button>
+          </div>
+          <div v-else class="toc-empty">&#x6682;&#x65E0;&#x76EE;&#x5F55;</div>
         </div>
       </aside>
 
-      <article ref="exportRef" class="paper">
+      <main ref="exportRef" class="paper">
         <header class="paper-header">
           <h1>{{ note.title }}</h1>
           <div class="meta">
@@ -561,91 +571,140 @@ onBeforeUnmount(() => {
         </section>
 
         <section id="note-content" class="content-section anchor-section">
-          <div class="note-content" v-html="renderedContentHtml || '<p>\u6682\u65E0\u6B63\u6587\u5185\u5BB9</p>'"></div>
+          <div class="note-content" v-html="safeContentHtml"></div>
         </section>
-      </article>
+      </main>
     </div>
   </div>
 </template>
 
 <style scoped>
 .viewer-page {
-  max-width: 1320px;
   margin: 0 auto;
-  padding: 20px;
-}
-
-.viewer-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.toolbar-actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+  padding: 16px 20px;
 }
 
 .viewer-layout {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 12px;
   align-items: start;
 }
 
 .toc-panel {
   position: sticky;
   top: 76px;
+  max-height: calc(100vh - 92px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.action-card {
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.action-btn {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 8px 10px;
+  color: #606266;
+}
+
+.action-btn .el-icon {
+  margin-right: 6px;
+}
+
+.action-divider {
+  height: 1px;
+  background: #f0f2f5;
+  margin: 12px 0;
+}
+
+.action-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .toc-card {
+  flex: 1;
+  min-height: 0;
   background: #fff;
   border: 1px solid #ebeef5;
-  border-radius: 12px;
-  padding: 16px 0;
+  border-radius: 10px;
+  padding: 14px 0;
+  overflow-y: auto;
 }
 
 .toc-title {
-  padding: 0 16px 10px;
+  padding: 0 14px 10px;
   margin-bottom: 4px;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: #303133;
   border-bottom: 1px solid #f0f2f5;
 }
 
+.toc-tree {
+  padding: 6px 0;
+}
+
+.toc-empty {
+  padding: 20px 14px;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
+}
+
 .toc-link {
   width: 100%;
   display: block;
-  padding: 10px 16px;
+  padding: 8px 14px;
   border: none;
+  border-left: 2px solid transparent;
   background: transparent;
   text-align: left;
   color: #606266;
   cursor: pointer;
   line-height: 1.5;
-  transition: all 0.2s ease;
+  font-size: 13px;
+  transition: all 0.18s ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toc-link:hover {
-  color: #409eff;
+  color: #2563eb;
   background: #f5faff;
 }
 
 .toc-link.active {
-  color: #409eff;
-  background: #ecf5ff;
+  color: #2563eb;
+  background: #f0f7ff;
+  border-left-color: #2563eb;
   font-weight: 600;
 }
 
 .paper {
   background: #fff;
   border: 1px solid #ebeef5;
-  border-radius: 12px;
-  padding: 32px;
+  border-radius: 10px;
+  padding: 36px 40px;
+  max-width: 100%;
 }
 
 .paper-header {
@@ -700,6 +759,7 @@ onBeforeUnmount(() => {
 .content-section {
   border-top: 1px solid #ebeef5;
   padding-top: 22px;
+  min-height: 160px;
 }
 
 .note-content {
@@ -774,6 +834,11 @@ onBeforeUnmount(() => {
 
   .toc-panel {
     position: static;
+    max-height: none;
+  }
+
+  .paper {
+    padding: 24px;
   }
 }
 

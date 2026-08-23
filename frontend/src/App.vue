@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { SwitchButton } from '@element-plus/icons-vue'
+import {
+  SwitchButton,
+  Notebook,
+  ChatDotRound,
+  Share,
+  FolderOpened,
+  MagicStick
+} from '@element-plus/icons-vue'
 import { useAuthStore } from './stores/auth'
 import AppHeader from './components/AppHeader.vue'
 import LoginModal from './components/LoginModal.vue'
@@ -13,19 +20,22 @@ const auth = useAuthStore()
 const isLoggedIn = computed(() => auth.isLoggedIn)
 const isBlankLayout = computed(() => route.meta.layout === 'blank')
 
+/** 需要缓存组件的页面（避免重复初始化 wangeditor 编辑器等重组件） */
+const CACHED_PAGES = ['NoteEdit']
+
 interface NavItem {
   path: string
   label: string
-  icon: string
+  icon: typeof Notebook
 }
 
 const navItems = computed<NavItem[]>(() => {
   const items: NavItem[] = [
-    { path: '/notes', label: '知识笔记', icon: 'Notebook' },
-    { path: '/ask', label: '知识问答', icon: 'ChatDotRound' },
-    { path: '/graph', label: '知识图谱', icon: 'Share' },
-    { path: '/categories', label: '分类管理', icon: 'FolderOpened' },
-    { path: '/settings/ai', label: 'AI 设置', icon: 'MagicStick' }
+    { path: '/notes', label: '知识笔记', icon: Notebook },
+    { path: '/ask', label: '知识问答', icon: ChatDotRound },
+    { path: '/graph', label: '知识图谱', icon: Share },
+    { path: '/categories', label: '分类管理', icon: FolderOpened },
+    { path: '/settings/ai', label: 'AI 设置', icon: MagicStick }
   ]
   return items
 })
@@ -71,7 +81,7 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
               <span class="user-tip">当前账号</span>
             </div>
           </div>
-          <el-button text class="logout-btn" @click="auth.logout">
+          <el-button text class="logout-btn" @click="auth.logout()">
             <el-icon><SwitchButton /></el-icon>
             退出登录
           </el-button>
@@ -79,7 +89,11 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
       </aside>
 
       <main class="workspace-main">
-        <RouterView />
+        <RouterView v-slot="{ Component, route: viewRoute }">
+          <KeepAlive :include="CACHED_PAGES" :max="5">
+            <component :is="Component" :key="viewRoute.fullPath" />
+          </KeepAlive>
+        </RouterView>
       </main>
     </div>
   </el-config-provider>

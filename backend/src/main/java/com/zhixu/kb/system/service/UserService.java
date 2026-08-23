@@ -35,6 +35,7 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final IdentityService identityService;
     private final EmailCodeService emailCodeService;
+    private final AuditLogService auditLogService;
 
     public UserProfileResponse getProfile(Long userId) {
         SysUser user = userMapper.selectById(userId);
@@ -81,6 +82,7 @@ public class UserService {
         if (!hasPassword) {
             identityService.bindAuth(userId, AuthMethod.PASSWORD, user.getUsername());
         }
+        auditLogService.record(userId, "PASSWORD_CHANGE", "用户修改密码", "/api/user/password");
     }
 
     private boolean hasPasswordBinding(Long userId) {
@@ -115,5 +117,6 @@ public class UserService {
         userMapper.updateById(user);
         identityService.removeStaleEmailAuth(email);
         identityService.bindAuth(userId, AuthMethod.EMAIL_CODE, email);
+        auditLogService.record(userId, "EMAIL_BIND", "绑定邮箱", "/api/user/bind/email");
     }
 }

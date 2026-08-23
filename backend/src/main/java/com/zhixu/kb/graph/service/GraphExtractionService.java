@@ -30,8 +30,14 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class GraphExtractionService {
 
-    private static final int MAX_ENTITIES = 50;
-    private static final int MAX_RELATIONS = 100;
+    private static final int MAX_ENTITIES = 80;
+    private static final int MAX_RELATIONS = 150;
+    /** 单段 AI 抽取的最大文本长度 */
+    private static final int AI_CHUNK_LENGTH = 8000;
+    /** 长文档 AI 分段抽取的最大段数（控制调用次数与耗时） */
+    private static final int MAX_AI_CHUNKS = 5;
+    /** 规则抽取（全文频率统计）的文本上限，防止超长文本拖慢 CPU */
+    private static final int RULE_TEXT_LIMIT = 50_000;
     private static final Pattern LAW_PATTERN = Pattern.compile("《([^》]{2,30})》");
     private static final Set<String> STOPWORDS = new HashSet<>();
 
@@ -48,18 +54,113 @@ public class GraphExtractionService {
         if (!StringUtils.hasText(text)) {
             return emptyResult();
         }
-        String trimmed = text.length() > 8000 ? text.substring(0, 8000) : text;
-        Map<String, Object> aiResult = extractByAi(trimmed);
+        if (text.length() <= AI_CHUNK_LENGTH) {
+            return extractSingle(text);
+        }
+        // 长文档：分段 AI 抽取并合并，覆盖全文（此前只取前 8000 字符，中后部实体丢失）
+        List<String> chunks = splitChunks(text);
+        if (chunks.size() <= 1) {
+            return extractSingle(chunks.get(0));
+        }
+        List<GraphNode> entities = new ArrayList<>();
+        List<GraphEdge> relations = new ArrayList<>();
+        Set<String> seenEntities = new HashSet<>();
+        Set<String> seenRelations = new HashSet<>();
+        boolean anyAi = false;
+        for (String chunk : chunks) {
+            Map<String, Object> part = extractByAi(chunk);
+            if (part != null) {
+                anyAi = true;
+                merge(entities, relations, seenEntities, seenRelations, part);
+            }
+        }
+        Map<String, Object> merged = new LinkedHashMap<>();
+        if (anyAi) {
+            merged.put("entities", entities);
+            merged.put("relations", relations);
+            merged.put("source", "ai");
+            return merged;
+        }
+        // AI 全部失败时规则抽取全文（带长度上限）
+        String ruleText = text.length() > RULE_TEXT_LIMIT ? text.substring(0, RULE_TEXT_LIMIT) : text;
+        return extractByRules(ruleText);
+    }
+
+    private Map<String, Object> extractSingle(String text) {
+        Map<String, Object> aiResult = extractByAi(text);
         if (aiResult != null && !((List<?>) aiResult.get("entities")).isEmpty()) {
             return aiResult;
         }
-        return extractByRules(trimmed);
+        return extractByRules(text);
+    }
+
+    /**
+     * 按段落切分为 ≤AI_CHUNK_LENGTH 的块，最多 MAX_AI_CHUNKS 段（超出部分并入最后一段）。
+     */
+    private List<String> splitChunks(String text) {
+        List<String> chunks = new ArrayList<>();
+        String[] paragraphs = text.split("\n");
+        StringBuilder current = new StringBuilder();
+        for (String paragraph : paragraphs) {
+            if (current.length() > 0 && current.length() + paragraph.length() + 1 > AI_CHUNK_LENGTH) {
+                chunks.add(current.toString());
+                current.setLength(0);
+                if (chunks.size() >= MAX_AI_CHUNKS - 1) {
+                    break;
+                }
+            }
+            if (current.length() > 0) {
+                current.append('\n');
+            }
+            current.append(paragraph);
+        }
+        if (current.length() > 0) {
+            chunks.add(current.toString());
+        }
+        if (chunks.isEmpty()) {
+            chunks.add(text.length() > AI_CHUNK_LENGTH ? text.substring(0, AI_CHUNK_LENGTH) : text);
+        }
+        return chunks;
+    }
+
+    private void merge(List<GraphNode> entities, List<GraphEdge> relations,
+                       Set<String> seenEntities, Set<String> seenRelations,
+                       Map<String, Object> part) {
+        List<GraphNode> partEntities = castNodes(part.get("entities"));
+        for (GraphNode node : partEntities) {
+            if (entities.size() >= MAX_ENTITIES) {
+                break;
+            }
+            if (node.getName() != null && seenEntities.add(node.getName())) {
+                entities.add(node);
+            }
+        }
+        List<GraphEdge> partRelations = castEdges(part.get("relations"));
+        for (GraphEdge edge : partRelations) {
+            if (relations.size() >= MAX_RELATIONS) {
+                break;
+            }
+            String key = edge.getSource() + "|" + edge.getRelation() + "|" + edge.getTarget();
+            if (seenRelations.add(key)) {
+                relations.add(edge);
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<GraphNode> castNodes(Object value) {
+        return value instanceof List ? (List<GraphNode>) value : Collections.emptyList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<GraphEdge> castEdges(Object value) {
+        return value instanceof List ? (List<GraphEdge>) value : Collections.emptyList();
     }
 
     private Map<String, Object> extractByAi(String text) {
         try {
-            String prompt = "请从下面文本中抽取知识图谱实体与关系。\n"
-                    + "1. 实体 entities：概念、术语、法律/法规名称、人物、机构、方法等，字段：name(实体名), type(类型枚举：概念/法律/人物/机构/方法/其他), description(一句话解释，不超过30字)\n"
+            String prompt = "请从下面文本中尽可能完整地抽取知识图谱实体与关系，数量不限（实体最多 80 个、关系最多 150 条），优先保证覆盖度。\n"
+                    + "1. 实体 entities：概念、术语、技术、协议、标准、法律/法规名称、人物、机构、产品、方法等，字段：name(实体名), type(类型枚举：概念/技术/协议/法律/人物/机构/产品/方法/其他), description(一句话解释，不超过30字)\n"
                     + "2. 关系 relations：实体间的语义关系，字段：source(源实体名), target(目标实体名), relation(关系描述，2-8个汉字，如\"包含\"\"依据\"\"提出\"\"相关于\")\n"
                     + "只输出 JSON，不要输出任何其他文字，格式：{\"entities\":[{\"name\":\"\",\"type\":\"\",\"description\":\"\"}],\"relations\":[{\"source\":\"\",\"target\":\"\",\"relation\":\"\"}]}\n\n"
                     + "文本：\n" + text;
@@ -147,7 +248,9 @@ public class GraphExtractionService {
         }
 
         Map<String, Integer> freq = new LinkedHashMap<>();
-        String normalized = text.replaceAll("[\\s\\p{Punct}]", "");
+        // Java 的 \p{Punct} 只覆盖 ASCII 标点，需显式补充中文标点，否则相邻两字会
+        // 跨过《》等标点组成噪声 bigram（如“《规”“法》”）
+        String normalized = text.replaceAll("[\\s\\p{Punct}《》「」『』“”‘’（）()【】、，。！？；：·…—]", "");
         for (int i = 0; i + 2 <= normalized.length(); i++) {
             String gram2 = normalized.substring(i, i + 2);
             freq.put(gram2, freq.getOrDefault(gram2, 0) + 1);

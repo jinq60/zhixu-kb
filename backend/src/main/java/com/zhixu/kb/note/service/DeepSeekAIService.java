@@ -1,8 +1,10 @@
 package com.zhixu.kb.note.service;
 
+import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.zhixu.kb.ai.AIEngineAdapterRouter;
@@ -28,7 +30,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -38,6 +42,22 @@ import java.util.stream.Collectors;
 public class DeepSeekAIService {
 
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
+
+    /** 宽松 ObjectMapper：容忍尾随逗号、未转义控制字符（模型输出常见问题） */
+    private static final ObjectMapper LENIENT_MAPPER = JsonMapper.builder()
+            .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
+            .enable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS)
+            .build();
+
+    /** 字段级兜底提取：summary/keywords/suggestedCategory */
+    private static final Pattern FIELD_PATTERN = Pattern.compile(
+            "\"(suggestedCategory|summary|keywords)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+    /** outline 兜底提取：所有 title 字段 */
+    private static final Pattern OUTLINE_TITLE_PATTERN = Pattern.compile(
+            "\"title\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+    /** tags 数组兜底提取 */
+    private static final Pattern TAGS_PATTERN = Pattern.compile(
+            "\"tags\"\\s*:\\s*\\[([^\\]]*)\\]");
 
     private final com.zhixu.kb.ai.AIEngineAdapterRouter adapterRouter;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -113,6 +133,10 @@ public class DeepSeekAIService {
         if (result.getOutline() == null) {
             result.setOutline(new ArrayList<>());
         }
+        // AI 不可用时用启发式大纲兜底，保证目录/导图仍有结构（不再为空）
+        if (result.getOutline().isEmpty() && StringUtils.hasText(plainContent)) {
+            result.setOutline(buildHeuristicOutline("", plainContent));
+        }
         if (result.getSuggestedCategory() == null) {
             result.setSuggestedCategory("");
         }
@@ -146,9 +170,9 @@ public class DeepSeekAIService {
         sb.append("  ]\n");
         sb.append("}\n\n");
         sb.append("要求：\n");
-        sb.append("- 一级章节控制在 4 到 10 个，用 2 到 3 级层级组织，不要每行一个节点。\n");
-        sb.append("- 章节标题精炼，不超过 20 个字，不要带编号或 Markdown 标记。\n");
-        sb.append("- content 字段只放纯文本，不要写 HTML 或 markdown；多个段落之间用空行分隔。\n");
+        sb.append("- 章节标题必须与正文中的原始章节标题逐字一致，保留原有编号与措辞（如“第一章 背景”），不要重新提炼、不要去掉编号。\n");
+        sb.append("- 一级章节控制在 3 到 6 个，可展开 2 到 3 层子章节，整个大纲总节点数不超过 60 个。\n");
+        sb.append("- content 字段必须逐字引用该章节在原文中的原始内容，不要改写、精简或重排原文。\n");
         sb.append("- 把重复、碎片化、断句异常的文本整理成自然、连贯的段落，保留关键细节与专业术语。\n");
         sb.append("- 不要省略、压缩或删减原文中的实质性信息；整理后的正文应尽可能包含原文全部要点。\n");
         sb.append("- 正文、标题、摘要、关键词、分类建议都必须保持与原文主语言一致。\n");
@@ -198,7 +222,7 @@ public class DeepSeekAIService {
         sb.append("]\n\n");
         sb.append("要求：\n");
         sb.append("- 保持与原文主语言一致，不要翻译。\n");
-        sb.append("- 按语义组织，一级章节 3 到 8 个，可用 2 级子章节，不要每一行都成为一个节点。\n");
+        sb.append("- 按语义组织，一级章节 3 到 6 个，可展开 2 到 3 层子章节，整个大纲总节点数不超过 60 个。\n");
         sb.append("- 标题精炼，不超过 20 个字，不要带编号或 Markdown 标记。\n");
         sb.append("- content 用自然语言概括该章节，不要写 HTML。\n\n");
         sb.append("笔记标题：").append(StringUtils.hasText(title) ? title : "未命名笔记").append("\n");
@@ -235,26 +259,144 @@ public class DeepSeekAIService {
     private AIAnalysisResult parseOrganizeResult(String response) {
         try {
             String jsonStr = cleanupJsonResponse(response);
-            JsonNode root = objectMapper.readTree(jsonStr);
+            JsonNode root = parseJsonLenient(jsonStr);
             AIAnalysisResult result = parseMetadataFromRoot(root);
             result.setOutline(parseOutlineFromRoot(root));
             return result;
         } catch (Exception e) {
-            log.error("Parse AI organize result failed: {}", response, e);
-            throw new BusinessException(ResultCode.SERVER_ERROR, "Parse AI organize result failed");
+            // 容错兜底：字段级提取，尽可能保留 AI 成果（而非整体丢弃降级）
+            log.warn("Parse AI organize result failed, fallback to field-level extraction: {}", e.getMessage());
+            return parseOrganizeLenient(response);
         }
+    }
+
+    /**
+     * 容错 JSON 解析：标准解析 → 修复字符串值内裸引号后宽松解析。
+     * 模型经常在 content 等字段中输出未转义的英文双引号，导致严格解析失败。
+     */
+    private JsonNode parseJsonLenient(String jsonStr) {
+        try {
+            return objectMapper.readTree(jsonStr);
+        } catch (Exception e1) {
+            String repaired = repairJsonQuotes(jsonStr);
+            try {
+                return LENIENT_MAPPER.readTree(repaired);
+            } catch (Exception e2) {
+                throw new BusinessException(ResultCode.SERVER_ERROR, "Parse AI result failed");
+            }
+        }
+    }
+
+    /**
+     * 状态机修复：仅转义字符串值内部未被转义的裸引号（引号后跟的是内容字符而非结构符 , } ] :）。
+     */
+    private String repairJsonQuotes(String json) {
+        StringBuilder sb = new StringBuilder(json.length());
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (!inString) {
+                if (c == '"') {
+                    inString = true;
+                }
+                sb.append(c);
+                continue;
+            }
+            if (escaped) {
+                sb.append(c);
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                sb.append(c);
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                char next = ' ';
+                for (int j = i + 1; j < json.length(); j++) {
+                    char nc = json.charAt(j);
+                    if (nc != ' ' && nc != '\t' && nc != '\n' && nc != '\r') {
+                        next = nc;
+                        break;
+                    }
+                }
+                if (next == ',' || next == '}' || next == ']' || next == ':') {
+                    inString = false;
+                    sb.append(c);
+                } else {
+                    sb.append('\\').append(c);
+                }
+                continue;
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 字段级兜底提取：整体 JSON 损坏时，用正则提取各字段与目录标题，尽量保留 AI 成果。
+     */
+    private AIAnalysisResult parseOrganizeLenient(String response) {
+        AIAnalysisResult result = new AIAnalysisResult();
+        String raw = response == null ? "" : response;
+        Matcher metaMatcher = FIELD_PATTERN.matcher(raw);
+        Map<String, String> fields = new java.util.HashMap<>();
+        while (metaMatcher.find()) {
+            fields.put(metaMatcher.group(1), unescapeJsonValue(metaMatcher.group(2)));
+        }
+        result.setSuggestedCategory(fields.getOrDefault("suggestedCategory", ""));
+        result.setSummary(fields.getOrDefault("summary", ""));
+        result.setKeywords(fields.getOrDefault("keywords", ""));
+
+        List<String> tags = new ArrayList<>();
+        Matcher tagsMatcher = TAGS_PATTERN.matcher(raw);
+        if (tagsMatcher.find()) {
+            Matcher tagItem = Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(tagsMatcher.group(1));
+            while (tagItem.find() && tags.size() < 10) {
+                String tag = unescapeJsonValue(tagItem.group(1));
+                if (StringUtils.hasText(tag)) {
+                    tags.add(tag);
+                }
+            }
+        }
+        result.setTags(tags);
+
+        List<OutlineNode> outline = new ArrayList<>();
+        Matcher titleMatcher = OUTLINE_TITLE_PATTERN.matcher(raw);
+        Set<String> seen = new LinkedHashSet<>();
+        while (titleMatcher.find() && outline.size() < 30) {
+            String title = cleanMarkdownTitle(unescapeJsonValue(titleMatcher.group(1)));
+            if (StringUtils.hasText(title) && seen.add(title)) {
+                OutlineNode node = new OutlineNode();
+                node.setTitle(title);
+                node.setContent("");
+                node.setChildren(new ArrayList<>());
+                outline.add(node);
+            }
+        }
+        result.setOutline(outline);
+        return result;
+    }
+
+    private String unescapeJsonValue(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return raw.replace("\\\"", "\"").replace("\\\\", "\\").replace("\\n", "\n").replace("\\t", "\t");
     }
 
     private AIAnalysisResult parseMetadataResult(String response) {
         try {
             String jsonStr = cleanupJsonResponse(response);
-            JsonNode root = objectMapper.readTree(jsonStr);
+            JsonNode root = parseJsonLenient(jsonStr);
             AIAnalysisResult result = parseMetadataFromRoot(root);
             result.setOutline(new ArrayList<>());
             return result;
         } catch (Exception e) {
-            log.error("Parse AI metadata result failed: {}", response, e);
-            throw new BusinessException(ResultCode.SERVER_ERROR, "Parse AI metadata result failed");
+            log.warn("Parse AI metadata result failed, fallback to field-level extraction: {}", e.getMessage());
+            return parseOrganizeLenient(response);
         }
     }
 
@@ -281,11 +423,24 @@ public class DeepSeekAIService {
     private List<OutlineNode> parseOutlineResult(String response) {
         try {
             String jsonStr = cleanupJsonResponse(response);
-            JsonNode root = objectMapper.readTree(jsonStr);
+            JsonNode root = parseJsonLenient(jsonStr);
             return parseOutlineFromRoot(root);
         } catch (Exception e) {
-            log.error("Parse outline result failed: {}", response, e);
-            return Collections.emptyList();
+            log.warn("Parse outline result failed, fallback to field-level extraction: {}", e.getMessage());
+            List<OutlineNode> outline = new ArrayList<>();
+            Matcher titleMatcher = OUTLINE_TITLE_PATTERN.matcher(response == null ? "" : response);
+            Set<String> seen = new LinkedHashSet<>();
+            while (titleMatcher.find() && outline.size() < 30) {
+                String title = cleanMarkdownTitle(unescapeJsonValue(titleMatcher.group(1)));
+                if (StringUtils.hasText(title) && seen.add(title)) {
+                    OutlineNode node = new OutlineNode();
+                    node.setTitle(title);
+                    node.setContent("");
+                    node.setChildren(new ArrayList<>());
+                    outline.add(node);
+                }
+            }
+            return outline;
         }
     }
 
@@ -410,6 +565,9 @@ public class DeepSeekAIService {
         return jsonStr;
     }
 
+    /** 启发式大纲的章节数量上限：超出后新内容并入最后一个章节，防止目录膨胀 */
+    private static final int MAX_HEURISTIC_SECTIONS = 30;
+
     private List<OutlineNode> buildHeuristicOutline(String title, String content) {
         String plainText = stripHtml(content);
         String[] lines = plainText.split("\\r?\\n");
@@ -433,6 +591,13 @@ public class DeepSeekAIService {
         OutlineNode current = null;
         for (String paragraph : paragraphs) {
             if (looksLikeHeading(paragraph)) {
+                if (outline.size() >= MAX_HEURISTIC_SECTIONS) {
+                    // 超出上限：不再新建章节，并入最后一个章节避免目录膨胀
+                    if (current != null) {
+                        current.setContent(appendContent(current.getContent(), paragraph));
+                    }
+                    continue;
+                }
                 current = new OutlineNode();
                 current.setTitle(cleanMarkdownTitle(paragraph));
                 current.setContent("");
@@ -448,26 +613,50 @@ public class DeepSeekAIService {
                 continue;
             }
 
-            String merged = StringUtils.hasText(current.getContent())
-                    ? current.getContent() + "\n" + paragraph
-                    : paragraph;
-            current.setContent(merged);
+            current.setContent(appendContent(current.getContent(), paragraph));
         }
 
         return outline;
+    }
+
+    private String appendContent(String existing, String newPart) {
+        if (!StringUtils.hasText(existing)) {
+            return newPart;
+        }
+        return existing + "\n" + newPart;
     }
 
     private boolean looksLikeHeading(String text) {
         if (!StringUtils.hasText(text)) {
             return false;
         }
-        if (text.length() <= 18 && !text.contains(" ")) {
+        String trimmed = text.trim();
+        if (trimmed.length() > 24) {
+            return false;
+        }
+        if (trimmed.startsWith("#")) {
             return true;
         }
-        return text.matches("^[一二三四五六七八九十0-9]+[、.．）)].*")
-                || text.startsWith("#")
-                || text.endsWith(":")
-                || text.endsWith("：");
+        // 编号标题：1、 1. （一） 一、 第一章
+        if (trimmed.matches("^[0-9]+[、.．）)].*")) {
+            return true;
+        }
+        if (trimmed.matches("^[一二三四五六七八九十]+[、.．）)].*")) {
+            return true;
+        }
+        if (trimmed.matches("^[（(][一二三四五六七八九十]+[）)][、.．]?.*")) {
+            return true;
+        }
+        if (trimmed.matches("^第[一二三四五六七八九十0-9]+[章节篇部部分][、.．\\s].*")) {
+            return true;
+        }
+        // 冒号结尾的短句（“定义：”“概述：”等）
+        if (trimmed.endsWith(":") || trimmed.endsWith("：")) {
+            return true;
+        }
+        // 其余一律视为正文段落，不再把“短行无空格”当作标题，
+        // 否则 OCR/表格/碎片文本的每一行都会变成目录节点
+        return false;
     }
 
     private String buildTitleFromParagraph(String paragraph, int index) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -21,18 +21,22 @@ import {
   type OCREngine
 } from '../api/note'
 import { listCategories, type Category } from '../api/category'
-import { deleteFile, fetchFileBlob, type UploadResponse } from '../api/file'
+import { deleteFile, fetchFileBlob, getTaskByNote, getTaskStatus, type UploadResponse } from '../api/file'
 import { buildNoteGraph, deleteNoteGraph, getNoteGraph, type GraphData } from '../api/graph'
 import ImageUpload from '../components/ImageUpload.vue'
 import KnowledgeGraph from '../components/KnowledgeGraph.vue'
 import MermaidPreview from '../components/MermaidPreview.vue'
 import RichEditor from '../components/RichEditor.vue'
 
+// 显式组件名：配合 App.vue 的 KeepAlive include 缓存（避免重复初始化 wangeditor 等重组件）
+defineOptions({ name: 'NoteEdit' })
+
 interface NoteFile {
   id?: number
   originalName?: string
   storedName?: string
   fileSize?: number
+  mimeType?: string
   uploadTime?: string
 }
 
@@ -262,9 +266,30 @@ const selectedStructureKey = computed(() => {
   const current = editableSections.value[selectedStructureIndex.value]
   return current ? `${current.id}-${selectedStructureIndex.value}` : undefined
 })
-const defaultExpandedStructureKeys = computed(() =>
-  editableSectionTree.value.map((node) => node.key)
-)
+/** 目录树全部展开/默认只展开前两层，避免深树视觉噪音 */
+const structureExpanded = ref(false)
+const defaultExpandedStructureKeys = computed(() => {
+  if (structureExpanded.value) {
+    return editableSectionTree.value.map((node) => node.key)
+  }
+  return collectExpandedKeys(editableSectionTree.value, 2)
+})
+const collectExpandedKeys = (nodes: StructureTreeNode[], maxDepth: number): string[] => {
+  const keys: string[] = []
+  const walk = (list: StructureTreeNode[], depth: number) => {
+    for (const node of list) {
+      if (node.children?.length && depth < maxDepth) {
+        keys.push(node.key)
+        walk(node.children, depth + 1)
+      }
+    }
+  }
+  walk(nodes, 1)
+  return keys
+}
+const toggleStructureExpand = () => {
+  structureExpanded.value = !structureExpanded.value
+}
 
 const createEditableSection = (patch?: Partial<NoteSectionItem>): NoteSectionItem => ({
   id: Date.now() + Math.floor(Math.random() * 1000),
@@ -424,9 +449,34 @@ const fetchHistory = async () => {
   }
 }
 
+// KeepAlive 组件首次挂载时 onActivated 与 onMounted 都会触发，
+// 用标记跳过首次，避免目录/图谱/历史被重复请求
+let activatedOnce = false
+
 onMounted(() => {
+  activatedOnce = true
+  // 非法 id（如 /notes/abc）直接回列表，避免 NaN 请求
+  if (!Number.isFinite(id.value)) {
+    router.replace('/notes')
+    return
+  }
   fetchCategories()
   load()
+  fetchStructure()
+  fetchHistory()
+  loadGraph()
+})
+
+onActivated(() => {
+  // KeepAlive 缓存命中（返回同一笔记）时刷新轻量数据，保证目录/图谱/历史最新；
+  // 不重新拉取正文，避免 wangeditor 大文档 setHtml 卡顿
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
+  if (!Number.isFinite(id.value)) {
+    return
+  }
   fetchStructure()
   fetchHistory()
   loadGraph()
@@ -440,6 +490,11 @@ watch(
       aiPollTimer = null
     }
     aiLoading.value = false
+    // 路由切出编辑页时 params.id 为空（Number(undefined)=NaN），
+    // 此时组件被 KeepAlive 缓存但 watch 仍触发，不能发起 NaN 请求
+    if (!Number.isFinite(newId)) {
+      return
+    }
     note.id = newId
     fetchCategories()
     load()
@@ -451,6 +506,9 @@ watch(
 
 const buildNotePayload = (): Note => ({
   ...note,
+  // 清除分类时 categoryId 为 undefined，会被 JSON 序列化丢弃导致后端不更新；
+  // 显式转为 null，保证"未分类"能真正写回后端
+  categoryId: note.categoryId ?? null,
   ...(editableSections.value.length || structure.value.outline.length || structure.value.sections.length
     ? { outline: buildOutlineFromSections(editableSections.value) }
     : {})
@@ -586,7 +644,15 @@ const onOCR = async () => {
 
   ocrLoading.value = true
   try {
-    const text = await triggerOCR(id.value, ocrEngine.value, queue)
+    // 后端单次 OCR 上限 10 张，队列超过时自动分批串行处理
+    const batchSize = 10
+    const texts: string[] = []
+    for (let i = 0; i < queue.length; i += batchSize) {
+      const batch = queue.slice(i, i + batchSize)
+      const text = await triggerOCR(id.value, ocrEngine.value, batch)
+      if (text && text.trim()) texts.push(text)
+    }
+    const text = texts.join('\n\n')
     const html = ocrTextToHtml(text || '')
 
     if (!html) {
@@ -637,6 +703,8 @@ const onAIAnalysis = async () => {
           await Promise.all([fetchCategories(), load(), fetchStructure(), fetchHistory(), loadGraph()])
           activeTab.value = 'mindmap'
           ElMessage.success('AI 整理完成，正文、大纲和导图已同步更新')
+          // 跟踪 AI 整理触发的向量化任务（知识库入库进度）
+          trackVectorizeTask()
           aiLoading.value = false
         }
       } catch {
@@ -646,6 +714,40 @@ const onAIAnalysis = async () => {
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || 'AI 整理提交失败')
     aiLoading.value = false
+  }
+}
+
+/** 跟踪 AI 整理触发的向量化任务，直到完成/失败并提示（顶部角标同步可见） */
+let vectorizeTrackCancelled = false
+const trackVectorizeTask = async () => {
+  vectorizeTrackCancelled = false
+  try {
+    const task = await getTaskByNote(id.value)
+    if (vectorizeTrackCancelled) return
+    if (!task || task.status === 'COMPLETED' || task.status === 'FAILED' || task.currentStage !== 'EMBEDDING') {
+      return
+    }
+    ElMessage.info('知识库向量化中（后台切块+向量化，完成后可被问答检索）…')
+    const deadline = Date.now() + 5 * 60 * 1000
+    while (Date.now() < deadline && !vectorizeTrackCancelled) {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      if (vectorizeTrackCancelled) return
+      const st = await getTaskStatus(task.taskId)
+      if (vectorizeTrackCancelled) return
+      if (st.status === 'COMPLETED') {
+        ElMessage.success('知识库向量化完成，笔记已可被知识问答检索')
+        return
+      }
+      if (st.status === 'FAILED') {
+        ElMessage.error(`向量化失败：${st.failReason || '未知原因'}`)
+        return
+      }
+    }
+    if (!vectorizeTrackCancelled) {
+      ElMessage.warning('向量化超时，可稍后在顶部任务面板查看状态')
+    }
+  } catch {
+    // 跟踪失败忽略
   }
 }
 
@@ -723,43 +825,102 @@ const onUploaded = async (result: UploadResponse) => {
   if (isImage && Number.isFinite(fileId) && !ocrQueueFileIds.value.includes(fileId)) {
     ocrQueueFileIds.value = [...ocrQueueFileIds.value, fileId]
   }
+  // 文档：解析/清洗后台异步执行，完成后后端写回正文，无需前端处理大文本（避免卡顿）
+}
 
-  // 文档上传：使用后端即时清洗结果（去标记+保留标题结构，毫秒级）写入笔记
-  const text = result?.normalizedText || result?.extractedText
-  if (text && text.trim()) {
-    const html = looksLikeHtml(text) ? text : toStructuredHtml(text)
-    note.content = !hasMeaningfulContent(note.content) ? html : `${note.content}${html}`
-    try {
-      await saveCurrentNoteSilently()
-      await fetchHistory()
-      ElMessage.success(`文档已导入（${text.length} 字，格式已清洗）`)
-    } catch {
-      // 静默保存失败不阻塞
-    }
+/** 文档处理任务完成（后端已写回清洗后正文）：刷新笔记内容并强制编辑器重载，确保正文展示 */
+const editorRefreshKey = ref(0)
+const onDocTaskCompleted = async () => {
+  try {
+    await load()
+    await fetchStructure()
+    await fetchHistory()
+    // 强制 RichEditor 重新挂载：保证后台写回的正文一定显示（含离开页面期间完成的任务）
+    editorRefreshKey.value++
+  } catch {
+    // 刷新失败不阻塞
   }
 }
 
 /**
- * 将带 # 标题结构的分行文本转为 HTML（h2/h3/h4 + p）。
+ * 将清洗后的文本转为可读 HTML（确定性，与后端 NoteNormalizeExecutor 同一套规则）：
+ * - "# "→h2、"## "→h3、"###+"→h4
+ * - 编号标题：1. / 1.1 / 一、 / 第一章 / （一） → h2-h4（按编号层级推导）
+ * - 列表行（-、*、• 开头）→ ul/li；其余空行分段，段内连续行用 <br> 连接
  */
 const toStructuredHtml = (text: string) => {
-  return text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      if (line.startsWith('### ')) return `<h4>${escapeHtml(line.substring(4))}</h4>`
-      if (line.startsWith('## ')) return `<h3>${escapeHtml(line.substring(3))}</h3>`
-      if (line.startsWith('# ')) return `<h2>${escapeHtml(line.substring(2))}</h2>`
-      return `<p>${escapeHtml(line)}</p>`
-    })
-    .join('')
+  const lines = text.split('\n').map((line) => line.trim())
+  let html = ''
+  let paragraph: string[] = []
+  let list: string[] = []
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    html += `<p>${paragraph.join('<br>')}</p>`
+    paragraph = []
+  }
+  const flushList = () => {
+    if (!list.length) return
+    html += `<ul>${list.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+    list = []
+  }
+
+  for (const line of lines) {
+    if (!line) {
+      flushParagraph()
+      flushList()
+      continue
+    }
+    if (line.startsWith('#')) {
+      flushParagraph()
+      flushList()
+      const count = line.match(/^#+/)?.[0].length || 1
+      const text = line.replace(/^#+\s*/, '')
+      const level = Math.min(Math.max(count, 1), 3)
+      html += `<h${level + 1}>${escapeHtml(text)}</h${level + 1}>`
+      continue
+    }
+    const numHeading = line.match(/^(\d{1,2}(?:\.\d{1,2}){0,2})\s*[.、．)）]\s*(.+)/)
+    if (numHeading) {
+      flushParagraph()
+      flushList()
+      const segments = numHeading[1].split('.').length
+      const level = Math.min(Math.max(segments, 1), 3)
+      html += `<h${level + 1}>${escapeHtml(numHeading[2])}</h${level + 1}>`
+      continue
+    }
+    if (/^(第[一二三四五六七八九十百0-9]+[章节篇部部分]\s+.+|（[一二三四五六七八九十]+）\s*.+|[一二三四五六七八九十]+[、.．]\s*.+)/.test(line)) {
+      flushParagraph()
+      flushList()
+      const text = line.replace(/^(第[一二三四五六七八九十百0-9]+[章节篇部部分]|（[一二三四五六七八九十]+）|[一二三四五六七八九十]+[、.．])\s*/, '')
+      html += `<h2>${escapeHtml(text)}</h2>`
+      continue
+    }
+    if (/^[-*•·]\s+.+/.test(line)) {
+      flushParagraph()
+      list.push(line.replace(/^[-*•·]\s+/, ''))
+      continue
+    }
+    flushList()
+    paragraph.push(escapeHtml(line))
+  }
+  flushParagraph()
+  flushList()
+  return html
 }
 
+
+const isImageFile = (file?: NoteFile): boolean =>
+  ['image/jpeg', 'image/png', 'image/jpg'].includes(String(file?.mimeType || '').toLowerCase())
 
 const onPreviewFile = async (file: NoteFile) => {
   if (!file?.id) {
     ElMessage.warning('文件信息无效')
+    return
+  }
+  // 预览仅支持图片：文档（pdf/docx/txt/md）下载查看，避免生成无效的 img 预览
+  if (!isImageFile(file)) {
+    ElMessage.info('该文件为文档，不支持在线预览，请下载后查看')
     return
   }
 
@@ -829,6 +990,7 @@ const onDeleteFile = async (file: NoteFile) => {
 }
 
 onBeforeUnmount(() => {
+  vectorizeTrackCancelled = true
   if (aiPollTimer) {
     clearInterval(aiPollTimer)
     aiPollTimer = null
@@ -862,6 +1024,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="actions">
+        <el-button @click="router.push('/notes')">返回工作台</el-button>
         <el-select v-model="ocrEngine" size="default" class="ocr-engine-select">
           <el-option
             v-for="item in ocrEngineOptions"
@@ -872,7 +1035,7 @@ onBeforeUnmount(() => {
         </el-select>
         <el-button :loading="ocrLoading" :disabled="!ocrCandidateFiles.length" @click="onOCR">批量 OCR</el-button>
         <el-button :loading="aiLoading" @click="onAIAnalysis">
-          {{ aiLoading ? 'AI 整理中…' : 'AI 整理' }}
+          {{ aiLoading ? 'AI 整理中…' : 'AI 整理（摘要+向量化入库）' }}
         </el-button>
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
       </div>
@@ -891,6 +1054,9 @@ onBeforeUnmount(() => {
 
             <div class="structure-side-toolbar">
               <el-button plain :loading="structureLoading" @click="fetchStructure">刷新结构</el-button>
+              <el-button plain @click="toggleStructureExpand">
+                {{ structureExpanded ? '折叠到两级' : '全部展开' }}
+              </el-button>
               <el-button plain @click="addRootStructureSection">新增一级章节</el-button>
             </div>
 
@@ -946,7 +1112,7 @@ onBeforeUnmount(() => {
                   :model-value="editableSections[selectedStructureIndex].title"
                   placeholder="输入章节标题"
                   @update:model-value="
-                    (value) => updateEditableSection(selectedStructureIndex, { title: String(value || '') })
+                    (value: string | number) => updateEditableSection(selectedStructureIndex, { title: String(value || '') })
                   "
                 />
 
@@ -978,7 +1144,7 @@ onBeforeUnmount(() => {
           </section>
 
           <div class="editor-main">
-            <RichEditor :key="id" v-model="note.content" :note-id="id" fill-height />
+            <RichEditor :key="`${id}-${editorRefreshKey}`" v-model="note.content" :note-id="id" fill-height />
           </div>
         </div>
       </div>
@@ -997,7 +1163,7 @@ onBeforeUnmount(() => {
         <section class="panel">
           <h4>上传素材</h4>
           <p class="panel-tip">支持图片（OCR 识别）与文档 txt/md/pdf/docx（自动提取文本并清洗格式，进入知识库）。</p>
-          <ImageUpload :key="id" :note-id="id" @uploaded="onUploaded" />
+          <ImageUpload :key="id" :note-id="id" @uploaded="onUploaded" @task-completed="onDocTaskCompleted" />
 
           <ul class="file-list" v-if="files.length">
             <li
@@ -1032,7 +1198,13 @@ onBeforeUnmount(() => {
                   <el-button link type="warning" @click.stop="removeFromOcrQueue(f)">移出队列</el-button>
                 </template>
                 <el-button v-else link type="primary" @click.stop="addToOcrQueue(f)">加入 OCR 队列</el-button>
-                <el-button link type="primary" :loading="previewLoading" @click.stop="onPreviewFile(f)">预览</el-button>
+                <el-button
+                  v-if="isImageFile(f)"
+                  link
+                  type="primary"
+                  :loading="previewLoading"
+                  @click.stop="onPreviewFile(f)"
+                >预览</el-button>
                 <el-button link type="danger" :loading="deletingFileId === f?.id" @click.stop="onDeleteFile(f)">删除</el-button>
               </div>
             </li>
@@ -1058,13 +1230,13 @@ onBeforeUnmount(() => {
       </div>
 
       <el-tabs v-model="activeTab">
-        <el-tab-pane label="思维导图" name="mindmap">
+        <el-tab-pane label="思维导图" name="mindmap" lazy>
           <div v-loading="structureLoading">
             <MermaidPreview :code="structure.mermaid" />
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="历史版本" name="history">
+        <el-tab-pane label="历史版本" name="history" lazy>
           <div v-loading="historyLoading">
             <el-empty v-if="!historyItems.length" description="暂无历史记录" :image-size="96" />
             <el-timeline v-else>
@@ -1091,7 +1263,7 @@ onBeforeUnmount(() => {
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="知识图谱" name="graph">
+        <el-tab-pane label="知识图谱" name="graph" lazy>
           <div class="graph-actions-bar">
             <span class="graph-tip">从笔记正文中抽取实体与关系（AI 优先，降级规则抽取）</span>
             <div>

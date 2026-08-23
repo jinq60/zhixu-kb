@@ -7,14 +7,19 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.Iterator;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 短信验证码服务：生成、发送、校验。
- * 当前环境未接入真实短信网关，仅打印验证码用于调试；优先使用 Redis，否则内存存储。
+ * 优先使用 Redis，Redis 故障时降级为内存存储（带 TTL 与惰性清理）。
+ * 安全加固：SecureRandom 生成、恒定时间比对、单验证码失败次数上限、日志脱敏。
  */
 @Slf4j
 @Service
@@ -24,11 +29,15 @@ public class SmsCodeService {
     private static final String REDIS_SEND_PREFIX = "auth:sms:send:";
     private static final Duration CODE_TTL = Duration.ofMinutes(5);
     private static final Duration RESEND_INTERVAL = Duration.ofSeconds(60);
-    private static final Random RANDOM = new Random();
+    private static final int CODE_LENGTH = 6;
+    private static final int MAX_VERIFY_ATTEMPTS = 5;
+    private static final int MEMORY_CLEANUP_THRESHOLD = 1000;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final StringRedisTemplate redisTemplate;
     private final Map<String, CodeEntry> memoryStore = new ConcurrentHashMap<>();
     private final Map<String, Long> memorySendTime = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> verifyAttempts = new ConcurrentHashMap<>();
 
     private static final class CodeEntry {
         private final String code;
@@ -50,14 +59,15 @@ public class SmsCodeService {
         }
         checkResend(phone);
         String code = generateCode();
+        // 新验证码发放即重置失败计数，避免旧码的错误尝试把新码也锁死
+        verifyAttempts.remove(phone);
         store(phone, code);
-        memorySendTime.put(phone, System.currentTimeMillis());
-        if (redisTemplate != null) {
-            redisTemplate.opsForValue().set(REDIS_SEND_PREFIX + phone,
-                    String.valueOf(System.currentTimeMillis()), RESEND_INTERVAL);
+        long now = System.currentTimeMillis();
+        if (!redisSet(REDIS_SEND_PREFIX + phone, String.valueOf(now), RESEND_INTERVAL)) {
+            memorySendTime.put(phone, now);
         }
         // 实际项目中替换为短信网关调用
-        log.info("短信验证码已生成 phone={} code={}", phone, code);
+        log.info("短信验证码已生成 phone={}", maskPhone(phone));
         return code;
     }
 
@@ -65,23 +75,36 @@ public class SmsCodeService {
         if (phone == null || code == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "手机号或验证码不能为空");
         }
+        if (verifyAttempts.size() > 10000) {
+            verifyAttempts.clear();
+        }
+        AtomicInteger attempts = verifyAttempts.computeIfAbsent(phone, k -> new AtomicInteger(0));
+        if (attempts.get() >= MAX_VERIFY_ATTEMPTS) {
+            remove(phone);
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
+        }
         String stored = fetch(phone);
         if (stored == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码已过期，请重新获取");
         }
-        if (!stored.equalsIgnoreCase(code)) {
+        if (!constantTimeEquals(stored, code)) {
+            attempts.incrementAndGet();
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误");
         }
+        verifyAttempts.remove(phone);
         remove(phone);
     }
 
     private void checkResend(String phone) {
         if (redisTemplate != null) {
-            Boolean exists = redisTemplate.hasKey(REDIS_SEND_PREFIX + phone);
-            if (Boolean.TRUE.equals(exists)) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
+            try {
+                Boolean exists = redisTemplate.hasKey(REDIS_SEND_PREFIX + phone);
+                if (Boolean.TRUE.equals(exists)) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
+                }
+            } catch (Exception e) {
+                log.warn("Redis 检查发送频率失败，降级内存判断");
             }
-            return;
         }
         Long last = memorySendTime.get(phone);
         if (last != null && System.currentTimeMillis() - last < RESEND_INTERVAL.toMillis()) {
@@ -90,16 +113,19 @@ public class SmsCodeService {
     }
 
     private void store(String phone, String code) {
-        if (redisTemplate != null) {
-            redisTemplate.opsForValue().set(REDIS_PREFIX + phone, code, CODE_TTL);
+        if (redisSet(REDIS_PREFIX + phone, code, CODE_TTL)) {
             return;
         }
+        cleanupIfNeeded();
         memoryStore.put(phone, new CodeEntry(code, System.currentTimeMillis() + CODE_TTL.toMillis()));
     }
 
     private String fetch(String phone) {
         if (redisTemplate != null) {
-            return redisTemplate.opsForValue().get(REDIS_PREFIX + phone);
+            String value = redisGet(REDIS_PREFIX + phone);
+            if (value != null) {
+                return value;
+            }
         }
         CodeEntry entry = memoryStore.get(phone);
         if (entry == null) {
@@ -114,17 +140,71 @@ public class SmsCodeService {
 
     private void remove(String phone) {
         if (redisTemplate != null) {
-            redisTemplate.delete(REDIS_PREFIX + phone);
-            return;
+            try {
+                redisTemplate.delete(REDIS_PREFIX + phone);
+            } catch (Exception ignored) {
+            }
         }
         memoryStore.remove(phone);
     }
 
+    private boolean redisSet(String key, String value, Duration ttl) {
+        if (redisTemplate == null) {
+            return false;
+        }
+        try {
+            redisTemplate.opsForValue().set(key, value, ttl);
+            return true;
+        } catch (Exception e) {
+            log.warn("Redis 写入失败，验证码降级为内存存储");
+            return false;
+        }
+    }
+
+    private String redisGet(String key) {
+        if (redisTemplate == null) {
+            return null;
+        }
+        try {
+            return redisTemplate.opsForValue().get(key);
+        } catch (Exception e) {
+            log.warn("Redis 读取失败，验证码降级为内存存储");
+            return null;
+        }
+    }
+
+    private void cleanupIfNeeded() {
+        if (memoryStore.size() <= MEMORY_CLEANUP_THRESHOLD) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<String, CodeEntry>> it = memoryStore.entrySet().iterator();
+        while (it.hasNext()) {
+            if (now > it.next().getValue().expiresAt) {
+                it.remove();
+            }
+        }
+    }
+
     private String generateCode() {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 6; i++) {
-            sb.append(RANDOM.nextInt(10));
+        StringBuilder sb = new StringBuilder(CODE_LENGTH);
+        for (int i = 0; i < CODE_LENGTH; i++) {
+            sb.append(SECURE_RANDOM.nextInt(10));
         }
         return sb.toString();
+    }
+
+    private boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String maskPhone(String phone) {
+        if (phone == null || phone.length() < 7) {
+            return "***";
+        }
+        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4);
     }
 }

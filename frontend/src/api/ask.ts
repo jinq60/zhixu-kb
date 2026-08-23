@@ -15,19 +15,21 @@ export interface AskRecord {
   status: string
   confidenceLevel: string
   riskFlags: string[]
+  conversationId?: string
   createdAt?: string
   completedAt?: string
 }
 
-export async function submitAsk(question: string) {
-  const { data } = await http.post('/api/v1/ask', { question }, { timeout: 180000 })
+export async function submitAsk(question: string, conversationId?: string) {
+  const { data } = await http.post('/api/v1/ask', { question, conversationId }, { timeout: 180000 })
   return data.data as AskRecord
 }
 
 export async function submitAskStream(
   question: string,
   onChunk: (chunk: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  conversationId?: string
 ): Promise<void> {
   const authStore = (await import('../stores/auth')).useAuthStore()
   const base = (http.defaults.baseURL || '').replace(/\/$/, '')
@@ -37,7 +39,7 @@ export async function submitAskStream(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${authStore.token || ''}`
     },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, conversationId }),
     signal
   })
   if (!response.ok || !response.body) {

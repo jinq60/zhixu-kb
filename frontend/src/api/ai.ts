@@ -5,6 +5,9 @@ export interface AiUserConfig {
   baseUrl: string
   apiKeyMasked: string
   model: string
+  embeddingBaseUrl?: string
+  embeddingApiKeyMasked?: string
+  embeddingModel?: string
   enabled: boolean
   configured: boolean
 }
@@ -14,6 +17,9 @@ export interface AiConfigSavePayload {
   baseUrl: string
   apiKey?: string
   model: string
+  embeddingBaseUrl?: string
+  embeddingApiKey?: string
+  embeddingModel?: string
   enabled?: boolean
 }
 

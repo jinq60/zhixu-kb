@@ -23,6 +23,7 @@ const editing = ref(false)
 const form = ref<AiEndpointSavePayload>({
   baseUrl: 'https://openrouter.ai/api/v1',
   model: 'deepseek/deepseek-chat',
+  embeddingModel: '',
   apiKey: '',
   enabled: true,
   remark: ''
@@ -41,7 +42,7 @@ const load = async () => {
 
 const openCreate = () => {
   editing.value = false
-  form.value = { baseUrl: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat', apiKey: '', enabled: true, remark: '' }
+  form.value = { baseUrl: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat', embeddingModel: '', apiKey: '', enabled: true, remark: '' }
   testResult.value = null
   dialog.value = true
 }
@@ -52,6 +53,7 @@ const openEdit = (endpoint: AiEndpoint) => {
     id: endpoint.id,
     baseUrl: endpoint.baseUrl,
     model: endpoint.model,
+    embeddingModel: endpoint.embeddingModel || '',
     apiKey: '',
     enabled: endpoint.enabled,
     remark: endpoint.remark || ''
@@ -143,6 +145,12 @@ onMounted(load)
       <PagedTable :data="endpoints" :loading="loading">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="model" label="模型" min-width="180" />
+        <el-table-column prop="embeddingModel" label="向量化模型" min-width="140">
+          <template #default="{ row }">
+            <span v-if="row.embeddingModel">{{ row.embeddingModel }}</span>
+            <el-tag v-else size="small" type="info" effect="plain">自动探测</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="baseUrl" label="接口地址" min-width="220" show-overflow-tooltip />
         <el-table-column prop="apiKeyMasked" label="API Key" width="150" />
         <el-table-column prop="remark" label="备注" min-width="120" />
@@ -185,6 +193,13 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="模型名称" required>
           <el-input v-model="form.model" placeholder="deepseek/deepseek-chat" />
+        </el-form-item>
+        <el-form-item label="向量化模型">
+          <el-input v-model="form.embeddingModel" placeholder="留空自动探测（推荐）" />
+          <div class="form-tip">
+            向量化需 embedding 模型：硅基流动 BAAI/bge-m3 · 阿里云 text-embedding-v3 · OpenAI text-embedding-3-small。
+            维度须与部署配置 MILVUS_DIMENSION 一致（bge-m3 / text-embedding-v3 = 1024，3-small = 1536）。
+          </div>
         </el-form-item>
         <el-form-item label="API Key">
           <el-input
@@ -239,5 +254,12 @@ onMounted(load)
 
 .test-result {
   margin-top: 14px;
+}
+
+.form-tip {
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.5;
+  margin-top: 4px;
 }
 </style>

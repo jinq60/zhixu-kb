@@ -30,7 +30,8 @@ export interface GraphBuildResult {
 }
 
 export async function buildNoteGraph(noteId: number) {
-  const { data } = await http.post(`/api/notes/${noteId}/graph/build`, null, { timeout: 180000 })
+  // AI 抽取最长可能 240s（120s 超时 × 2 次尝试），超时放宽到 300s 防止响应被提前断开
+  const { data } = await http.post(`/api/notes/${noteId}/graph/build`, null, { timeout: 300000 })
   return data.data as GraphBuildResult
 }
 
@@ -44,7 +45,7 @@ export async function deleteNoteGraph(noteId: number) {
 }
 
 export async function buildCategoryGraph(categoryId: number) {
-  const { data } = await http.post(`/api/graph/category/${categoryId}/build`, null, { timeout: 180000 })
+  const { data } = await http.post(`/api/graph/category/${categoryId}/build`, null, { timeout: 300000 })
   return data.data as GraphBuildResult
 }
 
@@ -54,7 +55,7 @@ export async function getCategoryGraph(categoryId: number) {
 }
 
 export async function buildGlobalGraph() {
-  const { data } = await http.post('/api/graph/global/build', null, { timeout: 180000 })
+  const { data } = await http.post('/api/graph/global/build', null, { timeout: 300000 })
   return data.data as GraphBuildResult
 }
 

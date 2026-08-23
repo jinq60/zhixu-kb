@@ -26,6 +26,15 @@ public class AuthController {
     }
 
     /**
+     * 显式注册入口：携带 adminBootstrapKey 可注册为管理员（系统首个管理员引导用）。
+     */
+    @PostMapping("/register")
+    public Result<Void> register(@Validated @RequestBody RegisterRequest request) {
+        authService.register(request);
+        return Result.success("注册成功", null);
+    }
+
+    /**
      * 统一登录入口：通过 method 字段路由到具体适配器。
      */
     @PostMapping("/login/unified")
@@ -68,6 +77,14 @@ public class AuthController {
                          HttpServletResponse response) throws IOException {
         String redirectUrl = oAuthService.callback(provider, code, state);
         response.sendRedirect(redirectUrl);
+    }
+
+    /**
+     * OAuth 回调换发：前端拿到回调 URL 中的一次性 code 后，用它换取 JWT。
+     */
+    @PostMapping("/oauth/exchange")
+    public Result<LoginResponse> exchange(@Validated @RequestBody OAuthExchangeRequest request) {
+        return Result.success(new LoginResponse(oAuthService.exchangeToken(request.getCode())));
     }
 
     @PostMapping("/logout")

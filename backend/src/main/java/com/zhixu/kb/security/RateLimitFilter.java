@@ -1,12 +1,14 @@
 package com.zhixu.kb.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zhixu.kb.common.result.Result;
+import com.zhixu.kb.common.utils.ClientIpResolver;
 import com.zhixu.kb.common.utils.SecurityUtils;
 import com.zhixu.kb.config.AppProperties;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.servlet.FilterChain;
@@ -14,27 +16,37 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 接口限流过滤器：按用户/IP 每分钟请求数限制，防止滥用。
- * /api/auth/login 与 /api/auth/guest 走独立且更严格的 IP 维度限流（防暴力破解/刷号）。
+ * /api/auth/login 等认证入口走独立且更严格的 IP 维度限流（防暴力破解/刷号）。
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final int AUTH_IP_PER_MINUTE = 20;
 
+    private static final String[] AUTH_ENTRY_PREFIXES = {
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/email-code",
+            "/api/auth/sms-code",
+            "/api/auth/oauth"
+    };
+
     private static class Counter {
         private long minuteWindow;
         private final AtomicInteger count = new AtomicInteger(0);
     }
 
-    private final Map<String, Counter> counters = new ConcurrentHashMap<>();
+    /** 限流计数器：2 分钟无访问自动过期，避免内存无限增长与手动清理开销 */
+    private final Cache<String, Counter> counters = Caffeine.newBuilder()
+            .expireAfterAccess(Duration.ofMinutes(2))
+            .maximumSize(50_000)
+            .build();
     private final AppProperties appProperties;
     private final ObjectMapper objectMapper;
 
@@ -53,12 +65,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 || path.startsWith("/swagger-ui");
     }
 
+    private boolean isAuthEntry(String path) {
+        for (String prefix : AUTH_ENTRY_PREFIXES) {
+            if (path.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String path = request.getRequestURI();
-        boolean authEntry = path.startsWith("/api/auth/login") || path.startsWith("/api/auth/guest");
+        boolean authEntry = isAuthEntry(path);
 
         String identity;
         int threshold;
@@ -71,7 +92,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         long currentMinute = Instant.now().getEpochSecond() / 60;
-        Counter counter = counters.computeIfAbsent(identity, k -> new Counter());
+        Counter counter = counters.get(identity, k -> new Counter());
         synchronized (counter) {
             if (counter.minuteWindow != currentMinute) {
                 counter.minuteWindow = currentMinute;
@@ -87,8 +108,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
             }
         }
 
-        cleanupExpired();
-
         filterChain.doFilter(request, response);
     }
 
@@ -100,43 +119,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return "ip:" + resolveClientIp(request);
     }
 
-    /**
-     * 获取客户端真实 IP：仅在请求来自本机代理时信任 X-Forwarded-For / X-Real-IP，
-     * 避免外部请求伪造代理头绕过限流。
-     */
     private String resolveClientIp(HttpServletRequest request) {
-        String remoteAddr = request.getRemoteAddr();
-        boolean localProxy = "127.0.0.1".equals(remoteAddr) || "::1".equals(remoteAddr);
-        if (localProxy) {
-            String forwarded = request.getHeader("X-Forwarded-For");
-            if (StringUtils.hasText(forwarded)) {
-                String first = forwarded.split(",")[0].trim();
-                if (!first.isEmpty()) {
-                    return first;
-                }
-            }
-            String realIp = request.getHeader("X-Real-IP");
-            if (StringUtils.hasText(realIp)) {
-                return realIp.trim();
-            }
-        }
-        return remoteAddr;
+        return ClientIpResolver.resolve(request);
     }
 
-    /**
-     * 惰性清理：仅当计数器规模过大时回收超过 2 分钟的旧条目，避免内存无限增长。
-     */
-    private void cleanupExpired() {
-        if (counters.size() <= 4096) {
-            return;
-        }
-        long nowMinute = Instant.now().getEpochSecond() / 60;
-        Iterator<Map.Entry<String, Counter>> it = counters.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<String, Counter> entry = it.next();
-            if (nowMinute - entry.getValue().minuteWindow > 2) {
-                it.remove();
-            }
-        }
-    }
 }

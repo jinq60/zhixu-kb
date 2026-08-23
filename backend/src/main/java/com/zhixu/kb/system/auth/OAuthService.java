@@ -18,14 +18,14 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Collections;
-import java.util.UUID;
 
 /**
  * 第三方 OAuth 登录：GitHub / Google / QQ。
  * 统一 authorize 地址生成与 callback 处理，首次登录自动注册。
+ * 安全加固：state 防登录 CSRF；回调不再携带 JWT，改为一次性 exchange code 换发。
  */
 @Slf4j
 @Service
@@ -37,6 +37,7 @@ public class OAuthService {
     private final ObjectMapper objectMapper;
     private final IdentityService identityService;
     private final AuthService authService;
+    private final OAuthStateStore oAuthStateStore;
 
     public String authorizeUrl(String provider) {
         OAuthProperties.Provider config = getConfig(provider);
@@ -47,7 +48,7 @@ public class OAuthService {
         if (!StringUtils.hasText(backendCallback)) {
             backendCallback = defaultBackendCallback(provider);
         }
-        String state = UUID.randomUUID().toString();
+        String state = oAuthStateStore.createState();
         switch (provider) {
             case AuthMethod.GITHUB:
                 return UriComponentsBuilder.fromHttpUrl("https://github.com/login/oauth/authorize")
@@ -82,11 +83,47 @@ public class OAuthService {
         if (!StringUtils.hasText(code)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "授权码为空");
         }
+        if (!oAuthStateStore.consumeState(state)) {
+            log.warn("OAuth state 校验失败 provider={}", provider);
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "OAuth state 校验失败，请重新发起授权");
+        }
         OAuthUserInfo userInfo = fetchUserInfo(provider, code);
         SysUser user = findOrCreateUser(provider, userInfo);
         identityService.syncEmailIfEmpty(user.getId(), userInfo.getEmail());
         String token = authService.generateTokenForUser(user);
-        return oAuthProperties.getFrontendCallback() + "?token=" + token;
+        String exchangeCode = oAuthStateStore.createToken(token);
+        return validateFrontendCallback() + "?code=" + exchangeCode;
+    }
+
+    /**
+     * 用一次性 exchange code 换取 JWT：code 60 秒有效且只能使用一次。
+     */
+    public String exchangeToken(String code) {
+        String token = oAuthStateStore.takeToken(code);
+        if (!StringUtils.hasText(token)) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "授权码无效或已过期，请重新登录");
+        }
+        return token;
+    }
+
+    private String validateFrontendCallback() {
+        String callback = oAuthProperties.getFrontendCallback();
+        if (!StringUtils.hasText(callback)) {
+            throw new BusinessException(ResultCode.SERVER_ERROR, "前端回调地址未配置");
+        }
+        try {
+            URI uri = new URI(callback);
+            boolean validScheme = "http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme());
+            if (!validScheme || !StringUtils.hasText(uri.getHost())) {
+                throw new BusinessException(ResultCode.SERVER_ERROR, "前端回调地址配置不合法");
+            }
+            if (StringUtils.hasText(uri.getQuery()) || StringUtils.hasText(uri.getFragment())) {
+                throw new BusinessException(ResultCode.SERVER_ERROR, "前端回调地址不允许携带 query/fragment");
+            }
+        } catch (URISyntaxException e) {
+            throw new BusinessException(ResultCode.SERVER_ERROR, "前端回调地址配置不合法");
+        }
+        return callback;
     }
 
     private OAuthUserInfo fetchUserInfo(String provider, String code) {
@@ -132,23 +169,27 @@ public class OAuthService {
 
         String login = userNode.path("login").asText();
         Long githubId = userNode.path("id").asLong();
-        String email = userNode.path("email").asText();
-        if (!StringUtils.hasText(email)) {
-            try {
-                ResponseEntity<String> emailResp = restTemplate.exchange(
-                        "https://api.github.com/user/emails", HttpMethod.GET, userRequest, String.class);
-                JsonNode emails = readJson(emailResp.getBody());
-                if (emails.isArray()) {
-                    for (JsonNode e : emails) {
-                        if (e.path("primary").asBoolean() && e.path("verified").asBoolean()) {
-                            email = e.path("email").asText();
-                            break;
-                        }
+        if (githubId == null || githubId <= 0) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "GitHub 授权失败：无法获取用户标识");
+        }
+        // 安全：/user 的公开 profile email 未经验证，不得用于账号关联；
+        // 仅使用 /user/emails 中 primary+verified 的邮箱（与 Google 的 email_verified 对齐），
+        // 否则攻击者可把自己的公开邮箱设为受害者邮箱来绑定其账号。
+        String email = "";
+        try {
+            ResponseEntity<String> emailResp = restTemplate.exchange(
+                    "https://api.github.com/user/emails", HttpMethod.GET, userRequest, String.class);
+            JsonNode emails = readJson(emailResp.getBody());
+            if (emails.isArray()) {
+                for (JsonNode e : emails) {
+                    if (e.path("primary").asBoolean() && e.path("verified").asBoolean()) {
+                        email = e.path("email").asText();
+                        break;
                     }
                 }
-            } catch (Exception ex) {
-                log.warn("获取 GitHub 邮箱失败: {}", ex.getMessage());
             }
+        } catch (Exception ex) {
+            log.warn("获取 GitHub 邮箱失败: {}", ex.getMessage());
         }
         OAuthUserInfo info = new OAuthUserInfo();
         info.setProvider(AuthMethod.GITHUB);
@@ -181,10 +222,11 @@ public class OAuthService {
                 "https://openidconnect.googleapis.com/v1/userinfo", HttpMethod.GET, userRequest, String.class);
         JsonNode userNode = readJson(userResp.getBody());
 
+        boolean emailVerified = userNode.path("email_verified").asBoolean(false);
         OAuthUserInfo info = new OAuthUserInfo();
         info.setProvider(AuthMethod.GOOGLE);
         info.setAccount(userNode.path("sub").asText());
-        info.setEmail(userNode.path("email").asText());
+        info.setEmail(emailVerified ? userNode.path("email").asText() : "");
         info.setNickname(userNode.path("name").asText());
         return info;
     }

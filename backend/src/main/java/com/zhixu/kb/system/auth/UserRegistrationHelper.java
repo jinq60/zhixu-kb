@@ -37,7 +37,13 @@ public class UserRegistrationHelper {
         user.setEmail(email);
         user.setPassword(passwordEncoder.encode(rawPassword));
         user.setStatus(1);
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (org.springframework.dao.DuplicateKeyException ex) {
+            // 并发注册撞唯一索引：给出友好提示而非 500，避免脏数据让该用户名/邮箱永久无法登录
+            throw new com.zhixu.kb.common.exception.BusinessException(
+                    com.zhixu.kb.common.result.ResultCode.BAD_REQUEST, "用户名或邮箱已存在，请更换后重试");
+        }
 
         SysRole role = roleMapper.selectOne(new QueryWrapper<SysRole>().lambda()
                 .eq(SysRole::getRoleKey, "user"));

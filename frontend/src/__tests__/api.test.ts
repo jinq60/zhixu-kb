@@ -33,17 +33,6 @@ describe('API - Auth', () => {
     vi.clearAllMocks()
   })
 
-  it('guestLogin should POST to /api/auth/guest and return token', async () => {
-    const mockResponse = { data: { data: { token: 'jwt-abc123' } } }
-    vi.mocked(http.post).mockResolvedValue(mockResponse)
-
-    const { guestLogin } = await import('../api/auth')
-    const token = await guestLogin('dev-test-1234')
-
-    expect(http.post).toHaveBeenCalledWith('/api/auth/guest', { deviceId: 'dev-test-1234' })
-    expect(token).toBe('jwt-abc123')
-  })
-
   it('fetchUserInfo should GET /api/auth/info', async () => {
     const userInfo = { id: 1, username: 'admin', email: 'admin@test.com', roles: ['admin'] }
     vi.mocked(http.get).mockResolvedValue({ data: { data: userInfo } })

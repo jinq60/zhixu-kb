@@ -45,8 +45,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             token = header.substring(7);
         }
 
-        // Support token in query string for resources requested by <img src="...">.
-        if (!StringUtils.hasText(token)) {
+        // Support token in query string ONLY for <img src="..."> resource loading:
+        // 仅 GET /api/files/*/content 且 Accept 为图片时才允许，避免 token 进入
+        // 浏览器历史/Referer/网关日志等泄露面。
+        if (!StringUtils.hasText(token) && isQueryTokenAllowed(request)) {
             String queryToken = request.getParameter("token");
             if (StringUtils.hasText(queryToken) && queryToken.length() <= MAX_QUERY_TOKEN_LENGTH) {
                 token = queryToken;
@@ -85,5 +87,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isQueryTokenAllowed(HttpServletRequest request) {
+        if (!"GET".equalsIgnoreCase(request.getMethod())) {
+            return false;
+        }
+        String path = request.getRequestURI();
+        if (path == null || !path.startsWith("/api/files/") || !path.endsWith("/content")) {
+            return false;
+        }
+        String accept = request.getHeader("Accept");
+        return accept != null && accept.contains("image/");
     }
 }

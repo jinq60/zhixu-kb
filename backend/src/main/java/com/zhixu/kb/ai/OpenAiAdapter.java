@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhixu.kb.config.AiProperties;
 import com.zhixu.kb.ai.service.UserAiConfigService;
 import com.zhixu.kb.common.utils.SafeUrlValidator;
-import com.zhixu.kb.security.SensitiveDataSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -31,6 +30,8 @@ public class OpenAiAdapter implements AIEngineAdapter {
     private static final Logger log = LoggerFactory.getLogger(OpenAiAdapter.class);
 
     private final RestTemplate restTemplate;
+    /** 非流式补全专用：读超时按配置（默认 120s），避免挂起的端点长期占用线程（共享 RestTemplate 读超时为 300s） */
+    private final RestTemplate completionRestTemplate;
     private final AiProperties aiProperties;
     private final ObjectMapper objectMapper;
     private final UserAiConfigService userAiConfigService;
@@ -46,39 +47,122 @@ public class OpenAiAdapter implements AIEngineAdapter {
         this.objectMapper = objectMapper;
         this.userAiConfigService = userAiConfigService;
         this.aiApiPool = aiApiPool;
+        org.springframework.http.client.SimpleClientHttpRequestFactory completionFactory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        completionFactory.setConnectTimeout(5000);
+        int readTimeout = aiProperties.getApi().getTimeoutMs() == null ? 120000 : aiProperties.getApi().getTimeoutMs();
+        completionFactory.setReadTimeout(Math.max(10000, readTimeout));
+        this.completionRestTemplate = new RestTemplate(completionFactory);
+    }
+
+    /**
+     * 当前请求线程是否已尝试过用户自配端点（失败后回落平台端点池）。
+     * 使用实例字段，避免静态 ThreadLocal 在线程池复用场景下跨请求污染。
+     */
+    private final ThreadLocal<Boolean> userConfigTried = new ThreadLocal<>();
+
+    /** 最近一次上游失败的 HTTP 状态（用于降级文案给出针对性引导，如 402 余额不足） */
+    private final ThreadLocal<Integer> lastErrorStatus = new ThreadLocal<>();
+
+    /**
+     * 从异常链中提取上游 HTTP 状态码（RestTemplate 的 HttpStatusCodeException 或
+     * streamCompletion 抛出的 "http 402 ..." 消息），无法识别返回 0。
+     */
+    private int extractHttpStatus(Throwable ex) {
+        if (ex instanceof org.springframework.web.client.HttpStatusCodeException) {
+            return ((org.springframework.web.client.HttpStatusCodeException) ex).getRawStatusCode();
+        }
+        Throwable cause = ex;
+        while (cause != null) {
+            String msg = cause.getMessage();
+            if (msg != null) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("http (\\d{3})").matcher(msg);
+                if (m.find()) {
+                    return Integer.parseInt(m.group(1));
+                }
+            }
+            cause = cause.getCause();
+        }
+        return 0;
     }
 
     /**
      * 解析当前请求生效的云端 API 配置：
-     * 用户自配（多厂商）优先；否则从平台端点池轮询选择（失败自动切换）。
+     * 用户自配（多厂商）优先；用户端点失败后回落平台端点池（失败自动切换）。
      */
     private ResolvedApi resolveApi() {
-        java.util.Optional<UserAiConfigService.ResolvedApiConfig> userConfig = userAiConfigService.resolveApiConfig();
-        if (userConfig.isPresent()) {
-            UserAiConfigService.ResolvedApiConfig cfg = userConfig.get();
-            return new ResolvedApi(cfg.getBaseUrl(), cfg.getApiKey(), cfg.getModel(),
-                    aiProperties.getApi().getTimeoutMs(), aiProperties.getApi().getMaxRetries(), null);
+        Boolean tried = userConfigTried.get();
+        if (tried == null || !tried) {
+            java.util.Optional<UserAiConfigService.ResolvedApiConfig> userConfig = userAiConfigService.resolveApiConfig();
+            if (userConfig.isPresent()) {
+                UserAiConfigService.ResolvedApiConfig cfg = userConfig.get();
+                // SSRF 防护：实际发起请求前再次校验用户自配地址
+                SafeUrlValidator.validateBeforeRequest(cfg.getBaseUrl());
+                return new ResolvedApi(cfg.getBaseUrl(), cfg.getApiKey(), cfg.getModel(),
+                        aiProperties.getApi().getTimeoutMs(), aiProperties.getApi().getMaxRetries(), null, true);
+            }
         }
         AiApiPool.Endpoint endpoint = aiApiPool.select();
         if (endpoint != null) {
+            // SSRF 防护：端点池地址在调用前重新校验（防止保存后 DNS 被重绑定）
+            SafeUrlValidator.validateBeforeRequest(endpoint.getBaseUrl());
             return new ResolvedApi(endpoint.getBaseUrl(), endpoint.getApiKey(), endpoint.getModel(),
-                    aiProperties.getApi().getTimeoutMs(), aiProperties.getApi().getMaxRetries(), endpoint);
+                    aiProperties.getApi().getTimeoutMs(), aiProperties.getApi().getMaxRetries(), endpoint, false);
         }
         ResolvedApi resolved = new ResolvedApi(
                 aiProperties.getApi().getBaseUrl(),
                 aiProperties.getApi().getApiKey(),
                 aiProperties.getApi().getModel(),
                 aiProperties.getApi().getTimeoutMs(),
-                aiProperties.getApi().getMaxRetries(), null);
+                aiProperties.getApi().getMaxRetries(), null, false);
         if (StringUtils.hasText(resolved.getBaseUrl())) {
             SafeUrlValidator.validateBeforeRequest(resolved.getBaseUrl());
         }
         return resolved;
     }
 
+    private void markEndpointFailure(ResolvedApi api) {
+        if (api == null) {
+            return;
+        }
+        if (api.isUserConfig()) {
+            // 用户自配端点失败：标记后下一轮回落平台端点池
+            userConfigTried.set(Boolean.TRUE);
+            log.warn("user ai config failed, fallback to platform endpoint pool: baseUrl={} model={}",
+                    api.getBaseUrl(), api.getModel());
+        }
+        aiApiPool.markFailure(api.getPoolEndpoint());
+    }
+
+    private void clearEndpointState(ResolvedApi api) {
+        userConfigTried.remove();
+        if (api != null && !api.isUserConfig()) {
+            aiApiPool.markSuccess(api.getPoolEndpoint());
+        }
+    }
+
+    /**
+     * 客户端取消流式应答（SseEmitter 断开等）：属于客户端行为，
+     * 不得将其归因为上游端点故障（避免污染共享端点池冷却）。
+     */
+    private static final class ClientStreamCancelledException extends RuntimeException {
+        ClientStreamCancelledException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    /**
+     * 上游在输出部分内容后未发送 [DONE] 即断流（截断应答）。
+     * 不重试（避免向客户端重放重复内容），仅标记端点失败并追加降级提示。
+     */
+    private static final class StreamTruncatedException extends IllegalStateException {
+        StreamTruncatedException(String message) {
+            super(message);
+        }
+    }
+
     @Override
     public String generateResponse(String prompt, Map<String, Object> parameters) {
-        String sanitizedPrompt = SensitiveDataSanitizer.maskText(prompt);
         long start = System.currentTimeMillis();
         ResolvedApi api = resolveApi();
         if (!StringUtils.hasText(api.getApiKey())) {
@@ -86,26 +170,34 @@ public class OpenAiAdapter implements AIEngineAdapter {
         }
         int attempts = Math.max(1, api.getMaxRetries() == null ? 1 : api.getMaxRetries());
         String lastText = fallback();
-        for (int attempt = 1; attempt <= attempts; attempt++) {
-            try {
-                String text = requestCompletion(sanitizedPrompt, parameters, api);
-                if (!StringUtils.hasText(text)) {
-                    throw new IllegalStateException("empty completion response");
-                }
-                aiApiPool.markSuccess(api.getPoolEndpoint());
-                return text;
-            } catch (Exception ex) {
-                // 端点失败：进入冷却，下一次循环自动切换到池中其他端点
-                aiApiPool.markFailure(api.getPoolEndpoint());
-                if (attempt < attempts) {
-                    api = resolveApi();
-                    sleepBackoff(attempt);
+        try {
+            for (int attempt = 1; attempt <= attempts; attempt++) {
+                try {
+                    String text = requestCompletion(prompt, parameters, api);
+                    if (!StringUtils.hasText(text)) {
+                        throw new IllegalStateException("empty completion response");
+                    }
+                    clearEndpointState(api);
+                    return text;
+                } catch (Exception ex) {
+                    // 端点失败：用户端点回落平台池；平台端点进入冷却，下一次循环自动切换
+                    lastErrorStatus.set(extractHttpStatus(ex));
+                    log.warn("ai request failed: attempt={} err={}", attempt, ex.getMessage());
+                    markEndpointFailure(api);
+                    if (attempt < attempts) {
+                        api = resolveApi();
+                        sleepBackoff(attempt);
+                    }
                 }
             }
+            log.warn("traceId={} aiEngine=openapi action=generate all_attempts_failed costMs={}",
+                    MDC.get("traceId"), System.currentTimeMillis() - start);
+            return lastText;
+        } finally {
+            // 任何退出路径（含 resolveApi 异常）都必须清理线程本地状态，防止跨请求串用
+            userConfigTried.remove();
+            lastErrorStatus.remove();
         }
-        log.warn("traceId={} aiEngine=openapi action=generate all_attempts_failed costMs={}",
-                MDC.get("traceId"), System.currentTimeMillis() - start);
-        return lastText;
     }
 
     @Override
@@ -115,7 +207,6 @@ public class OpenAiAdapter implements AIEngineAdapter {
         if (chunkConsumer == null) {
             return;
         }
-        String sanitizedPrompt = SensitiveDataSanitizer.maskText(prompt);
         long start = System.currentTimeMillis();
         ResolvedApi api = resolveApi();
         try {
@@ -127,14 +218,26 @@ public class OpenAiAdapter implements AIEngineAdapter {
             int attempts = maxAttempts();
             for (int attempt = 1; attempt <= attempts; attempt++) {
                 try {
-                    boolean streamed = streamCompletion(sanitizedPrompt, parameters, chunkConsumer, api);
+                    boolean streamed = streamCompletion(prompt, parameters, chunkConsumer, api);
                     if (streamed) {
-                        aiApiPool.markSuccess(api.getPoolEndpoint());
+                        clearEndpointState(api);
                         return;
                     }
+                } catch (ClientStreamCancelledException ex) {
+                    // 客户端主动断开：不算端点故障，不冷却、不降级
+                    log.debug("client cancelled ai stream: traceId={}", MDC.get("traceId"));
+                    return;
+                } catch (StreamTruncatedException ex) {
+                    // 截断应答：标记端点失败但不重试（重试会重放已输出内容），追加降级提示后结束
+                    log.warn("ai stream truncated: traceId={} err={}", MDC.get("traceId"), ex.getMessage());
+                    lastErrorStatus.set(extractHttpStatus(ex));
+                    markEndpointFailure(api);
+                    break;
                 } catch (Exception ex) {
-                    // 端点失败：冷却并切换池中其他端点
-                    aiApiPool.markFailure(api.getPoolEndpoint());
+                    // 端点失败：用户端点回落平台池；平台端点进入冷却并切换
+                    lastErrorStatus.set(extractHttpStatus(ex));
+                    log.warn("ai stream request failed: attempt={} err={}", attempt, ex.getMessage());
+                    markEndpointFailure(api);
                     if (attempt >= attempts) {
                         break;
                     }
@@ -144,11 +247,13 @@ public class OpenAiAdapter implements AIEngineAdapter {
             }
             streamFallback(chunkConsumer);
         } finally {
+            userConfigTried.remove();
+            lastErrorStatus.remove();
             long cost = System.currentTimeMillis() - start;
             log.info("traceId={} aiEngine=openapi action=stream costMs={} promptDigest={}",
                     MDC.get("traceId"),
                     cost,
-                    digestText(sanitizedPrompt));
+                    digestText(prompt));
         }
     }
 
@@ -166,7 +271,8 @@ public class OpenAiAdapter implements AIEngineAdapter {
         try {
             String url = api.getBaseUrl() + "/models";
             HttpEntity<Void> entity = new HttpEntity<Void>(buildHeaders(api));
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            // 健康探测使用独立短超时（5s/10s），避免慢端点把 health 接口拖住
+            ResponseEntity<Map> response = healthRestTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
             boolean healthy = response.getStatusCode().is2xxSuccessful();
             cachedHealthy = healthy;
             lastHealthProbeMs = now;
@@ -182,6 +288,16 @@ public class OpenAiAdapter implements AIEngineAdapter {
     private static final long HEALTH_PROBE_TTL_MS = 60_000L;
     private volatile long lastHealthProbeMs = 0L;
     private volatile boolean cachedHealthy = false;
+
+    private static final RestTemplate healthRestTemplate = createHealthRestTemplate();
+
+    private static RestTemplate createHealthRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(10000);
+        return new RestTemplate(factory);
+    }
 
     private HttpHeaders buildHeaders(ResolvedApi api) {
         HttpHeaders headers = new HttpHeaders();
@@ -199,7 +315,7 @@ public class OpenAiAdapter implements AIEngineAdapter {
                 buildChatPayload(sanitizedPrompt, parameters, false, api),
                 headers
         );
-        ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
+        ResponseEntity<Map> response = completionRestTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
         Map<String, Object> body = response.getBody();
         if (body == null) {
             return null;
@@ -220,29 +336,31 @@ public class OpenAiAdapter implements AIEngineAdapter {
         return contentObj == null ? null : contentObj.toString();
     }
 
-    private boolean streamCompletion(String sanitizedPrompt,
+    private boolean streamCompletion(String prompt,
                                      Map<String, Object> parameters,
                                      Consumer<String> chunkConsumer,
                                      ResolvedApi api) throws Exception {
         String url = api.getBaseUrl() + "/chat/completions";
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        BufferedReader reader = null;
         try {
             // SSRF 防护：禁止自动跟随重定向
             connection.setInstanceFollowRedirects(false);
             int timeoutMs = api.getTimeoutMs() == null ? 30000 : api.getTimeoutMs();
             connection.setConnectTimeout(Math.max(1000, timeoutMs));
-            connection.setReadTimeout(Math.max(1000, timeoutMs));
+            // 流式应答按块间最长等待 120s（模型长思考不会误断流）
+            connection.setReadTimeout(120_000);
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
             connection.setRequestProperty(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
             connection.setRequestProperty(HttpHeaders.AUTHORIZATION, "Bearer " + api.getApiKey());
 
-            Map<String, Object> payload = buildChatPayload(sanitizedPrompt, parameters, true, api);
+            Map<String, Object> payload = buildChatPayload(prompt, parameters, true, api);
             byte[] bytes = objectMapper.writeValueAsBytes(payload);
-            OutputStream outputStream = connection.getOutputStream();
-            outputStream.write(bytes);
-            outputStream.flush();
-            outputStream.close();
+            try (OutputStream outputStream = connection.getOutputStream()) {
+                outputStream.write(bytes);
+                outputStream.flush();
+            }
 
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
@@ -250,8 +368,9 @@ public class OpenAiAdapter implements AIEngineAdapter {
             }
 
             InputStream stream = connection.getInputStream();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+            reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
             boolean emitted = false;
+            boolean done = false;
             String line;
             while ((line = reader.readLine()) != null) {
                 String trimmed = line.trim();
@@ -260,17 +379,38 @@ public class OpenAiAdapter implements AIEngineAdapter {
                 }
                 String json = trimmed.substring(5).trim();
                 if ("[DONE]".equals(json)) {
+                    done = true;
                     break;
                 }
                 String delta = extractStreamContent(json);
                 if (StringUtils.hasText(delta)) {
-                    chunkConsumer.accept(delta);
-                    emitted = true;
+                    try {
+                        chunkConsumer.accept(delta);
+                        emitted = true;
+                    } catch (ClientStreamCancelledException e) {
+                        throw e;
+                    } catch (RuntimeException e) {
+                        // 消费方（SseEmitter）异常 = 客户端断开，不视为上游故障
+                        throw new ClientStreamCancelledException(e);
+                    }
                 }
             }
-            reader.close();
-            return emitted;
+            if (!done && emitted) {
+                // 上游未发送 [DONE] 就断流：按截断处理，不吞掉截断答案
+                throw new StreamTruncatedException("stream terminated unexpectedly before [DONE]");
+            }
+            if (!done) {
+                return false;
+            }
+            return true;
         } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (Exception ignored) {
+                    // ignore close error
+                }
+            }
             connection.disconnect();
         }
     }
@@ -379,8 +519,30 @@ public class OpenAiAdapter implements AIEngineAdapter {
         }
     }
 
+    /**
+     * 降级文案：始终以"暂时无法调用外部模型"开头（清洗/整理链路据此识别并降级到本地规则），
+     * 并按失败原因给出针对性引导（402 余额不足 / 401 无效 Key / 429 限流 / 其他），
+     * 引导用户到「AI 设置」配置自己的 API Key。
+     */
     private String fallback() {
-        return "暂时无法调用外部模型，请稍后重试或检查 AI 引擎配置。";
+        Integer status = lastErrorStatus.get();
+        switch (status == null ? 0 : status) {
+            case 402:
+                return "暂时无法调用外部模型（AI 引擎不可用）：平台默认 API 额度已用尽或余额不足（HTTP 402）。"
+                        + "请前往「AI 设置」配置你自己的 API Key（DeepSeek / OpenAI / 通义千问 / 智谱 / Kimi 等均可），"
+                        + "配置成功后即可正常使用 AI 功能。";
+            case 401:
+            case 403:
+                return "暂时无法调用外部模型（AI 引擎不可用）：平台默认 API Key 无效或已失效（HTTP " + lastErrorStatus + "）。"
+                        + "请前往「AI 设置」配置你自己的 API Key，配置成功后即可正常使用。";
+            case 429:
+                return "暂时无法调用外部模型（AI 引擎不可用）：请求过于频繁，已被限流（HTTP 429）。"
+                        + "请稍后重试，或前往「AI 设置」配置你自己的 API Key 以获得独立配额。";
+            default:
+                return "暂时无法调用外部模型（AI 引擎不可用）：平台默认模型暂时无法访问。"
+                        + "请前往「AI 设置」配置你自己的 API Key（DeepSeek / OpenAI / 通义千问 / 智谱 / Kimi 等均可），"
+                        + "配置成功后即可正常使用 AI 功能。";
+        }
     }
 
     private String digestText(String text) {
@@ -410,15 +572,21 @@ public class OpenAiAdapter implements AIEngineAdapter {
         private final Integer timeoutMs;
         private final Integer maxRetries;
         private final AiApiPool.Endpoint poolEndpoint;
+        private final boolean userConfig;
 
         ResolvedApi(String baseUrl, String apiKey, String model, Integer timeoutMs, Integer maxRetries,
-                    AiApiPool.Endpoint poolEndpoint) {
+                    AiApiPool.Endpoint poolEndpoint, boolean userConfig) {
             this.baseUrl = baseUrl;
             this.apiKey = apiKey;
             this.model = model;
             this.timeoutMs = timeoutMs;
             this.maxRetries = maxRetries;
             this.poolEndpoint = poolEndpoint;
+            this.userConfig = userConfig;
+        }
+
+        boolean isUserConfig() {
+            return userConfig;
         }
 
         String getBaseUrl() {

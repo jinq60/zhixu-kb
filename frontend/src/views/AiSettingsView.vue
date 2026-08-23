@@ -2,12 +2,6 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getAiConfig, saveAiConfig, clearAiConfig, testAiConnection, type AiUserConfig } from '../api/ai'
-import http from '../api/http'
-
-async function httpGetHealth() {
-  const { data } = await http.get('/api/v1/health', { timeout: 10000 })
-  return data.data
-}
 
 /** 多厂商预设（全部 OpenAI 兼容协议） */
 const PROVIDERS = [
@@ -23,18 +17,22 @@ const PROVIDERS = [
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const clearing = ref(false)
 const testResult = ref<{ success: boolean; message: string } | null>(null)
-const platformDefaultApi = ref(false)
 
 const form = ref({
   provider: 'deepseek',
   baseUrl: 'https://api.deepseek.com',
   apiKey: '',
   model: 'deepseek-chat',
+  embeddingBaseUrl: '',
+  embeddingApiKey: '',
+  embeddingModel: '',
   enabled: true
 })
 const configured = ref(false)
 const apiKeyMasked = ref('')
+const embeddingApiKeyMasked = ref('')
 
 const selectProvider = (key: string) => {
   const provider = PROVIDERS.find((p) => p.key === key)
@@ -56,14 +54,11 @@ const load = async () => {
       form.value.provider = config.provider || 'deepseek'
       form.value.baseUrl = config.baseUrl || ''
       form.value.model = config.model || ''
+      form.value.embeddingBaseUrl = config.embeddingBaseUrl || ''
+      form.value.embeddingApiKey = ''
+      form.value.embeddingModel = config.embeddingModel || ''
+      embeddingApiKeyMasked.value = config.embeddingApiKeyMasked || ''
       form.value.enabled = config.enabled
-    }
-    // 平台默认云端 API 是否已配置
-    try {
-      const health = await httpGetHealth()
-      platformDefaultApi.value = !!health?.platformDefaultApi
-    } catch {
-      // 忽略
     }
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || '加载配置失败')
@@ -92,12 +87,23 @@ const handleSave = async () => {
       baseUrl: form.value.baseUrl.trim(),
       apiKey: form.value.apiKey.trim() || undefined,
       model: form.value.model.trim(),
+      embeddingBaseUrl: form.value.embeddingBaseUrl.trim() || undefined,
+      embeddingApiKey: form.value.embeddingApiKey.trim() || undefined,
+      embeddingModel: form.value.embeddingModel.trim() || undefined,
       enabled: form.value.enabled
     })
     configured.value = saved.configured
     apiKeyMasked.value = saved.apiKeyMasked || ''
+    embeddingApiKeyMasked.value = saved.embeddingApiKeyMasked || ''
     form.value.apiKey = ''
-    ElMessage.success('AI 配置已保存，之后所有 AI 功能（整理/问答/清洗）将使用该模型')
+    form.value.embeddingApiKey = ''
+    form.value.embeddingBaseUrl = saved.embeddingBaseUrl || ''
+    form.value.embeddingModel = saved.embeddingModel || ''
+    ElMessage.success(
+      saved.embeddingBaseUrl
+        ? 'AI 配置已保存，并已自动启用向量化（同一服务支持 embedding），所有功能均可使用'
+        : 'AI 配置已保存。当前服务不支持向量化，知识问答将使用关键词检索'
+    )
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || '保存失败')
   } finally {
@@ -130,11 +136,23 @@ const handleTest = async () => {
 }
 
 const handleClear = async () => {
-  await clearAiConfig()
-  configured.value = false
-  apiKeyMasked.value = ''
-  form.value.apiKey = ''
-  ElMessage.success('已清除配置，将使用平台默认云端模型')
+  clearing.value = true
+  try {
+    await clearAiConfig()
+    configured.value = false
+    apiKeyMasked.value = ''
+    embeddingApiKeyMasked.value = ''
+    form.value.apiKey = ''
+    form.value.embeddingApiKey = ''
+    form.value.embeddingBaseUrl = ''
+    form.value.embeddingModel = ''
+    ElMessage.success('已清除配置，将使用平台默认云端模型')
+  } catch (e: any) {
+    // 清除失败时保持界面状态不变，避免 UI 与后端不一致
+    ElMessage.error(e?.response?.data?.message || '清除配置失败，请稍后重试')
+  } finally {
+    clearing.value = false
+  }
 }
 
 onMounted(load)
@@ -144,30 +162,13 @@ onMounted(load)
   <div class="ai-settings-page">
     <div class="page-header">
       <h2>AI 模型设置</h2>
-      <p>配置你自己的 API Key 使用指定模型；不配置时自动使用平台默认云端模型（免费）</p>
+      <p>配置你自己的 API Key 使用指定模型（推荐，稳定不受平台额度影响）；不配置时自动使用平台默认云端模型</p>
     </div>
 
     <el-card v-loading="loading" shadow="never" class="panel-card">
       <el-alert type="info" :closable="false" class="tip-alert">
         <template #title>
-          使用优先级：你的 API Key（多厂商） → 平台默认云端模型（免费）
-        </template>
-      </el-alert>
-
-      <div class="engine-status">
-        <span class="status-label">当前引擎</span>
-        <el-tag type="primary" effect="light">云端 API</el-tag>
-        <span class="status-tip">响应快、效果佳</span>
-      </div>
-
-      <el-alert v-if="platformDefaultApi" type="success" :closable="false" class="tip-alert">
-        <template #title>
-          平台已配置默认云端模型：所有用户无需配置即可直接使用 AI 功能；配置你自己的 Key 可切换到指定模型。
-        </template>
-      </el-alert>
-      <el-alert v-else type="warning" :closable="false" class="tip-alert">
-        <template #title>
-          平台暂未配置默认模型。请配置你自己的 API Key 使用云端模型（推荐）。
+          使用优先级：你的 API Key（多厂商） → 平台默认云端模型（平台额度有限，推荐自配 Key）
         </template>
       </el-alert>
 
@@ -198,6 +199,25 @@ onMounted(load)
           <el-input v-model="form.model" placeholder="deepseek-chat" style="width: 420px" />
         </el-form-item>
 
+        <el-divider content-position="left">向量化配置（可选）</el-divider>
+        <el-form-item label="向量化地址">
+          <el-input v-model="form.embeddingBaseUrl" placeholder="如 https://api.siliconflow.cn/v1，留空使用平台端点" style="width: 420px" />
+          <span class="form-tip">向量化需要 embedding 模型，与对话模型分开配置</span>
+        </el-form-item>
+        <el-form-item label="向量化 Key">
+          <el-input
+            v-model="form.embeddingApiKey"
+            type="password"
+            show-password
+            :placeholder="embeddingApiKeyMasked ? `已保存（${embeddingApiKeyMasked}），留空保持不变` : 'sk-...'"
+            style="width: 420px"
+          />
+        </el-form-item>
+        <el-form-item label="向量化模型">
+          <el-input v-model="form.embeddingModel" placeholder="text-embedding-3-small（如 BAAI/bge-m3）" style="width: 420px" />
+          <span class="form-tip">推荐：硅基流动 BAAI/bge-m3，或 OpenAI text-embedding-3-small</span>
+        </el-form-item>
+
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -206,7 +226,7 @@ onMounted(load)
           <div class="action-row">
             <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
             <el-button :loading="testing" @click="handleTest">测试连接</el-button>
-            <el-button v-if="configured" type="danger" plain @click="handleClear">清除配置（改用平台默认模型）</el-button>
+            <el-button v-if="configured" type="danger" plain :loading="clearing" @click="handleClear">清除配置（改用平台默认模型）</el-button>
           </div>
           <el-alert
             v-if="testResult"
@@ -247,28 +267,6 @@ onMounted(load)
 
 .tip-alert {
   margin-bottom: 18px;
-}
-
-.engine-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  background: #f8fbff;
-  border-radius: 10px;
-  margin-bottom: 18px;
-  flex-wrap: wrap;
-}
-
-.status-label {
-  color: #606266;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.status-tip {
-  color: #909399;
-  font-size: 12px;
 }
 
 .config-form {

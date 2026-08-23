@@ -10,6 +10,7 @@ import com.zhixu.kb.system.auth.AuthProvider;
 import com.zhixu.kb.system.auth.AuthProviderRegistry;
 import com.zhixu.kb.system.auth.AuthResult;
 import com.zhixu.kb.system.auth.EmailCodeService;
+import com.zhixu.kb.system.auth.IdentityService;
 import com.zhixu.kb.system.entity.SysRole;
 import com.zhixu.kb.system.entity.SysUser;
 import com.zhixu.kb.system.entity.SysUserRole;
@@ -60,6 +61,10 @@ class AuthServiceTest {
     private AuthProvider passwordAuthProvider;
     @Mock
     private EmailCodeService emailCodeService;
+    @Mock
+    private IdentityService identityService;
+    @Mock
+    private AuditLogService auditLogService;
 
     @InjectMocks
     private AuthService authService;

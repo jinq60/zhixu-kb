@@ -24,20 +24,30 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OCRClientService {
 
+    /** 熔断：连续失败 N 次后开路，冷却期内直接快速失败，避免每次请求阻塞 60-120s */
+    private static final int CIRCUIT_FAILURE_THRESHOLD = 3;
+    private static final long CIRCUIT_OPEN_MS = 30_000;
+
     private final OCRClientProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+    private volatile long circuitOpenedAt = 0;
+    private volatile RestTemplate restTemplate;
 
     public List<String> recognize(byte[] imageBytes) {
         return recognize(imageBytes, properties.getEngine());
     }
 
     public List<String> recognize(byte[] imageBytes, String requestedEngine) {
+        checkCircuit();
+
         String primaryEngine = normalizeEngine(requestedEngine);
         if (!StringUtils.hasText(primaryEngine)) {
             primaryEngine = normalizeEngine(properties.getEngine());
@@ -48,8 +58,11 @@ public class OCRClientService {
 
         try {
             String body = invokeRecognize(imageBytes, primaryEngine);
-            return parseRecognizeResponse(body);
+            List<String> result = parseRecognizeResponse(body);
+            onSuccess();
+            return result;
         } catch (BusinessException primaryErr) {
+            onFailure();
             String fallbackEngine = normalizeEngine(properties.getFallbackEngine());
             boolean canRetry = StringUtils.hasText(fallbackEngine)
                     && !fallbackEngine.equalsIgnoreCase(primaryEngine)
@@ -60,7 +73,36 @@ public class OCRClientService {
 
             log.warn("OCR primary engine '{}' failed, retrying fallback '{}'", primaryEngine, fallbackEngine);
             String body = invokeRecognize(imageBytes, fallbackEngine);
-            return parseRecognizeResponse(body);
+            List<String> fallbackResult = parseRecognizeResponse(body);
+            onSuccess();
+            return fallbackResult;
+        }
+    }
+
+    /**
+     * 熔断检查：开路期间直接快速失败，避免 OCR 服务不可用时每个请求都阻塞至超时。
+     */
+    private void checkCircuit() {
+        long openedAt = circuitOpenedAt;
+        if (openedAt > 0) {
+            long elapsed = System.currentTimeMillis() - openedAt;
+            if (elapsed < CIRCUIT_OPEN_MS) {
+                throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "OCR 服务暂不可用，请稍后再试");
+            }
+            circuitOpenedAt = 0;
+            consecutiveFailures.set(0);
+        }
+    }
+
+    private void onSuccess() {
+        circuitOpenedAt = 0;
+        consecutiveFailures.set(0);
+    }
+
+    private void onFailure() {
+        if (consecutiveFailures.incrementAndGet() >= CIRCUIT_FAILURE_THRESHOLD) {
+            circuitOpenedAt = System.currentTimeMillis();
+            log.warn("OCR 服务连续失败 {} 次，熔断 {} ms", CIRCUIT_FAILURE_THRESHOLD, CIRCUIT_OPEN_MS);
         }
     }
 
@@ -85,7 +127,7 @@ public class OCRClientService {
         HttpEntity<?> entity = new HttpEntity<Object>(bodyBuilder, headers);
 
         try {
-            ResponseEntity<String> response = buildRestTemplate().exchange(url, HttpMethod.POST, entity, String.class);
+            ResponseEntity<String> response = restTemplate().exchange(url, HttpMethod.POST, entity, String.class);
             if (!response.getStatusCode().is2xxSuccessful()) {
                 throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "OCR service unavailable");
             }
@@ -104,16 +146,21 @@ public class OCRClientService {
         }
     }
 
-    private RestTemplate buildRestTemplate() {
+    private RestTemplate restTemplate() {
+        RestTemplate existing = restTemplate;
+        if (existing != null) {
+            return existing;
+        }
         int timeout = properties.getTimeout() == null ? 60000 : properties.getTimeout();
         if (timeout <= 0) {
             timeout = 60000;
         }
-
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(timeout);
         factory.setReadTimeout(timeout);
-        return new RestTemplate(factory);
+        RestTemplate created = new RestTemplate(factory);
+        restTemplate = created;
+        return created;
     }
 
     private List<String> parseRecognizeResponse(String body) {

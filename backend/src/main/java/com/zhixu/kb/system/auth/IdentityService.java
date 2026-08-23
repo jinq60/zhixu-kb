@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.security.SecureRandom;
+
 /**
  * 用户身份统一解析：按 provider + account 查找，按 email 关联，否则创建新账号。
  * 保证同一邮箱/身份的多种登录方式最终落到同一个用户。
@@ -19,6 +21,8 @@ import org.springframework.util.StringUtils;
 @Service
 @RequiredArgsConstructor
 public class IdentityService {
+
+    private static final SecureRandom USERNAME_RANDOM = new SecureRandom();
 
     private final SysUserMapper userMapper;
     private final SysUserAuthMapper userAuthMapper;
@@ -62,7 +66,7 @@ public class IdentityService {
         String username = StringUtils.hasText(nickname) ? nickname : provider + "_" + account;
         if (userMapper.selectOne(new QueryWrapper<SysUser>().lambda()
                 .eq(SysUser::getUsername, username)) != null) {
-            username = username + "_" + System.currentTimeMillis() % 10000;
+            username = username + "_" + randomSuffix();
         }
         return registrationHelper.createUser(username, email, registrationHelper.randomPassword(), provider, account);
     }
@@ -140,6 +144,10 @@ public class IdentityService {
         if (base.length() > 20) {
             base = base.substring(0, 20);
         }
-        return base + "_" + System.currentTimeMillis() % 10000;
+        return base + "_" + randomSuffix();
+    }
+
+    private String randomSuffix() {
+        return String.format("%06d", USERNAME_RANDOM.nextInt(1000000));
     }
 }

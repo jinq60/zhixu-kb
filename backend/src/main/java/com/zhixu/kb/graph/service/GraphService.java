@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -37,14 +38,19 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class GraphService {
 
+    /** 分类/全局批量构建的笔记数量上限：超出建议分批构建，防止请求线程被长时间占用 */
+    private static final int MAX_BATCH_BUILD_NOTES = 20;
+
     private final Neo4jAccessor neo4jAccessor;
     private final GraphExtractionService extractionService;
     private final NoteMapper noteMapper;
+    /** 每用户同时只能有一个批量构建任务 */
+    private final Map<Long, Boolean> buildingUsers = new ConcurrentHashMap<>();
 
     public GraphBuildResult build(Long noteId) {
         Long userId = SecurityUtils.getUserId();
         Note note = noteMapper.selectById(noteId);
-        if (note == null || !note.getUserId().equals(userId)) {
+        if (userId == null || note == null || !userId.equals(note.getUserId())) {
             throw new BusinessException(ResultCode.NOT_FOUND, "笔记不存在");
         }
 
@@ -84,7 +90,7 @@ public class GraphService {
     public GraphData get(Long noteId) {
         Long userId = SecurityUtils.getUserId();
         Note note = noteMapper.selectById(noteId);
-        if (note == null || !note.getUserId().equals(userId)) {
+        if (userId == null || note == null || !userId.equals(note.getUserId())) {
             throw new BusinessException(ResultCode.NOT_FOUND, "笔记不存在");
         }
         if (!neo4jAccessor.isAvailable()) {
@@ -171,6 +177,17 @@ public class GraphService {
 
     public GraphBuildResult buildCategory(Long categoryId) {
         Long userId = SecurityUtils.getUserId();
+        if (buildingUsers.putIfAbsent(userId, Boolean.TRUE) != null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "已有图谱构建任务进行中，请稍后再试");
+        }
+        try {
+            return doBuildCategory(userId, categoryId);
+        } finally {
+            buildingUsers.remove(userId);
+        }
+    }
+
+    private GraphBuildResult doBuildCategory(Long userId, Long categoryId) {
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getUserId, userId)
                 .eq(categoryId != null, Note::getCategoryId, categoryId)
@@ -180,6 +197,11 @@ public class GraphService {
             GraphBuildResult result = new GraphBuildResult();
             result.setMessage(categoryId == null ? "当前账号下没有笔记" : "该分类下没有笔记");
             return result;
+        }
+        if (notes.size() > MAX_BATCH_BUILD_NOTES) {
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                    "一次最多构建 " + MAX_BATCH_BUILD_NOTES + " 篇笔记的图谱，当前 " + notes.size()
+                            + " 篇，请先按分类分批构建");
         }
 
         int totalEntities = 0;
@@ -437,30 +459,30 @@ public class GraphService {
 
         Boolean ok = neo4jAccessor.write("", params, (tx, cypher, p) -> {
             tx.run("MATCH (n:Note {id: $noteId}) DETACH DELETE n", p).consume();
-            tx.run("MATCH (e:Entity {userId: $userId}) WHERE size((e)--()) = 0 DELETE e").consume();
+            tx.run("MATCH (e:Entity {userId: $userId}) WHERE size((e)--()) = 0 DELETE e", p).consume();
             tx.run("MERGE (n:Note {id: $noteId}) SET n.title = $title, n.userId = $userId, n.categoryId = $categoryId", p).consume();
 
-            for (Map<String, Object> item : entityParams) {
-                Map<String, Object> entityMerge = mergeParams(p, item);
-                tx.run("MERGE (e:Entity {name: $name, userId: $userId}) SET e.type = $type, e.description = $description",
-                        entityMerge).consume();
-                tx.run("MATCH (n:Note {id: $noteId}) WITH n MATCH (e:Entity {name: $name, userId: $userId}) MERGE (n)-[:CONTAINS]->(e)",
-                        entityMerge).consume();
+            if (!entityParams.isEmpty()) {
+                Map<String, Object> entityBatch = new HashMap<>(p);
+                entityBatch.put("rows", entityParams);
+                tx.run("UNWIND $rows AS row " +
+                        "MERGE (e:Entity {name: row.name, userId: $userId}) " +
+                        "SET e.type = row.type, e.description = row.description", entityBatch).consume();
+                tx.run("UNWIND $rows AS row " +
+                        "MATCH (n:Note {id: $noteId}) " +
+                        "MATCH (e:Entity {name: row.name, userId: $userId}) " +
+                        "MERGE (n)-[:CONTAINS]->(e)", entityBatch).consume();
             }
-            for (Map<String, Object> item : relationParams) {
-                Map<String, Object> relMerge = mergeParams(p, item);
-                tx.run("MATCH (a:Entity {name: $source, userId: $userId}), (b:Entity {name: $target, userId: $userId}) " +
-                        "MERGE (a)-[r:RELATED {relation: $relation}]->(b)", relMerge).consume();
+            if (!relationParams.isEmpty()) {
+                Map<String, Object> relBatch = new HashMap<>(p);
+                relBatch.put("rows", relationParams);
+                tx.run("UNWIND $rows AS row " +
+                        "MATCH (a:Entity {name: row.source, userId: $userId}), (b:Entity {name: row.target, userId: $userId}) " +
+                        "MERGE (a)-[r:RELATED {relation: row.relation}]->(b)", relBatch).consume();
             }
             return Boolean.TRUE;
         });
         return Boolean.TRUE.equals(ok);
-    }
-
-    private Map<String, Object> mergeParams(Map<String, Object> base, Map<String, Object> extra) {
-        Map<String, Object> merged = new HashMap<>(base);
-        merged.putAll(extra);
-        return merged;
     }
 
     @SuppressWarnings("unchecked")

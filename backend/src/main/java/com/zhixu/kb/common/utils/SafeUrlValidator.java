@@ -20,7 +20,23 @@ import java.util.Locale;
  */
 public final class SafeUrlValidator {
 
+    /** DNS 解析器（测试可注入替身，避免依赖外部网络） */
+    private static volatile HostResolver hostResolver = SafeUrlValidator::resolveDefault;
+
     private SafeUrlValidator() {
+    }
+
+    @FunctionalInterface
+    interface HostResolver {
+        InetAddress[] resolve(String host) throws UnknownHostException;
+    }
+
+    static void setHostResolver(HostResolver resolver) {
+        hostResolver = resolver == null ? SafeUrlValidator::resolveDefault : resolver;
+    }
+
+    private static InetAddress[] resolveDefault(String host) throws UnknownHostException {
+        return InetAddress.getAllByName(host);
     }
 
     /**
@@ -57,8 +73,11 @@ public final class SafeUrlValidator {
         }
         InetAddress[] resolved;
         try {
-            resolved = InetAddress.getAllByName(host);
+            resolved = hostResolver.resolve(host);
         } catch (UnknownHostException ex) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "接口地址域名无法解析");
+        }
+        if (resolved == null || resolved.length == 0) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "接口地址域名无法解析");
         }
         for (InetAddress addr : resolved) {
@@ -111,6 +130,9 @@ public final class SafeUrlValidator {
             if (first >= 224) {
                 return true;
             }
+            // 198.18.0.0/15（benchmark 段）放行：Clash/Mihomo 等代理的 fake-ip 模式
+            // 将外网域名解析到该段，实际流量由代理 TUN 转发，并非真实内网服务；
+            // 真实内网段（10/172.16-31/192.168/169.254/100.64/127/224+）仍全部拒绝。
             return false;
         }
         if (addr instanceof Inet6Address) {
@@ -121,9 +143,8 @@ public final class SafeUrlValidator {
             if ((b[0] & 0xFF) == 0xFE && (b[1] & 0xC0) == 0x80) {
                 return true;
             }
-            if ((b[0] & 0xFE) == 0xFC) {
-                return true;
-            }
+            // fc00::/7（ULA）放行：fake-ip 代理会把外网域名解析到 ULA 段（如 fdfe:dcba::/48），
+            // 流量由代理转发；真实链路本地（fe80::/10）与 ::1 仍拒绝。
             return Arrays.equals(b, new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1});
         }
         return true;

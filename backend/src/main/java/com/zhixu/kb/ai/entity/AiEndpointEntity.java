@@ -18,6 +18,8 @@ public class AiEndpointEntity {
     private String baseUrl;
     private String apiKey;
     private String model;
+    /** 向量化模型（可选）：配置后该端点可承担 embedding；为空时系统自动探测常见 embedding 模型 */
+    private String embeddingModel;
     private Integer enabled;
     private String remark;
     private LocalDateTime createTime;

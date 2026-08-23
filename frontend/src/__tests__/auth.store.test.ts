@@ -6,8 +6,7 @@ const { pushMock } = vi.hoisted(() => {
   return { pushMock: vi.fn() }
 })
 
-const apiGuestLogin = vi.hoisted(() => vi.fn())
-const apiUpdateDisplayName = vi.hoisted(() => vi.fn())
+const apiLogin = vi.hoisted(() => vi.fn())
 const apiFetchUserInfo = vi.hoisted(() => vi.fn())
 
 vi.mock('../router', () => ({
@@ -15,18 +14,27 @@ vi.mock('../router', () => ({
 }))
 
 vi.mock('../api/auth', () => ({
-  guestLogin: apiGuestLogin,
-  updateDisplayName: apiUpdateDisplayName,
-  fetchUserInfo: apiFetchUserInfo
+  login: apiLogin,
+  emailCodeLogin: vi.fn(),
+  sendEmailCode: vi.fn(),
+  smsCodeLogin: vi.fn(),
+  sendSmsCode: vi.fn(),
+  oauthAuthorizeUrl: vi.fn(),
+  oauthExchange: vi.fn(),
+  fetchUserInfo: apiFetchUserInfo,
+  fetchUserProfile: vi.fn(),
+  updatePassword: vi.fn(),
+  sendBindEmailCode: vi.fn(),
+  bindEmail: vi.fn()
 }))
 
 describe('AuthStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     pushMock.mockClear()
-    apiGuestLogin.mockClear()
-    apiGuestLogin.mockResolvedValue('token-x')
-    apiFetchUserInfo.mockResolvedValue({ id: 1, username: 'guest-1', email: '', roles: ['user'] })
+    apiLogin.mockClear()
+    apiLogin.mockResolvedValue('token-x')
+    apiFetchUserInfo.mockResolvedValue({ id: 1, username: 'user-1', email: '', roles: ['user'] })
   })
 
   it('initial state should be logged out', () => {
@@ -51,7 +59,7 @@ describe('AuthStore', () => {
     expect(auth.user!.username).toBe('testuser')
   })
 
-  it('logout should clear state and redirect to /notes', () => {
+  it('logout should clear state and redirect to /home', () => {
     const auth = useAuthStore()
     auth.setToken('test-jwt-token')
     auth.setUser({ id: 1, username: 'testuser', email: 'test@example.com', roles: ['user'] })
@@ -61,7 +69,7 @@ describe('AuthStore', () => {
     expect(auth.token).toBeNull()
     expect(auth.user).toBeNull()
     expect(auth.isLoggedIn).toBe(false)
-    expect(pushMock).toHaveBeenCalledWith('/notes')
+    expect(pushMock).toHaveBeenCalledWith('/home')
   })
 
   it('isLoggedIn should be false when token is empty string', () => {
@@ -70,20 +78,27 @@ describe('AuthStore', () => {
     expect(auth.isLoggedIn).toBe(false)
   })
 
-  it('ensureGuestLogin 并发调用只触发一次后端请求', async () => {
+  it('login should set token and refresh user info', async () => {
     const auth = useAuthStore()
-    const [a, b] = await Promise.all([auth.ensureGuestLogin(), auth.ensureGuestLogin()])
-    expect(a).toBe(true)
-    expect(b).toBe(true)
-    expect(apiGuestLogin).toHaveBeenCalledTimes(1)
+    const ok = await auth.login({ username: 'u', password: 'p' })
+    expect(ok).toBe(true)
     expect(auth.token).toBe('token-x')
+    expect(auth.user?.username).toBe('user-1')
+    expect(apiLogin).toHaveBeenCalledWith({ username: 'u', password: 'p' })
   })
 
-  it('ensureGuestLogin 已登录时直接返回不再请求', async () => {
+  it('login failure should keep logged out', async () => {
+    apiLogin.mockRejectedValueOnce(new Error('bad credentials'))
     const auth = useAuthStore()
-    auth.setToken('existing')
-    const ok = await auth.ensureGuestLogin()
+    const ok = await auth.login({ username: 'u', password: 'wrong' })
+    expect(ok).toBe(false)
+    expect(auth.token).toBeNull()
+  })
+
+  it('oauthLogin should set token and refresh user info', async () => {
+    const auth = useAuthStore()
+    const ok = await auth.oauthLogin('oauth-jwt')
     expect(ok).toBe(true)
-    expect(apiGuestLogin).not.toHaveBeenCalled()
+    expect(auth.token).toBe('oauth-jwt')
   })
 })

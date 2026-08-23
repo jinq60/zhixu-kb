@@ -3,6 +3,7 @@ package com.zhixu.kb.system.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.ResultCode;
+import com.zhixu.kb.common.utils.SecurityUtils;
 import com.zhixu.kb.system.entity.SysRole;
 import com.zhixu.kb.system.entity.SysUser;
 import com.zhixu.kb.system.entity.SysUserRole;
@@ -28,6 +29,10 @@ public class AdminUserService {
     private final SysUserMapper userMapper;
     private final SysRoleMapper roleMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final AuditLogService auditLogService;
+
+    /** 角色变更互斥锁：保证"至少一名管理员"的校验与变更原子化，防止并发降级导致零管理员 */
+    private final Object roleChangeLock = new Object();
 
     @Transactional(readOnly = true)
     public List<AdminUserView> listUsers() {
@@ -60,6 +65,10 @@ public class AdminUserService {
 
     @Transactional
     public void changeRole(Long userId, String roleKey) {
+        Long currentUserId = SecurityUtils.getUserId();
+        if (userId != null && userId.equals(currentUserId)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "不能修改自己的角色");
+        }
         SysUser user = userMapper.selectById(userId);
         if (user == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "用户不存在");
@@ -68,15 +77,48 @@ public class AdminUserService {
         if (!"user".equals(normalized) && !"admin".equals(normalized)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "角色仅支持 user / admin");
         }
-        SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleKey, normalized).last("LIMIT 1"));
-        if (role == null) {
-            throw new BusinessException(ResultCode.SERVER_ERROR, "角色不存在");
-        }
+        synchronized (roleChangeLock) {
+            if ("user".equals(normalized) && isAdmin(userId) && adminCount() <= 1) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "至少保留一名管理员，无法降级最后一名管理员");
+            }
+            SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleKey, normalized).last("LIMIT 1"));
+            if (role == null) {
+                throw new BusinessException(ResultCode.SERVER_ERROR, "角色不存在");
+            }
 
-        userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId));
-        SysUserRole ur = new SysUserRole();
-        ur.setUserId(userId);
-        ur.setRoleId(role.getId());
-        userRoleMapper.insert(ur);
+            userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId));
+            SysUserRole ur = new SysUserRole();
+            ur.setUserId(userId);
+            ur.setRoleId(role.getId());
+            userRoleMapper.insert(ur);
+        }
+        auditLogService.record(SecurityUtils.getUserId(), "ROLE_CHANGE",
+                "变更用户角色 userId=" + userId + " → " + normalized, "/api/v1/admin/users/" + userId + "/role");
+    }
+
+    private boolean isAdmin(Long userId) {
+        SysRole adminRole = findAdminRole();
+        if (adminRole == null) {
+            return false;
+        }
+        Long count = userRoleMapper.selectCount(new LambdaQueryWrapper<SysUserRole>()
+                .eq(SysUserRole::getUserId, userId)
+                .eq(SysUserRole::getRoleId, adminRole.getId()));
+        return count != null && count > 0;
+    }
+
+    private long adminCount() {
+        SysRole adminRole = findAdminRole();
+        if (adminRole == null) {
+            return 0;
+        }
+        Long count = userRoleMapper.selectCount(new LambdaQueryWrapper<SysUserRole>()
+                .eq(SysUserRole::getRoleId, adminRole.getId()));
+        return count == null ? 0 : count;
+    }
+
+    private SysRole findAdminRole() {
+        return roleMapper.selectOne(new LambdaQueryWrapper<SysRole>()
+                .eq(SysRole::getRoleKey, "admin").last("LIMIT 1"));
     }
 }

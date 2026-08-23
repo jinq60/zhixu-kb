@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { getActiveTasks, getRecentTasks, type ActiveTask, type RecentTask } from '../api/file'
+import { listAIAnalysisTasks, type AiAnalysisTaskItem } from '../api/note'
+import TaskCenterView from '../views/TaskCenterView.vue'
 import {
   ArrowRight,
   ArrowDown,
@@ -24,8 +27,81 @@ const auth = useAuthStore()
 
 const mobileMenuOpen = ref(false)
 
+/** 全局任务中心角标数据（文档处理 + AI 整理，登录且在工作台时轮询） */
+const activeTasks = ref<ActiveTask[]>([])
+const recentTasks = ref<RecentTask[]>([])
+const aiActiveTasks = ref<AiAnalysisTaskItem[]>([])
+const aiRecentTasks = ref<AiAnalysisTaskItem[]>([])
+const taskDialogVisible = ref(false)
+let taskTimer: ReturnType<typeof setInterval> | null = null
+let taskLoading = false
+
+const loadActiveTasks = async () => {
+  if (!auth.isLoggedIn || isHome.value) return
+  // 上一次轮询未结束时跳过，防止慢网络下轮询请求堆积
+  if (taskLoading) return
+  taskLoading = true
+  try {
+    activeTasks.value = await getActiveTasks()
+    recentTasks.value = await getRecentTasks()
+  } catch {
+    // 忽略轮询失败
+  }
+  try {
+    const ai = await listAIAnalysisTasks()
+    aiActiveTasks.value = ai.active || []
+    aiRecentTasks.value = ai.recent || []
+  } catch {
+    // AI 整理任务列表轮询失败不影响文档任务
+  }
+  taskLoading = false
+}
+
+// 注意：以下 computed 必须在 watch 之前声明——watch(immediate) 会在 setup 阶段同步调用
+// loadActiveTasks()，其中引用了 isHome，声明顺序颠倒会触发 TDZ 错误（Cannot access before initialization）
 const isHome = computed(() => route.path === '/' || route.path === '/home')
 const isWorkspace = computed(() => !isHome.value)
+/** 进行中的任务总数（文档 + AI 整理） */
+const activeCount = computed(() => activeTasks.value.length + aiActiveTasks.value.length)
+/** 是否存在最近失败的任务（红点提醒） */
+const hasFailedTasks = computed(
+  () => recentTasks.value.some((t) => t.status === 'FAILED') || aiRecentTasks.value.some((t) => !!t.error)
+)
+
+// 登录后启动全局任务轮询（3s），退出登录停止
+watch(
+  () => auth.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn) {
+      loadActiveTasks()
+      if (!taskTimer) {
+        taskTimer = setInterval(loadActiveTasks, 3000)
+      }
+    } else if (taskTimer) {
+      clearInterval(taskTimer)
+      taskTimer = null
+      activeTasks.value = []
+      taskDialogVisible.value = false
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  if (taskTimer) {
+    clearInterval(taskTimer)
+    taskTimer = null
+  }
+})
+
+// 新任务出现时自动打开任务中心弹窗，让用户第一时间看到进度
+let lastActiveCount = 0
+watch(activeCount, (count) => {
+  if (count > lastActiveCount && !taskDialogVisible.value) {
+    taskDialogVisible.value = true
+  }
+  lastActiveCount = count
+})
 
 const enterWeb = () => {
   if (auth.isLoggedIn) {
@@ -151,12 +227,39 @@ const goHomeHash = (hash: string) => {
           {{ isWorkspace ? '工作台' : 'Web 体验' }}
           <el-icon class="btn-icon"><ArrowRight /></el-icon>
         </el-button>
+
+        <!-- 任务中心角标（登录 + 工作台时始终显示，点击打开任务中心弹窗） -->
+        <div
+          v-if="isWorkspace && auth.isLoggedIn"
+          class="task-badge"
+        >
+          <button class="task-btn" @click="taskDialogVisible = true">
+            <span v-if="activeCount > 0" class="task-btn-spinner" />
+            <span v-if="activeCount > 0" class="task-btn-count">{{ activeCount }}</span>
+            <span v-if="hasFailedTasks" class="task-btn-fail-dot" />
+            {{ activeCount > 0 ? '任务进行中' : '任务中心' }}
+          </button>
+        </div>
       </div>
 
       <div class="mobile-toggle" @click="mobileMenuOpen = !mobileMenuOpen">
         <el-icon><Menu /></el-icon>
       </div>
     </div>
+
+    <!-- 任务中心弹窗：细粒度进度 + 失败重试 + 删除/清空任务记录 -->
+    <el-dialog
+      v-model="taskDialogVisible"
+      title="任务中心"
+      width="760px"
+      :destroy-on-close="true"
+      :append-to-body="true"
+      :close-on-click-modal="true"
+      align-center
+      class="task-dialog"
+    >
+      <TaskCenterView embedded />
+    </el-dialog>
 
     <div v-show="mobileMenuOpen" class="mobile-menu">
       <a class="mobile-link" @click="router.push('/home'); mobileMenuOpen = false">首页</a>
@@ -386,4 +489,63 @@ const goHomeHash = (hash: string) => {
     display: block;
   }
 }
+.task-dialog {
+  max-width: calc(100vw - 32px) !important;
+}
+
+.task-badge {
+  position: relative;
+  margin-left: 12px;
+  cursor: pointer;
+}
+
+.task-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dbe3f0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: #f8fafc;
+  color: #2563eb;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.task-btn:hover {
+  border-color: #2563eb;
+}
+
+.task-btn-count {
+  background: #2563eb;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
+.task-btn-fail-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f56c6c;
+  flex-shrink: 0;
+}
+
+.task-btn-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #c0c4cc;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: task-spin 0.8s linear infinite;
+}
+
+@keyframes task-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 </style>

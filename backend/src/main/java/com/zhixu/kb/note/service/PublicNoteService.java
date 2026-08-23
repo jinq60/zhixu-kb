@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.ResultCode;
+import com.zhixu.kb.common.utils.HtmlSanitizer;
 import com.zhixu.kb.common.utils.SecurityUtils;
 import com.zhixu.kb.note.entity.Category;
 import com.zhixu.kb.note.entity.Note;
@@ -31,6 +32,7 @@ public class PublicNoteService {
     private final NoteMapper noteMapper;
     private final CategoryMapper categoryMapper;
     private final SysUserMapper sysUserMapper;
+    private final HtmlSanitizer htmlSanitizer;
 
     public Page<PublicNoteSummary> listPublished(int page, int size, String keyword) {
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
@@ -71,14 +73,21 @@ public class PublicNoteService {
 
         Category category = note.getCategoryId() == null ? null : categoryMapper.selectById(note.getCategoryId());
         SysUser author = sysUserMapper.selectById(note.getUserId());
+        // 非本人查看时对正文做 HTML 白名单清洗，防止公开笔记携带存储型 XSS
+        String content = note.getContent();
+        String ocrText = note.getOcrText();
+        if (!editable) {
+            content = htmlSanitizer.sanitizeRich(content);
+            ocrText = htmlSanitizer.sanitizeText(ocrText);
+        }
         return new PublicNoteDetailResponse(
                 note.getId(),
-                note.getTitle(),
-                note.getContent(),
-                note.getOcrText(),
-                note.getSummary(),
-                note.getKeywords(),
-                note.getCoverImage(),
+                htmlSanitizer.sanitizeText(note.getTitle()),
+                content,
+                ocrText,
+                htmlSanitizer.sanitizeText(note.getSummary()),
+                htmlSanitizer.sanitizeText(note.getKeywords()),
+                htmlSanitizer.sanitizeText(note.getCoverImage()),
                 note.getStatus(),
                 category == null ? null : category.getName(),
                 author == null ? "未知用户" : author.getUsername(),
@@ -116,10 +125,10 @@ public class PublicNoteService {
         return notes.stream()
                 .map(note -> new PublicNoteSummary(
                         note.getId(),
-                        note.getTitle(),
-                        note.getSummary(),
-                        note.getKeywords(),
-                        note.getCoverImage(),
+                        htmlSanitizer.sanitizeText(note.getTitle()),
+                        htmlSanitizer.sanitizeText(note.getSummary()),
+                        htmlSanitizer.sanitizeText(note.getKeywords()),
+                        htmlSanitizer.sanitizeText(note.getCoverImage()),
                         note.getCategoryId() == null ? null : categoryNameMap.get(note.getCategoryId()),
                         authorNameMap.getOrDefault(note.getUserId(), "未知用户"),
                         note.getCreateTime(),

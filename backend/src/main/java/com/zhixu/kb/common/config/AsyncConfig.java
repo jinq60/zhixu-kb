@@ -22,8 +22,9 @@ public class AsyncConfig {
         executor.setMaxPoolSize(8);
         executor.setQueueCapacity(200);
         executor.setThreadNamePrefix("ai-task-");
-        // 队列满时由调用方线程执行，避免直接丢弃任务
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // 队列满时直接拒绝（AbortPolicy），由提交方捕获并提示“系统繁忙”：
+        // 若用 CallerRunsPolicy，最坏 15 分钟的 AI 调用会在 HTTP 线程上同步执行，拖垮服务。
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

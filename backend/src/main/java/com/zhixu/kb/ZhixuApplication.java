@@ -2,6 +2,7 @@ package com.zhixu.kb;
 
 import com.zhixu.kb.config.AiProperties;
 import com.zhixu.kb.config.AppProperties;
+import com.zhixu.kb.config.MilvusProperties;
 import com.zhixu.kb.config.Neo4jProperties;
 import com.zhixu.kb.config.OAuthProperties;
 import com.zhixu.kb.note.config.FileStorageProperties;
@@ -19,7 +20,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
         AiProperties.class,
         AppProperties.class,
         Neo4jProperties.class,
-        OAuthProperties.class
+        OAuthProperties.class,
+        MilvusProperties.class
 })
 public class ZhixuApplication {
 

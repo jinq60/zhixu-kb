@@ -7,6 +7,12 @@ spring:
   application:
     name: zhixu-kb
 
+  mvc:
+    async:
+      # 流式问答（StreamingResponseBody）默认受 Tomcat asyncTimeout=30s 限制，长回答必被截断。
+      # 置 -1 关闭容器异步超时；实际时长由 AI 适配器的 connect/read 超时（120s）约束。
+      request-timeout: -1
+
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: ${DB_URL:jdbc:mysql://localhost:3306/zhixu_kb?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
@@ -98,8 +104,14 @@ ai:
     base-url: ${AI_API_BASE_URL:https://api.deepseek.com}
     api-key: ${AI_API_KEY:}
     model: ${AI_MODEL:deepseek-chat}
-    timeout-ms: 120000
+    timeout-ms: 60000
     max-retries: 3
+  # 向量化（RAG embedding）：复用端点池的 baseUrl + apiKey 调 /embeddings；
+  # 端点不支持 embedding 或调用失败时自动降级为纯关键词检索
+  embedding:
+    enabled: ${AI_EMBEDDING_ENABLED:true}
+    model: ${AI_EMBEDDING_MODEL:openai/text-embedding-3-small}
+    max-chunk-chars: ${AI_EMBEDDING_MAX_CHUNK_CHARS:2000}
 
 # ---------- 应用级参数（限流/监控/缓存） ----------
 app:
@@ -141,6 +153,16 @@ neo4j:
   username: ${NEO4J_USERNAME:neo4j}
   password: ${NEO4J_PASSWORD:neo4j}
   enabled: ${NEO4J_ENABLED:true}
+
+# ---------- Milvus 向量数据库（RAG 语义检索） ----------
+milvus:
+  enabled: ${MILVUS_ENABLED:true}
+  uri: ${MILVUS_URI:http://localhost:19530}
+  username: ${MILVUS_USERNAME:}
+  password: ${MILVUS_PASSWORD:}
+  # 向量维度（必须与 embedding 模型一致：bge-m3/text-embedding-v3=1024，text-embedding-3-small=1536）
+  dimension: ${MILVUS_DIMENSION:1536}
+  collection-name: note_embedding
 
 logging:
   level:

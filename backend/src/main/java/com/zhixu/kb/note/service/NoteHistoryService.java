@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.ResultCode;
 import com.zhixu.kb.common.utils.SecurityUtils;
+import com.zhixu.kb.note.entity.Category;
 import com.zhixu.kb.note.entity.Note;
 import com.zhixu.kb.note.entity.NoteMindmap;
 import com.zhixu.kb.note.entity.NoteStructure;
+import com.zhixu.kb.note.mapper.CategoryMapper;
 import com.zhixu.kb.note.mapper.NoteMapper;
 import com.zhixu.kb.note.mapper.NoteMindmapMapper;
 import com.zhixu.kb.note.mapper.NoteStructureMapper;
@@ -23,6 +25,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -30,9 +33,14 @@ import java.util.List;
 public class NoteHistoryService {
 
     private static final String REQUEST_URL_PREFIX = "/api/notes/";
+    /** 每篇笔记最多保留的历史快照数，超出后删除最旧的记录，防止 operation_log 无限膨胀 */
+    private static final int MAX_SNAPSHOTS_PER_NOTE = 100;
+    /** 历史列表单次查询上限 */
+    private static final int MAX_HISTORY_LIST = 200;
 
     private final OperationLogMapper operationLogMapper;
     private final NoteMapper noteMapper;
+    private final CategoryMapper categoryMapper;
     private final NoteStructureMapper noteStructureMapper;
     private final NoteMindmapMapper noteMindmapMapper;
     private final NoteStructureService noteStructureService;
@@ -53,8 +61,37 @@ public class NoteHistoryService {
             logEntry.setResponseResult(writeJsonQuietly(snapshot));
             logEntry.setIpAddress("local");
             operationLogMapper.insert(logEntry);
+
+            trimHistory(noteId, note.getUserId());
         } catch (Exception e) {
             log.warn("Record note snapshot failed: noteId={}, operationType={}", noteId, operationType, e);
+        }
+    }
+
+    /**
+     * 每篇笔记仅保留最近 MAX_SNAPSHOTS_PER_NOTE 条快照，删除更旧的记录。
+     */
+    private void trimHistory(Long noteId, Long userId) {
+        try {
+            String exactUrl = REQUEST_URL_PREFIX + noteId;
+            String urlWithSlash = REQUEST_URL_PREFIX + noteId + "/";
+            List<OperationLog> overflow = operationLogMapper.selectList(new LambdaQueryWrapper<OperationLog>()
+                    .select(OperationLog::getId)
+                    .eq(OperationLog::getUserId, userId)
+                    .and(w -> w.eq(OperationLog::getRequestUrl, exactUrl)
+                            .or()
+                            .likeRight(OperationLog::getRequestUrl, urlWithSlash))
+                    .orderByDesc(OperationLog::getId)
+                    .last("LIMIT 1000 OFFSET " + MAX_SNAPSHOTS_PER_NOTE));
+            if (overflow != null && !overflow.isEmpty()) {
+                List<Long> idsToDelete = overflow.stream()
+                        .map(OperationLog::getId)
+                        .collect(Collectors.toList());
+                operationLogMapper.deleteBatchIds(idsToDelete);
+                log.info("Trimmed {} history records for noteId={}", idsToDelete.size(), noteId);
+            }
+        } catch (Exception e) {
+            log.warn("Trim note history failed: noteId={}", noteId, e);
         }
     }
 
@@ -68,7 +105,8 @@ public class NoteHistoryService {
                         .or()
                         .likeRight(OperationLog::getRequestUrl, urlWithSlash))
                 .orderByDesc(OperationLog::getCreateTime)
-                .orderByDesc(OperationLog::getId));
+                .orderByDesc(OperationLog::getId)
+                .last("LIMIT " + MAX_HISTORY_LIST));
 
         List<NoteHistoryItem> items = new ArrayList<>();
         for (OperationLog logEntry : logs) {
@@ -110,7 +148,8 @@ public class NoteHistoryService {
         note.setSummary(snapshot.getSummary());
         note.setKeywords(snapshot.getKeywords());
         note.setCoverImage(snapshot.getCoverImage());
-        note.setCategoryId(snapshot.getCategoryId());
+        // 快照中的分类可能已被删除或不属于该用户：无效时恢复为未分类，避免产生悬挂引用
+        note.setCategoryId(resolveRestoreCategoryId(snapshot.getCategoryId(), note.getUserId()));
         note.setStatus(snapshot.getStatus());
         noteMapper.updateById(note);
 
@@ -127,6 +166,22 @@ public class NoteHistoryService {
                 REQUEST_URL_PREFIX + noteId + "/history/" + historyId + "/restore",
                 historyId
         );
+    }
+
+    /**
+     * 恢复时校验快照分类：分类不存在或不属于当前用户时返回 null（未分类）。
+     */
+    private Long resolveRestoreCategoryId(Long categoryId, Long userId) {
+        if (categoryId == null) {
+            return null;
+        }
+        Category category = categoryMapper.selectById(categoryId);
+        if (category == null || category.getUserId() == null || !category.getUserId().equals(userId)) {
+            log.warn("Restore note with invalid categoryId (fallback to uncategorized): categoryId={} userId={}",
+                    categoryId, userId);
+            return null;
+        }
+        return categoryId;
     }
 
     private NoteHistorySnapshot buildSnapshot(Long noteId, Note note) {

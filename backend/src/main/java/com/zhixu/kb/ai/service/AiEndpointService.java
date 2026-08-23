@@ -90,13 +90,22 @@ public class AiEndpointService {
         }
         entity.setBaseUrl(baseUrl);
         entity.setModel(model);
+        // 向量化模型（可选）：更新时未传则保留原值；明确传空串表示清除
+        if (request.getEmbeddingModel() != null) {
+            entity.setEmbeddingModel(trimToNull(request.getEmbeddingModel()));
+        }
         String newKey = trimToNull(request.getApiKey());
         if (StringUtils.hasText(newKey)) {
             entity.setApiKey(cryptoService.encrypt(newKey));
         } else if (!StringUtils.hasText(entity.getApiKey())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "API Key 不能为空（未配置过 Key 时必须填写）");
         }
-        entity.setEnabled(request.getEnabled() == null || request.getEnabled() ? 1 : 0);
+        // enabled：更新时未传则保留原值，避免"编辑备注"等操作顺带把已停用的端点重新启用
+        if (request.getEnabled() != null) {
+            entity.setEnabled(request.getEnabled() ? 1 : 0);
+        } else if (entity.getEnabled() == null) {
+            entity.setEnabled(1);
+        }
         entity.setRemark(trimToNull(request.getRemark()));
         entity.setUpdateTime(LocalDateTime.now());
 
@@ -200,6 +209,7 @@ public class AiEndpointService {
         view.setBaseUrl(entity.getBaseUrl());
         view.setApiKeyMasked(maskKey(cryptoService.decrypt(entity.getApiKey())));
         view.setModel(entity.getModel());
+        view.setEmbeddingModel(entity.getEmbeddingModel());
         view.setEnabled(entity.getEnabled() == null || entity.getEnabled() == 1);
         view.setRemark(entity.getRemark());
         // 运行状态

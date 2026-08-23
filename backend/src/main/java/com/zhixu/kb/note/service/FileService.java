@@ -1,5 +1,6 @@
 package com.zhixu.kb.note.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.ResultCode;
@@ -32,6 +33,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +41,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -65,7 +68,16 @@ public class FileService {
     private final FileInfoMapper fileInfoMapper;
     private final NoteMapper noteMapper;
     private final DocumentNormalizeService documentNormalizeService;
-    private final RestTemplate restTemplate;
+    /** Xberg 专用短超时客户端，避免解析服务挂起时拖住上传请求线程 */
+    private static final RestTemplate XBERG_REST_TEMPLATE = buildXbergRestTemplate();
+
+    private static RestTemplate buildXbergRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(30000);
+        return new RestTemplate(factory);
+    }
 
     @Value("${PDF_PARSE_SERVICE_URL:}")
     private String pdfParseServiceUrl;
@@ -88,24 +100,27 @@ public class FileService {
         String extractedText = null;
         String normalizedText = null;
         if (ext != null && DOC_EXTS.contains(ext)) {
-            try {
-                extractedText = extractText(file, ext);
-            } catch (Exception ex) {
-                log.warn("Extract document text failed: name={} err={}", file.getOriginalFilename(), ex.getMessage());
-                extractedText = null;
-            }
-            if (extractedText != null && normalize) {
-                normalizedText = documentNormalizeService.normalize(extractedText);
-            }
-
-            // 优先使用 Xberg 解析服务（保留表格/图片/标题结构），失败则回退到本地提取
+            // 优先使用 Xberg 解析服务（保留表格/图片/标题结构），失败则回退到本地提取，避免两次提取
             ParsedDocument parsed = tryParseWithXberg(file, ext);
             if (parsed != null) {
                 if (StringUtils.hasText(parsed.markdown)) {
                     extractedText = parsed.markdown;
                 }
                 if (StringUtils.hasText(parsed.html)) {
-                    normalizedText = parsed.html;
+                    // Xberg HTML 同样过滤文档自带元信息/目录区/重复标题，避免干扰正文阅读
+                    normalizedText = documentNormalizeService.filterNoiseLines(parsed.html);
+                }
+            }
+            // Xberg 不可用或返回空：回退到本地提取
+            if (!StringUtils.hasText(extractedText)) {
+                try {
+                    extractedText = extractText(file, ext);
+                } catch (Exception ex) {
+                    log.warn("Extract document text failed: name={} err={}", file.getOriginalFilename(), ex.getMessage());
+                    extractedText = null;
+                }
+                if (extractedText != null && normalize) {
+                    normalizedText = documentNormalizeService.normalize(extractedText);
                 }
             }
         }
@@ -150,6 +165,13 @@ public class FileService {
                     throw new BusinessException(ResultCode.BAD_REQUEST, "图片扩展名与 MIME 类型不一致");
                 }
             }
+        }
+
+        // 魔数校验：文件真实签名必须与扩展名一致，防止伪装成图片/PDF/docx 投毒下游解析链路
+        try {
+            validateMagicBytes(readHead(file, 16), ext);
+        } catch (IOException e) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "文件读取失败");
         }
 
         String storedName = IdWorker.get32UUID() + (ext != null ? "." + ext : "");
@@ -311,33 +333,338 @@ public class FileService {
     public void delete(Long fileId) {
         FileInfo info = findOwnFile(fileId);
 
-        // 1) 先删除物理文件，失败则中止，避免数据库记录已删但磁盘遗留孤儿文件
-        try {
-            Files.deleteIfExists(Paths.get(info.getFilePath()));
-        } catch (IOException e) {
-            log.error("Delete local file failed: id={}, path={}", fileId, info.getFilePath(), e);
-            throw new BusinessException(ResultCode.SERVER_ERROR, "删除物理文件失败");
-        }
-
-        // 2) 清理正文中的图片引用
-        if (info.getNoteId() != null) {
-            Note note = noteMapper.selectById(info.getNoteId());
-            if (note != null && StringUtils.hasText(note.getContent())) {
-                String pattern = "<img[^>]*src=[\"'][^\"']*?/api/files/" + fileId + "/content[^\"']*[\"'][^>]*/?>";
-                String cleaned = Pattern.compile(pattern, Pattern.CASE_INSENSITIVE)
-                        .matcher(note.getContent())
-                        .replaceAll("");
-                if (!cleaned.equals(note.getContent())) {
-                    note.setContent(cleaned);
-                    noteMapper.updateById(note);
-                }
-            }
-        }
-
-        // 3) 最后删除数据库记录
+        // 1) 先删数据库记录（数据源）：失败则中止，磁盘文件保持可访问，不会出现"记录指向已删除文件"的坏状态
         int rows = fileInfoMapper.deleteById(fileId);
         if (rows <= 0) {
             throw new BusinessException(ResultCode.SERVER_ERROR, "删除文件记录失败");
+        }
+
+        // 2) 删除物理文件（尽力而为：失败仅记录告警，孤儿文件由磁盘清理处理）
+        try {
+            Files.deleteIfExists(Paths.get(info.getFilePath()));
+        } catch (IOException e) {
+            log.warn("Delete local file failed (orphan left): id={}, path={}", fileId, info.getFilePath(), e);
+        }
+
+        // 3) 清理正文中的图片引用（尽力而为）
+        if (info.getNoteId() != null) {
+            try {
+                Note note = noteMapper.selectById(info.getNoteId());
+                if (note != null && StringUtils.hasText(note.getContent())) {
+                    String pattern = "<img[^>]*src=[\"'][^\"']*?/api/files/" + fileId + "/content[^\"']*[\"'][^>]*/?>";
+                    String cleaned = Pattern.compile(pattern, Pattern.CASE_INSENSITIVE)
+                            .matcher(note.getContent())
+                            .replaceAll("");
+                    if (!cleaned.equals(note.getContent())) {
+                        note.setContent(cleaned);
+                        noteMapper.updateById(note);
+                    }
+                }
+            } catch (Exception ex) {
+                log.warn("Clean content img reference failed (best-effort): fileId={} err={}", fileId, ex.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 删除某笔记下的全部文件（物理文件 + 数据库记录）。
+     * 供笔记删除级联清理使用；物理文件删除为尽力而为，失败不阻断。
+     */
+    public void deleteByNoteId(Long noteId) {
+        List<FileInfo> files = fileInfoMapper.selectList(new LambdaQueryWrapper<FileInfo>()
+                .eq(FileInfo::getNoteId, noteId));
+        if (files == null || files.isEmpty()) {
+            return;
+        }
+        for (FileInfo file : files) {
+            try {
+                Files.deleteIfExists(Paths.get(file.getFilePath()));
+            } catch (IOException e) {
+                log.warn("Cascade delete physical file failed: id={}, path={}", file.getId(), file.getFilePath());
+            }
+        }
+        fileInfoMapper.delete(new LambdaQueryWrapper<FileInfo>().eq(FileInfo::getNoteId, noteId));
+    }
+
+    /**
+     * 分片暂存：写临时目录 chunk-tmp/{userId}/{identifier}/part-{index}。
+     * 校验：identifier 仅允许字母数字与短横线（防路径穿越）、分片序号在合理范围、
+     * 分片大小受限、分片目录按用户隔离（防止跨用户合并他人分片内容）。
+     */
+    public void storeChunk(MultipartFile file, String identifier, Integer chunkIndex, Integer totalChunks) {
+        Long userId = SecurityUtils.getUserId();
+        if (userId == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "未登录");
+        }
+        if (identifier == null || !identifier.matches("^[A-Za-z0-9\\-_]{8,64}$")) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "分片标识不合法");
+        }
+        if (chunkIndex == null || totalChunks == null
+                || totalChunks < 1 || totalChunks > 512
+                || chunkIndex < 0 || chunkIndex >= totalChunks) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "分片序号不合法");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "分片内容为空");
+        }
+        if (storageProperties.getMaxSize() != null && file.getSize() > storageProperties.getMaxSize()) {
+            throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE, "单个分片超过大小限制");
+        }
+        Path chunkDir = chunkTempDir(userId, identifier);
+        try {
+            Files.createDirectories(chunkDir);
+            Path dest = chunkDir.resolve("part-" + chunkIndex);
+            try (InputStream in = file.getInputStream()) {
+                Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            log.error("Store chunk failed: userId={} identifier={} index={}", userId, identifier, chunkIndex, e);
+            throw new BusinessException(ResultCode.SERVER_ERROR, "分片保存失败");
+        }
+    }
+
+    /**
+     * 分片合并：校验片数齐全且总大小不超限后按序合并为临时文件，再走正常存储/解析流程。
+     * 分片目录按用户隔离，防止合并他人分片内容。
+     */
+    public UploadPayload mergeAndStore(String identifier, String fileName, Integer totalChunks,
+                                       Long noteId, boolean normalize) {
+        Long userId = SecurityUtils.getUserId();
+        if (userId == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "未登录");
+        }
+        if (identifier == null || !identifier.matches("^[A-Za-z0-9\\-_]{8,64}$")) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "分片标识不合法");
+        }
+        if (totalChunks == null || totalChunks < 1 || totalChunks > 512) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "分片总数不合法");
+        }
+        Path chunkDir = chunkTempDir(userId, identifier);
+        Path merged = chunkDir.resolve("merged.bin");
+        try {
+            long totalSize = 0L;
+            for (int i = 0; i < totalChunks; i++) {
+                Path part = chunkDir.resolve("part-" + i);
+                if (!Files.exists(part)) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST, "分片不完整，缺少 part-" + i + "，请重传");
+                }
+                totalSize += Files.size(part);
+            }
+            // 合并前先做总大小校验，避免把超限内容整块读入内存
+            if (storageProperties.getMaxSize() != null && totalSize > storageProperties.getMaxSize()) {
+                deleteChunkTempDir(chunkDir);
+                throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE, "文件超过大小限制");
+            }
+            Files.deleteIfExists(merged);
+            try (OutputStream out = Files.newOutputStream(merged)) {
+                for (int i = 0; i < totalChunks; i++) {
+                    Files.copy(chunkDir.resolve("part-" + i), out);
+                }
+            }
+            // 使用基于磁盘路径的 MultipartFile，避免合并后再整块读入内存
+            String safeName = StringUtils.hasText(fileName) ? fileName : "upload.bin";
+            MultipartFile multipartFile = new PathMultipartFile(merged, safeName,
+                    mimeForImage(getExtension(safeName)), totalSize);
+            try {
+                return storeWithText(multipartFile, noteId, normalize);
+            } finally {
+                // 常规存储/解析完成后清理临时分片目录
+                deleteChunkTempDir(chunkDir);
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (IOException e) {
+            log.error("Merge chunks failed: identifier={}", identifier, e);
+            throw new BusinessException(ResultCode.SERVER_ERROR, "分片合并失败");
+        }
+    }
+
+    /** 内存 MultipartFile 适配（合并后的完整文件进入常规上传流程） */
+    private static final class ByteArrayMultipartFile implements MultipartFile {
+        private final String originalName;
+        private final byte[] bytes;
+        private final String contentType;
+
+        ByteArrayMultipartFile(String originalName, byte[] bytes, String contentType) {
+            this.originalName = originalName;
+            this.bytes = bytes;
+            this.contentType = contentType;
+        }
+
+        @Override
+        public String getName() {
+            return "file";
+        }
+
+        @Override
+        public String getOriginalFilename() {
+            return originalName;
+        }
+
+        @Override
+        public String getContentType() {
+            return contentType;
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return bytes == null || bytes.length == 0;
+        }
+
+        @Override
+        public long getSize() {
+            return bytes == null ? 0 : bytes.length;
+        }
+
+        @Override
+        public byte[] getBytes() throws IOException {
+            return bytes;
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            return new ByteArrayInputStream(bytes);
+        }
+
+        @Override
+        public void transferTo(java.io.File dest) throws IOException, IllegalStateException {
+            Files.write(dest.toPath(), bytes);
+        }
+    }
+
+    /** 基于磁盘文件的 MultipartFile 适配：分片合并后不再整块读入内存 */
+    private static final class PathMultipartFile implements MultipartFile {
+        private final Path path;
+        private final String originalName;
+        private final String contentType;
+        private final long size;
+
+        PathMultipartFile(Path path, String originalName, String contentType, long size) {
+            this.path = path;
+            this.originalName = originalName;
+            this.contentType = contentType;
+            this.size = size;
+        }
+
+        @Override
+        public String getName() {
+            return "file";
+        }
+
+        @Override
+        public String getOriginalFilename() {
+            return originalName;
+        }
+
+        @Override
+        public String getContentType() {
+            return contentType;
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return size == 0;
+        }
+
+        @Override
+        public long getSize() {
+            return size;
+        }
+
+        @Override
+        public byte[] getBytes() throws IOException {
+            return Files.readAllBytes(path);
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            return Files.newInputStream(path);
+        }
+
+        @Override
+        public void transferTo(java.io.File dest) throws IOException, IllegalStateException {
+            Files.copy(path, dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private Path chunkTempDir(Long userId, String identifier) {
+        String root = StringUtils.hasText(storageProperties.getPath())
+                ? storageProperties.getPath()
+                : "./uploads/images/";
+        return Paths.get(root).toAbsolutePath().normalize()
+                .resolve("chunk-tmp")
+                .resolve(String.valueOf(userId))
+                .resolve(identifier);
+    }
+
+    private void deleteChunkTempDir(Path dir) {
+        try {
+            if (!Files.exists(dir)) {
+                return;
+            }
+            // 递归删除整棵临时目录（含用户子目录/分片目录）
+            try (java.util.stream.Stream<Path> paths = Files.walk(dir)) {
+                paths.sorted(java.util.Comparator.reverseOrder())
+                        .forEach(p -> {
+                            try {
+                                Files.deleteIfExists(p);
+                            } catch (IOException ignored) {
+                            }
+                        });
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * 从已存储的文件解析纯文本（文档处理任务 PARSING 阶段使用）。
+     * 图片/不支持类型返回 null。
+     */
+    public String parseTextFromStoredFile(Long fileId) {
+        FileInfo info = fileInfoMapper.selectById(fileId);
+        if (info == null) {
+            return null;
+        }
+        try {
+            byte[] bytes = Files.readAllBytes(Paths.get(info.getFilePath()));
+            String ext = getExtension(info.getOriginalName());
+            if (ext == null || !DOC_EXTS.contains(ext)) {
+                return null;
+            }
+            return extractTextFromBytes(bytes, ext);
+        } catch (IOException e) {
+            log.warn("Parse stored file failed: id={} err={}", fileId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String extractTextFromBytes(byte[] bytes, String ext) {
+        try {
+            return extractText(new ByteArrayMultipartFile("doc." + ext, bytes,
+                    mimeForImage(ext)), ext);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 启动清理：删除遗留的临时分片目录（上次异常中断残留）。
+     */
+    @javax.annotation.PostConstruct
+    public void cleanupTempChunks() {
+        try {
+            String root = StringUtils.hasText(storageProperties.getPath())
+                    ? storageProperties.getPath()
+                    : "./uploads/images/";
+            Path tmpDir = Paths.get(root).toAbsolutePath().normalize().resolve("chunk-tmp");
+            if (Files.exists(tmpDir)) {
+                try (java.util.stream.Stream<Path> dirs = Files.list(tmpDir)) {
+                    dirs.forEach(this::deleteChunkTempDir);
+                }
+                log.info("Chunk temp dir cleaned: {}", tmpDir);
+            }
+        } catch (Exception ex) {
+            log.warn("Cleanup chunk temp dir failed: {}", ex.getMessage());
         }
     }
 
@@ -349,8 +676,11 @@ public class FileService {
         return ext.toLowerCase(Locale.ROOT);
     }
 
-    private String mimeForImage(String ext) {
-        switch (ext) {
+    private static String mimeForImage(String ext) {
+        if (ext == null) {
+            return "application/octet-stream";
+        }
+        switch (ext.toLowerCase(Locale.ROOT)) {
             case "jpg":
             case "jpeg":
                 return "image/jpeg";
@@ -373,6 +703,74 @@ public class FileService {
             return mime.contains("jpeg") || mime.contains("jpg");
         }
         return false;
+    }
+
+    private byte[] readHead(MultipartFile file, int length) throws IOException {
+        try (InputStream in = file.getInputStream()) {
+            byte[] buffer = new byte[length];
+            int read = in.read(buffer);
+            if (read <= 0) {
+                return new byte[0];
+            }
+            byte[] result = new byte[read];
+            System.arraycopy(buffer, 0, result, 0, read);
+            return result;
+        }
+    }
+
+    /**
+     * 魔数校验：文件真实签名必须与扩展名一致。
+     * 文本类文件（txt/md/markdown）无固定魔数，交由后续解析校验。
+     */
+    private void validateMagicBytes(byte[] head, String ext) {
+        if (head == null || head.length == 0) {
+            return;
+        }
+        String magic = detectMagicType(head);
+        if (magic == null) {
+            return;
+        }
+        String normalizedExt = ext == null ? "" : ext.toLowerCase(Locale.ROOT);
+        boolean matched;
+        switch (magic) {
+            case "jpg":
+                matched = "jpg".equals(normalizedExt) || "jpeg".equals(normalizedExt);
+                break;
+            case "png":
+                matched = "png".equals(normalizedExt);
+                break;
+            case "pdf":
+                matched = "pdf".equals(normalizedExt);
+                break;
+            case "zip":
+                matched = "docx".equals(normalizedExt);
+                break;
+            default:
+                matched = false;
+        }
+        if (!matched) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "文件内容与扩展名不一致，已拒绝上传");
+        }
+    }
+
+    private String detectMagicType(byte[] head) {
+        int b0 = head[0] & 0xFF;
+        int b1 = head.length > 1 ? head[1] & 0xFF : -1;
+        int b2 = head.length > 2 ? head[2] & 0xFF : -1;
+        int b3 = head.length > 3 ? head[3] & 0xFF : -1;
+        if (b0 == 0xFF && b1 == 0xD8 && b2 == 0xFF) {
+            return "jpg";
+        }
+        if (b0 == 0x89 && b1 == 0x50 && b2 == 0x4E && b3 == 0x47) {
+            return "png";
+        }
+        if (b0 == 0x25 && b1 == 0x50 && b2 == 0x44 && b3 == 0x46) {
+            return "pdf";
+        }
+        if (b0 == 0x50 && b1 == 0x4B && b2 == 0x03 && b3 == 0x04) {
+            return "zip";
+        }
+        return null;
     }
 
     /**
@@ -400,7 +798,7 @@ public class FileService {
             body.add("output_format", "html");
 
             HttpEntity<MultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.exchange(
+            ResponseEntity<Map> response = XBERG_REST_TEMPLATE.exchange(
                     pdfParseServiceUrl + "/extract",
                     HttpMethod.POST,
                     entity,

@@ -7,7 +7,7 @@ export interface Note {
   summary?: string
   keywords?: string
   coverImage?: string
-  categoryId?: number
+  categoryId?: number | null
   status?: number
   ocrText?: string
   outline?: OutlineNode[]
@@ -159,6 +159,28 @@ export interface AiAnalysisStatus {
 export async function getAIAnalysisStatus(id: number) {
   const { data } = await http.get(`/api/notes/${id}/ai-analysis/status`)
   return data.data as AiAnalysisStatus
+}
+
+export interface AiAnalysisTaskItem {
+  noteId: number
+  noteTitle?: string
+  running: boolean
+  stage?: string
+  error: string | null
+  startedAt: number
+  finishedAt: number
+  elapsedSeconds?: number
+}
+
+/** 当前用户的 AI 整理任务列表（进行中 + 最近），供顶部任务面板展示 */
+export async function listAIAnalysisTasks() {
+  const { data } = await http.get('/api/notes/ai-analysis/tasks')
+  return data.data as { active: AiAnalysisTaskItem[]; recent: AiAnalysisTaskItem[] }
+}
+
+/** 删除指定笔记的 AI 整理任务记录 */
+export async function deleteAIAnalysisTask(noteId: number): Promise<void> {
+  await http.delete(`/api/notes/ai-analysis/tasks/${noteId}`)
 }
 
 export async function getNoteStructure(id: number) {

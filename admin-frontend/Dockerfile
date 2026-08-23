@@ -9,7 +9,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build-only
+RUN npm run build
 
 # ---------- 运行镜像 ----------
 FROM nginx:1.27-alpine

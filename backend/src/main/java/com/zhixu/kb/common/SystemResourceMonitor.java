@@ -33,13 +33,18 @@ public class SystemResourceMonitor {
     }
 
     void evaluateAndAlert(double cpuUsage, double heapUsage) {
-        double threshold = Math.max(0, appProperties.getMonitor().getResourceThresholdPercent()) / 100.0;
+        // 阈值未配置或 <=0 视为关闭资源告警（而非每轮必报），同时防止 null 拆箱 NPE
+        Integer thresholdPercent = appProperties.getMonitor().getResourceThresholdPercent();
+        if (thresholdPercent == null || thresholdPercent <= 0) {
+            return;
+        }
+        double threshold = thresholdPercent / 100.0;
         long cooldown = Math.max(0L, appProperties.getMonitor().getAlertCooldownMs());
 
         if (cpuUsage >= 0 && cpuUsage >= threshold) {
             Map<String, Object> meta = new HashMap<>();
             meta.put("cpuUsage", round2(cpuUsage * 100));
-            meta.put("threshold", appProperties.getMonitor().getResourceThresholdPercent());
+            meta.put("threshold", thresholdPercent);
             alertService.emitIfDue(
                     "resource-cpu",
                     cooldown,
@@ -53,7 +58,7 @@ public class SystemResourceMonitor {
         if (heapUsage >= 0 && heapUsage >= threshold) {
             Map<String, Object> meta = new HashMap<>();
             meta.put("heapUsage", round2(heapUsage * 100));
-            meta.put("threshold", appProperties.getMonitor().getResourceThresholdPercent());
+            meta.put("threshold", thresholdPercent);
             alertService.emitIfDue(
                     "resource-heap",
                     cooldown,

@@ -99,6 +99,20 @@ public class NoteController {
         return Result.success(noteService.triggerOCR(id, actualEngine, fileIds));
     }
 
+    @GetMapping("/ai-analysis/tasks")
+    public Result<Map<String, Object>> aiAnalysisTasks() {
+        return Result.success(noteService.listAIAnalysisTasks());
+    }
+
+    @DeleteMapping("/ai-analysis/tasks/{noteId}")
+    public Result<Boolean> deleteAiAnalysisTask(@PathVariable Long noteId) {
+        boolean ok = noteService.deleteAIAnalysisTask(noteId);
+        if (!ok) {
+            return Result.error(404, "任务不存在或无权操作");
+        }
+        return Result.success("任务已删除", Boolean.TRUE);
+    }
+
     @PostMapping("/{id}/ai-analysis")
     public Result<Map<String, Object>> aiAnalysis(@PathVariable Long id) {
         noteService.submitAIAnalysis(id);
@@ -112,6 +126,7 @@ public class NoteController {
         AiAnalysisTaskManager.TaskState state = noteService.getAIAnalysisStatus(id);
         Map<String, Object> data = new HashMap<>();
         data.put("running", state.isRunning());
+        data.put("stage", state.getStage());
         data.put("error", state.getError());
         data.put("startedAt", state.getStartedAt());
         data.put("finishedAt", state.getFinishedAt());
