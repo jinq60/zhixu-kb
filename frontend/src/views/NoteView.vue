@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Edit } from '@element-plus/icons-vue'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import DOMPurify from 'dompurify'
 import {
   getReadableNote,
@@ -19,7 +19,8 @@ interface TocItem {
 
 const route = useRoute()
 const router = useRouter()
-const noteId = computed(() => Number(route.params.id))
+// note ID 为雪花 ID（可能超出 Number 安全整数范围），保持字符串形式
+const noteId = computed(() => String(route.params.id || ''))
 
 const loading = ref(false)
 const exporting = ref(false)
@@ -430,8 +431,8 @@ const updateActiveToc = () => {
 }
 
 const fetchNote = async () => {
-  // 非法 id（如 /notes/view/abc）不发起 NaN 请求
-  if (!Number.isFinite(noteId.value)) {
+  // 非法 id（空值或非数字串）不发起请求
+  if (!noteId.value || !/^\d+$/.test(noteId.value)) {
     ElMessage.error('笔记不存在')
     router.replace('/home')
     return
@@ -509,14 +510,12 @@ onBeforeUnmount(() => {
       <aside class="toc-panel">
         <div class="action-card">
           <div class="action-group">
-            <el-button class="action-btn" text @click="router.push('/notes')">
-              <el-icon><ArrowLeft /></el-icon>
-              <span>&#x8FD4;&#x56DE;&#x5DE5;&#x4F5C;&#x53F0;</span>
-            </el-button>
-            <el-button v-if="note?.editable" class="action-btn" text @click="router.push(`/notes/${noteId}`)">
-              <el-icon><Edit /></el-icon>
-              <span>&#x8FD4;&#x56DE;&#x7F16;&#x8F91;</span>
-            </el-button>
+            <router-link to="/notes" custom v-slot="{ navigate }">
+              <el-button class="action-btn" text @click="navigate">
+                <el-icon><ArrowLeft /></el-icon>
+                <span>&#x8FD4;&#x56DE;&#x5DE5;&#x4F5C;&#x53F0;</span>
+              </el-button>
+            </router-link>
           </div>
           <div class="action-divider"></div>
           <div class="action-status">
@@ -615,15 +614,24 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-.action-btn {
+.action-group .action-btn {
+  display: inline-flex !important;
+  align-items: center;
   justify-content: flex-start;
   width: 100%;
   padding: 8px 10px;
   color: #606266;
+  margin: 0 !important;
 }
 
-.action-btn .el-icon {
+.action-group .action-btn .el-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
   margin-right: 6px;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .action-divider {

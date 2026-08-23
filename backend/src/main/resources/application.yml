@@ -117,6 +117,10 @@ ai:
 app:
   rate-limit:
     per-minute: 120
+  client-ip:
+    # 可信代理网段：仅当请求来源命中这些 IP/CIDR 时才信任 X-Forwarded-For/X-Real-IP
+    # 默认覆盖回环 + RFC1918 私网（Docker 网桥/K8s Pod）；公网直连一律不信任 XFF
+    trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5175}
   monitor:

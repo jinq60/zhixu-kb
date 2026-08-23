@@ -18,6 +18,9 @@ public class AIEngineAdapterRouter {
 
     private static final Logger log = LoggerFactory.getLogger(AIEngineAdapterRouter.class);
 
+    /** 降级文案统一前缀（OpenAiAdapter.fallback 恒以此开头），用于识别引擎不可用 */
+    public static final String FALLBACK_MARKER = "暂时无法调用外部模型";
+
     private final AiProperties aiProperties;
     private final AIEngineRuntimeSwitchService runtimeSwitchService;
     private final OpenAiAdapter openAiAdapter;
@@ -126,13 +129,9 @@ public class AIEngineAdapterRouter {
         if (text == null || text.trim().length() == 0) {
             return false;
         }
-        String normalized = text.toLowerCase();
-        return normalized.indexOf("temporarily unavailable") < 0
-                && normalized.indexOf("not available") < 0
-                && normalized.indexOf("api key") < 0
-                && normalized.indexOf("fallback") < 0
-                && normalized.indexOf("暂时无法调用外部模型") < 0
-                && normalized.indexOf("当前未配置外部api key") < 0;
+        // 仅按约定的降级文案前缀判定失败（OpenAiAdapter.fallback 恒以该前缀开头）；
+        // 不做通用关键词嗅探，避免正常回答包含 "api key"/"not available" 等词被误判重试
+        return !text.toLowerCase().startsWith(FALLBACK_MARKER);
     }
 
     private void sleepBackoff(int attempt) {

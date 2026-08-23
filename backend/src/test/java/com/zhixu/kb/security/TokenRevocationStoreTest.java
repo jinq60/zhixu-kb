@@ -16,7 +16,7 @@ class TokenRevocationStoreTest {
         ObjectProvider<StringRedisTemplate> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(null);
 
-        TokenRevocationStore store = new TokenRevocationStore(provider);
+        TokenRevocationStore store = new TokenRevocationStore(provider, 86_400_000L);
 
         assertFalse(store.isRevoked("token-1"));
         store.revoke("token-1");
@@ -29,7 +29,7 @@ class TokenRevocationStoreTest {
         ObjectProvider<StringRedisTemplate> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(null);
 
-        TokenRevocationStore store = new TokenRevocationStore(provider);
+        TokenRevocationStore store = new TokenRevocationStore(provider, 86_400_000L);
 
         assertFalse(store.isRevoked("never-revoked"));
     }

@@ -7,7 +7,8 @@ export interface UploadResult {
   filePath: string
   fileSize: number
   mimeType: string
-  noteId?: number
+  /** note ID 为雪花 ID，后端序列化为字符串 */
+  noteId?: string | number
 }
 
 /** 上传响应：file 为文件记录；文档上传后返回 taskId，解析/清洗在后台异步执行 */
@@ -28,12 +29,12 @@ export interface ChunkStats {
 
 /** 文档处理任务状态（细粒度：阶段/进度/块级统计/耗时） */
 export interface DocumentTaskStatus {
-  taskId: number
+  taskId: string
   status: string
   currentStage: string
   progress: number
   failReason?: string
-  noteId?: number
+  noteId?: string
   fileName?: string
   subType?: string
   elapsedSeconds?: number
@@ -42,13 +43,13 @@ export interface DocumentTaskStatus {
 }
 
 /** 查询文档处理任务状态 */
-export async function getTaskStatus(taskId: number): Promise<DocumentTaskStatus> {
+export async function getTaskStatus(taskId: string | number): Promise<DocumentTaskStatus> {
   const { data } = await http.get(`/api/files/tasks/${taskId}`)
   return data.data as DocumentTaskStatus
 }
 
 /** 按笔记查询最新任务（编辑页恢复进度展示） */
-export async function getTaskByNote(noteId: number): Promise<DocumentTaskStatus | null> {
+export async function getTaskByNote(noteId: string | number): Promise<DocumentTaskStatus | null> {
   const { data } = await http.get(`/api/files/tasks/note/${noteId}`)
   return data.data as DocumentTaskStatus
 }
@@ -70,12 +71,12 @@ export async function getRecentTasks(): Promise<RecentTask[]> {
 }
 
 /** 重试失败任务 */
-export async function retryTask(taskId: number): Promise<void> {
+export async function retryTask(taskId: string | number): Promise<void> {
   await http.post(`/api/files/tasks/${taskId}/retry`)
 }
 
 /** 删除单条任务记录（级联删除明细，不影响笔记正文） */
-export async function deleteTaskRecord(taskId: number): Promise<void> {
+export async function deleteTaskRecord(taskId: string | number): Promise<void> {
   await http.delete(`/api/files/tasks/${taskId}`)
 }
 
@@ -104,7 +105,7 @@ const createIdentifier = (file: File) => {
  */
 export async function uploadFile(
   file: File,
-  noteId?: number,
+  noteId?: string | number,
   onProgress?: (percent: number) => void
 ): Promise<UploadResponse> {
   if (file.size <= CHUNK_THRESHOLD) {

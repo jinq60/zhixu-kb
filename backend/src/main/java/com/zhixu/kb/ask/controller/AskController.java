@@ -36,6 +36,7 @@ import java.util.Map;
 public class AskController {
 
     private final AskService askService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @PostMapping
     public Result<AskRecord> ask(@Valid @RequestBody AskRequest request) {
@@ -49,8 +50,10 @@ public class AskController {
             try {
                 askService.askStreaming(userId, request.getQuestion(), request.getConversationId(), chunk -> {
                     try {
-                        // SSE 格式：前端按 "data: <内容>\n" 解析；非 JSON 内容由前端原文输出
-                        outputStream.write(("data: " + chunk + "\n\n").getBytes(StandardCharsets.UTF_8));
+                        // SSE 帧：chunk 统一 JSON 编码后发送，换行/空白不会被帧分隔符拆散；
+                        // 前端 JSON.parse 还原原始文本
+                        outputStream.write(("data: " + objectMapper.writeValueAsString(chunk) + "\n\n")
+                                .getBytes(StandardCharsets.UTF_8));
                         outputStream.flush();
                     } catch (Exception ex) {
                         if (isClientAbort(ex)) {

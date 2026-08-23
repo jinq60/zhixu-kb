@@ -10,6 +10,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -66,18 +67,31 @@ public class NoteVectorizeTaskRunner {
             List<Note> pending = noteMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Note>()
                     .select(Note::getId)
                     .eq(Note::getIsDeleted, 0));
+            List<Long> pendingIds = new ArrayList<>();
+            for (Note note : pending) {
+                if (note.getId() != null) {
+                    pendingIds.add(note.getId());
+                }
+            }
+            // 批量探测已有向量的笔记，替代逐笔记一次网络往返
+            java.util.Set<Long> existingIds = vectorStore.existingNoteIds(pendingIds);
             int submitted = 0;
             int skipped = 0;
-            for (Note note : pending) {
-                if (note.getId() == null) {
-                    continue;
-                }
-                if (vectorStore.hasVectors(note.getId())) {
+            for (Long noteId : pendingIds) {
+                if (existingIds.contains(noteId)) {
                     skipped++;
                     continue;
                 }
-                self.run(note.getId());
-                submitted++;
+                try {
+                    self.run(noteId);
+                    submitted++;
+                } catch (org.springframework.core.task.TaskRejectedException ex) {
+                    // 线程池/队列饱和：停止继续提交（已提交任务会自行完成，
+                    // 未向量化的笔记在下次重启或笔记编辑时补算），避免异常中断循环后状态不明
+                    log.warn("Embedding backfill stopped early: executor saturated, submitted={} skipped={}",
+                            submitted, skipped);
+                    return;
+                }
             }
             log.info("Note embedding backfill: submitted={} skipped={}", submitted, skipped);
         } catch (Exception ex) {

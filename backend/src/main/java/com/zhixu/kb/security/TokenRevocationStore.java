@@ -23,12 +23,20 @@ public class TokenRevocationStore {
     private final Cache<String, Instant> revokedTokens;
     private final StringRedisTemplate redisTemplate;
 
-    private static final Duration REVOKED_TOKEN_TTL = Duration.ofDays(3);
+    /**
+     * 撤销记录保留时长：不短于 JWT 最大有效期（否则先撤销、后到期的 token 会"复活"）。
+     * 取 max(3 天, jwt.expiration + 60s)。
+     */
+    private final Duration revokedTokenTtl;
 
-    public TokenRevocationStore(ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
+    public TokenRevocationStore(ObjectProvider<StringRedisTemplate> redisTemplateProvider,
+                                @org.springframework.beans.factory.annotation.Value("${jwt.expiration:86400000}")
+                                long jwtExpirationMs) {
         this.redisTemplate = redisTemplateProvider.getIfAvailable();
+        long floor = Duration.ofDays(3).toMillis();
+        this.revokedTokenTtl = Duration.ofMillis(Math.max(floor, jwtExpirationMs + 60_000L));
         this.revokedTokens = Caffeine.newBuilder()
-                .expireAfterWrite(REVOKED_TOKEN_TTL)
+                .expireAfterWrite(revokedTokenTtl)
                 .maximumSize(100_000)
                 .build();
     }
@@ -41,7 +49,7 @@ public class TokenRevocationStore {
         revokedTokens.put(key, Instant.now());
         if (redisTemplate != null) {
             try {
-                redisTemplate.opsForValue().set(redisKey(key), "1", REVOKED_TOKEN_TTL);
+                redisTemplate.opsForValue().set(redisKey(key), "1", revokedTokenTtl);
             } catch (Exception ex) {
                 // 本地缓存已记录（单实例部署下即全部生效），Redis 失败仅影响多实例场景，记录错误日志
                 org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)

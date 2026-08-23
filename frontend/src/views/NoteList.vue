@@ -172,8 +172,12 @@ const onCreate = async () => {
     const title = newNoteTitle.value.trim() || '未命名笔记'
     createDialog.value = false
     const note = await createNote({ title, status: 0 })
+    if (!note?.id) {
+      ElMessage.error('创建笔记失败：未返回笔记 ID')
+      return
+    }
     ElMessage.success('已创建草稿')
-    router.push(`/notes/${note.id}`)
+    await router.push(`/notes/edit/${note.id}`)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || '创建失败')
   }
@@ -289,7 +293,7 @@ onMounted(() => {
           <template #default="{ row }">
             <div class="row-actions">
               <el-button type="primary" link @click="router.push(`/notes/view/${row.id}`)">查看</el-button>
-              <el-button type="primary" link @click="router.push(`/notes/${row.id}`)">编辑</el-button>
+              <el-button type="primary" link @click="router.push(`/notes/edit/${row.id}`)">编辑</el-button>
               <el-button type="danger" link @click="onDelete(row)">删除</el-button>
             </div>
           </template>

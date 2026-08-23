@@ -92,9 +92,9 @@ public class AiApiPool {
     }
 
     /**
-     * 选择当前可用端点（主备模式）：
-     * 始终优先下标靠前（配置中的主端点）的未冷却端点；
-     * 仅当主端点失败进入冷却（60s）时才回退到备用端点，避免不同模型轮询导致效果不稳定。
+     * 选择当前可用端点（轮询负载均衡）：
+     * 从当前光标位置开始找未冷却端点，找到后移动光标，让不同请求/块分散到多个端点，
+     * 提升整体吞吐并降低单个厂家被限流的概率。全部冷却时回退到第一个端点强制重试。
      */
     public Endpoint select() {
         int size = endpoints.size();
@@ -102,14 +102,16 @@ public class AiApiPool {
             return null;
         }
         long now = System.currentTimeMillis();
+        int start = Math.floorMod(cursor.getAndIncrement(), size);
         for (int i = 0; i < size; i++) {
-            Endpoint endpoint = endpoints.get(i);
+            int idx = (start + i) % size;
+            Endpoint endpoint = endpoints.get(idx);
             if (!endpoint.isCooldown(now)) {
                 endpoint.touch(now);
                 return endpoint;
             }
         }
-        // 全部冷却：回退到主端点（强制重试）
+        // 全部冷却：回退到第一个端点（强制重试）
         Endpoint fallback = endpoints.get(0);
         fallback.touch(now);
         return fallback;

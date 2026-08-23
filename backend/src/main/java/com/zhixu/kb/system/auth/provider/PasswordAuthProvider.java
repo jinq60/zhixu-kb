@@ -34,6 +34,7 @@ public class PasswordAuthProvider implements AuthProvider {
     private final PasswordEncoder passwordEncoder;
     private final UserRegistrationHelper registrationHelper;
     private final RegistrationLimiter registrationLimiter;
+    private final ClientIpResolver clientIpResolver;
 
     @Override
     public String method() {
@@ -75,7 +76,7 @@ public class PasswordAuthProvider implements AuthProvider {
 
     private String resolveClientIp() {
         if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes) {
-            return ClientIpResolver.resolve(((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest());
+            return clientIpResolver.resolve(((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest());
         }
         return "unknown";
     }

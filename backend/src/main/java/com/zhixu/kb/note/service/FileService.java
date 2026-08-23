@@ -195,11 +195,50 @@ public class FileService {
             info.setFileSize(file.getSize());
             info.setMimeType(file.getContentType());
             fileInfoMapper.insert(info);
+            // 若笔记标题仍为默认名称，使用上传文件名作为标题（提升任务中心与页面展示体验）
+            if (noteId != null) {
+                try {
+                    updateNoteTitleFromFileName(noteId, file.getOriginalFilename());
+                } catch (Exception ex) {
+                    log.warn("Update note title from file name failed: noteId={} err={}", noteId, ex.getMessage());
+                }
+            }
             return info;
         } catch (IOException e) {
             log.error("Save file failed: originalName={}, size={}, targetDir={}", file.getOriginalFilename(), file.getSize(), dir, e);
             throw new BusinessException(ResultCode.SERVER_ERROR, "保存文件失败");
         }
+    }
+
+    /**
+     * 当笔记标题为默认空名时，用上传文件名（去掉扩展名）作为标题。
+     */
+    private void updateNoteTitleFromFileName(Long noteId, String fileName) {
+        Note note = noteMapper.selectById(noteId);
+        if (note == null) {
+            return;
+        }
+        String title = note.getTitle();
+        if (StringUtils.hasText(title)) {
+            String trimmed = title.trim();
+            if (!"新建笔记".equals(trimmed) && !"未命名笔记".equals(trimmed)) {
+                return;
+            }
+        }
+        String baseName = fileName;
+        if (baseName != null) {
+            int lastDot = baseName.lastIndexOf('.');
+            if (lastDot > 0) {
+                baseName = baseName.substring(0, lastDot);
+            }
+            baseName = baseName.trim();
+        }
+        if (!StringUtils.hasText(baseName)) {
+            return;
+        }
+        note.setTitle(baseName);
+        noteMapper.updateById(note);
+        log.info("Note title updated from file name: noteId={} title={}", noteId, baseName);
     }
 
     /**
@@ -367,8 +406,8 @@ public class FileService {
     }
 
     /**
-     * 删除某笔记下的全部文件（物理文件 + 数据库记录）。
-     * 供笔记删除级联清理使用；物理文件删除为尽力而为，失败不阻断。
+     * 删除某笔记下的全部文件。顺序与 {@link #delete(Long)} 一致：先删数据库记录，
+     * 物理文件延迟到事务提交后删除（尽力而为）——事务回滚时不会出现"记录还在、文件已丢"的悬空状态。
      */
     public void deleteByNoteId(Long noteId) {
         List<FileInfo> files = fileInfoMapper.selectList(new LambdaQueryWrapper<FileInfo>()
@@ -376,14 +415,30 @@ public class FileService {
         if (files == null || files.isEmpty()) {
             return;
         }
-        for (FileInfo file : files) {
-            try {
-                Files.deleteIfExists(Paths.get(file.getFilePath()));
-            } catch (IOException e) {
-                log.warn("Cascade delete physical file failed: id={}, path={}", file.getId(), file.getFilePath());
-            }
+        int rows = fileInfoMapper.delete(new LambdaQueryWrapper<FileInfo>().eq(FileInfo::getNoteId, noteId));
+        if (rows <= 0) {
+            return;
         }
-        fileInfoMapper.delete(new LambdaQueryWrapper<FileInfo>().eq(FileInfo::getNoteId, noteId));
+        Runnable physicalCleanup = () -> {
+            for (FileInfo file : files) {
+                try {
+                    Files.deleteIfExists(Paths.get(file.getFilePath()));
+                } catch (IOException e) {
+                    log.warn("Cascade delete physical file failed: id={}, path={}", file.getId(), file.getFilePath());
+                }
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            physicalCleanup.run();
+                        }
+                    });
+        } else {
+            physicalCleanup.run();
+        }
     }
 
     /**
@@ -410,7 +465,15 @@ public class FileService {
         if (storageProperties.getMaxSize() != null && file.getSize() > storageProperties.getMaxSize()) {
             throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE, "单个分片超过大小限制");
         }
+        // 累计配额：分片目录已有内容 + 当前分片不得超过单文件上限，
+        // 防止在 merge 前通过海量分片占满磁盘（merge 时的总大小校验为最后一道防线）
         Path chunkDir = chunkTempDir(userId, identifier);
+        long existingChunkBytes = sumExistingChunks(chunkDir);
+        if (storageProperties.getMaxSize() != null
+                && existingChunkBytes + file.getSize() > storageProperties.getMaxSize()) {
+            deleteChunkTempDir(chunkDir);
+            throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE, "文件超过大小限制");
+        }
         try {
             Files.createDirectories(chunkDir);
             Path dest = chunkDir.resolve("part-" + chunkIndex);
@@ -420,6 +483,27 @@ public class FileService {
         } catch (IOException e) {
             log.error("Store chunk failed: userId={} identifier={} index={}", userId, identifier, chunkIndex, e);
             throw new BusinessException(ResultCode.SERVER_ERROR, "分片保存失败");
+        }
+    }
+
+    /** 统计分片目录中已有 part-* 文件的总字节数（目录不存在时为 0）。 */
+    private long sumExistingChunks(Path chunkDir) {
+        if (!Files.exists(chunkDir)) {
+            return 0L;
+        }
+        try (java.util.stream.Stream<Path> paths = Files.list(chunkDir)) {
+            return paths
+                    .filter(p -> p.getFileName().toString().startsWith("part-"))
+                    .mapToLong(p -> {
+                        try {
+                            return Files.size(p);
+                        } catch (IOException e) {
+                            return 0L;
+                        }
+                    })
+                    .sum();
+        } catch (IOException e) {
+            return 0L;
         }
     }
 

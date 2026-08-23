@@ -248,12 +248,9 @@ public class DeepSeekAIService {
         if (result == null) {
             return true;
         }
-        String normalized = result.toLowerCase();
-        return normalized.contains("暂时无法调用外部模型")
-                || normalized.contains("本地模型网关当前不可用")
-                || normalized.contains("本地模型网关暂不可用")
-                || normalized.contains("当前未配置外部api key")
-                || normalized.contains("请稍后重试");
+        // 仅识别约定的降级前缀（OpenAiAdapter.fallback 恒以此开头），
+        // 不做通用词匹配，避免 AI 正常输出包含"请稍后重试"等字样被误判为引擎失败
+        return result.toLowerCase().startsWith(com.zhixu.kb.ai.AIEngineAdapterRouter.FALLBACK_MARKER);
     }
 
     private AIAnalysisResult parseOrganizeResult(String response) {

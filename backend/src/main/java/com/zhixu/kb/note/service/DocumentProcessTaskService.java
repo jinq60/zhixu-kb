@@ -13,6 +13,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
@@ -37,7 +38,8 @@ import java.util.stream.Collectors;
 /**
  * 文档处理状态机调度器。两类任务：
  * 1) 上传任务：PENDING -> PARSING（从文件解析纯文本）-> CLEANING（全文 LLM 清洗）-> 写回笔记正文 -> COMPLETED；
- * 2) 向量化任务：EMBEDDING（对笔记最终正文切块 -> Embedding -> Milvus）-> COMPLETED（由 AI 整理触发）。
+ *    清洗完成后自动触发 AI 整理（摘要/关键词/分类）和向量化任务，实现“上传即入库”。
+ * 2) 向量化任务：EMBEDDING（对笔记最终正文切块 -> Embedding -> Milvus）-> COMPLETED。
  *
  * 关键机制：阶段检查点落库、Chunk 级幂等重试（SUCCESS 跳过，retry<max 才重跑，指数退避）、
  * 启动恢复 + 定时扫描推进、卡死明细重置、并发限流（清洗 3 / 向量 4）。
@@ -50,8 +52,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     private static final int MAX_RETRY = 5;
     private static final long RETRY_BACKOFF_MS = 10_000;
     private static final long STUCK_MS = 10 * 60 * 1000L;
-    /** 全文 LLM 清洗单片上限（模型上下文安全） */
-    private static final int LLM_CLEAN_PART_MAX = 50_000;
+    /** 全文 LLM 清洗单片上限：从 5 万降到 1.5 万，增加可并行块数、缩短大文档总耗时 */
+    private static final int LLM_CLEAN_PART_MAX = 15_000;
     private static final int MAX_VECTOR_CHUNKS = 64;
 
     private final DocumentProcessTaskMapper taskMapper;
@@ -65,10 +67,12 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     private final DocumentNormalizeService documentNormalizeService;
     private final NoteStructureService noteStructureService;
     private final TransactionTemplate transactionTemplate;
+    private final AiAnalysisTaskManager aiAnalysisTaskManager;
+    private final ObjectProvider<AiAnalysisTaskRunner> aiAnalysisTaskRunnerProvider;
 
-    /** 清洗并发 */
-    private final ExecutorService cleanExecutor = Executors.newFixedThreadPool(3);
-    private final Semaphore cleanPermits = new Semaphore(3);
+    /** 清洗并发：提升到 8，配合更小的 chunk 提升大文档吞吐 */
+    private final ExecutorService cleanExecutor = Executors.newFixedThreadPool(8);
+    private final Semaphore cleanPermits = new Semaphore(8);
     /** 向量化并发 */
     private final ExecutorService embedExecutor = Executors.newFixedThreadPool(4);
     private final Semaphore embedPermits = new Semaphore(4);
@@ -93,11 +97,13 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
             log.info("Reuse existing upload task: taskId={} fileId={} noteId={}", existing.getId(), fileId, noteId);
             return existing;
         }
+        // 任务名优先使用笔记标题（用户创建/编辑时命名的标题），未命名时才用文件名
+        String taskName = resolveTaskName(noteId, fileName);
         DocumentProcessTaskEntity task = new DocumentProcessTaskEntity();
         task.setUserId(userId);
         task.setNoteId(noteId);
         task.setFileId(fileId);
-        task.setFileName(fileName);
+        task.setFileName(taskName);
         task.setStatus("PENDING");
         task.setCurrentStage("PENDING");
         task.setProgress(5);
@@ -108,17 +114,50 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         return task;
     }
 
+    private String resolveTaskName(Long noteId, String fileName) {
+        try {
+            if (noteId != null) {
+                com.zhixu.kb.note.entity.Note note = noteMapper.selectById(noteId);
+                if (note != null && StringUtils.hasText(note.getTitle())) {
+                    String title = note.getTitle().trim();
+                    if (!"新建笔记".equals(title) && !"未命名笔记".equals(title)) {
+                        return title;
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Resolve task name from note title failed: noteId={} err={}", noteId, ex.getMessage());
+        }
+        if (!StringUtils.hasText(fileName)) {
+            return "文档任务";
+        }
+        int lastDot = fileName.lastIndexOf('.');
+        return lastDot > 0 ? fileName.substring(0, lastDot).trim() : fileName.trim();
+    }
+
     /**
      * 创建向量化任务（AI 整理触发）：对笔记最终正文切块 -> Embedding -> Milvus。
+     * 同一笔记若已存在未终态向量化任务则复用，避免重复向量化/重复任务记录。
      */
     public DocumentProcessTaskEntity createVectorizeTask(Long userId, Long noteId, String fileName) {
+        DocumentProcessTaskEntity existing = taskMapper.selectOne(new LambdaQueryWrapper<DocumentProcessTaskEntity>()
+                .eq(DocumentProcessTaskEntity::getNoteId, noteId)
+                .isNull(DocumentProcessTaskEntity::getFileId)
+                .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
+                .orderByDesc(DocumentProcessTaskEntity::getId)
+                .last("LIMIT 1"));
+        if (existing != null) {
+            log.info("Reuse existing vectorize task: taskId={} noteId={}", existing.getId(), noteId);
+            return existing;
+        }
         DocumentProcessTaskEntity task = new DocumentProcessTaskEntity();
         task.setUserId(userId);
         task.setNoteId(noteId);
         task.setFileName(fileName);
         task.setStatus("EMBEDDING");
         task.setCurrentStage("EMBEDDING");
-        task.setProgress(50);
+        // 与 embeddingProgress 起点一致：随块完成实时爬升
+        task.setProgress(45);
         task.setRetryCount(0);
         task.setMaxRetry(MAX_RETRY);
         taskMapper.insert(task);
@@ -265,6 +304,12 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         }
     }
 
+    /**
+     * 清洗推进（轮次驱动）：每轮最多提交"可用许可数"个合格块，
+     * join 等待本轮完成后——若仍有可执行块则 requeue 继续下一轮（公平轮转，
+     * 不长期占用单线程 advanceExecutor），否则等待定时扫描按退避重试。
+     * 进度由 cleanOne 在每块终态时实时刷新，不再出现长时间停滞。
+     */
     private void advanceCleaning(DocumentProcessTaskEntity task) {
         List<CleanChunkTaskEntity> parts = ensureCleanParts(task);
         long done = parts.stream().filter(c -> "SUCCESS".equals(c.getStatus())).count();
@@ -272,12 +317,12 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
             finishCleaning(task, parts);
             return;
         }
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        List<CleanChunkTaskEntity> eligible = new ArrayList<>();
         for (CleanChunkTaskEntity part : parts) {
             if ("SUCCESS".equals(part.getStatus())) {
                 continue;
             }
-            // PROCESSING：已有执行中的清洗调用，跳过（防止定时扫描重复提交导致同一块并发执行多次）
+            // PROCESSING：已有执行中的清洗调用，跳过（防止重复提交导致同一块并发执行多次）
             if ("PROCESSING".equals(part.getStatus())) {
                 continue;
             }
@@ -285,9 +330,22 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                     && (part.getRetryCount() >= task.getMaxRetry() || shouldBackoff(part))) {
                 continue;
             }
-            futures.add(CompletableFuture.runAsync(() -> cleanOne(part, task.getUserId()), cleanExecutor));
+            eligible.add(part);
         }
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        boolean anyStarted = false;
+        if (!eligible.isEmpty()) {
+            int slots = Math.max(1, Math.min(eligible.size(), cleanPermits.availablePermits()));
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            for (int i = 0; i < slots; i++) {
+                CleanChunkTaskEntity part = eligible.get(i);
+                part.setStatus("PROCESSING");
+                cleanChunkMapper.updateById(part);
+                futures.add(CompletableFuture.runAsync(() -> cleanOne(part, task.getUserId()), cleanExecutor));
+                anyStarted = true;
+            }
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        }
 
         List<CleanChunkTaskEntity> after = cleanChunkMapper.selectList(new LambdaQueryWrapper<CleanChunkTaskEntity>()
                 .eq(CleanChunkTaskEntity::getTaskId, task.getId()));
@@ -297,8 +355,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
             finishCleaning(task, after);
             return;
         }
-        int progress = 10 + (int) (success * 30 / Math.max(1, after.size()));
-        updateProgress(task, Math.min(progress, 40));
+        updateProgress(task, cleaningProgress(success, after.size()));
         // 仅当所有失败块重试次数已耗尽才终态失败；否则保留任务由定时扫描按退避重试
         boolean retriesExhausted = after.stream()
                 .filter(c -> "FAILED".equals(c.getStatus()))
@@ -306,7 +363,20 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         if (failed > 0 && retriesExhausted
                 && after.stream().allMatch(c -> "SUCCESS".equals(c.getStatus()) || "FAILED".equals(c.getStatus()))) {
             markCleaningFailed(task, after);
+            return;
         }
+        if (anyStarted) {
+            // 本轮有实际进展且还有待处理块：requeue 下一轮（排在其他任务之后，避免独占推进线程）
+            asyncAdvance(task.getId());
+        }
+    }
+
+    /** 清洗阶段进度：10% 起步、随成功块数爬升、封顶 95%（100% 由完成收尾写入） */
+    private int cleaningProgress(long success, long total) {
+        if (total <= 0) {
+            return 10;
+        }
+        return Math.min(95, 10 + (int) ((success * 85L) / total));
     }
 
     /**
@@ -366,7 +436,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         }
         task.setStatus(vectorizeTask ? "EMBEDDING" : "PENDING");
         task.setCurrentStage(vectorizeTask ? "EMBEDDING" : "PENDING");
-        task.setProgress(vectorizeTask ? 50 : 5);
+        task.setProgress(vectorizeTask ? 45 : 5);
         task.setRetryCount(0);
         task.setFailReason(null);
         task.setUpdateTime(LocalDateTime.now());
@@ -398,6 +468,51 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         String structuredHtml = documentNormalizeService.toStructuredHtml(source);
         writeBackToNote(task, StringUtils.hasText(structuredHtml) ? structuredHtml : source);
         completeTask(task);
+        // 清洗完成后自动触发 AI 整理与向量化，用户无需手动点击“AI 整理”
+        autoTriggerPostCleaning(task);
+    }
+
+    /**
+     * 文档清洗完成后自动触发后续管线：向量化任务 + AI 整理（生成摘要/关键词/分类）。
+     * 两者互不阻塞、可并行执行；createVectorizeTask 会复用已有未终态向量化任务，避免重复。
+     */
+    private void autoTriggerPostCleaning(DocumentProcessTaskEntity task) {
+        try {
+            com.zhixu.kb.note.entity.Note note = noteMapper.selectById(task.getNoteId());
+            if (note == null || (note.getIsDeleted() != null && note.getIsDeleted() == 1)) {
+                return;
+            }
+            // 立即创建向量化任务，与 AI 整理并行执行
+            try {
+                createVectorizeTask(task.getUserId(), task.getNoteId(), note.getTitle());
+            } catch (Exception ex) {
+                log.warn("Auto create vectorize task failed: taskId={} noteId={} err={}",
+                        task.getId(), task.getNoteId(), ex.getMessage());
+            }
+            // 自动触发 AI 整理（仅当笔记尚无完整元数据时），生成摘要/关键词/分类
+            boolean hasMetadata = StringUtils.hasText(note.getSummary())
+                    && StringUtils.hasText(note.getKeywords());
+            if (!hasMetadata) {
+                autoSubmitAiAnalysis(task.getUserId(), task.getNoteId(), note.getTitle());
+            }
+        } catch (Exception ex) {
+            log.warn("Auto trigger post-cleaning failed: taskId={} noteId={} err={}",
+                    task.getId(), task.getNoteId(), ex.getMessage());
+        }
+    }
+
+    private void autoSubmitAiAnalysis(Long userId, Long noteId, String noteTitle) {
+        if (!aiAnalysisTaskManager.tryStart(userId, noteId, noteTitle)) {
+            log.info("AI analysis already running, skip auto submit: noteId={}", noteId);
+            return;
+        }
+        long generation = aiAnalysisTaskManager.generationOf(noteId);
+        try {
+            aiAnalysisTaskRunnerProvider.getObject().runAuto(userId, noteId, aiAnalysisTaskManager, generation);
+        } catch (Exception ex) {
+            aiAnalysisTaskManager.release(noteId, generation);
+            log.warn("Auto submit AI analysis failed: noteId={} err={}", noteId, ex.getMessage());
+        }
     }
 
     /**
@@ -455,7 +570,16 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     }
 
     private void cleanOne(CleanChunkTaskEntity part, Long userId) {
-        if (!cleanPermits.tryAcquire()) {
+        // 阻塞式获取许可（线程池大小==许可数，仅排队不空转），避免块被静默跳过导致进度停滞
+        boolean acquired = false;
+        try {
+            acquired = cleanPermits.tryAcquire(5, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (!acquired) {
+            part.setStatus("PENDING");
+            cleanChunkMapper.updateById(part);
             return;
         }
         com.zhixu.kb.common.utils.SecurityUtils.setUserId(userId);
@@ -477,6 +601,31 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         } finally {
             com.zhixu.kb.common.utils.SecurityUtils.clear();
             cleanPermits.release();
+            // 块级进度实时落库：前端不再看到长时间停滞
+            refreshCleaningProgress(part.getTaskId());
+        }
+    }
+
+    /**
+     * 依清洗明细重算任务进度并定向更新（仅 progress/updateTime 列，
+     * 不覆盖并发写入的状态/阶段；终态任务跳过）。
+     */
+    private void refreshCleaningProgress(Long taskId) {
+        try {
+            List<CleanChunkTaskEntity> parts = cleanChunkMapper.selectList(new LambdaQueryWrapper<CleanChunkTaskEntity>()
+                    .eq(CleanChunkTaskEntity::getTaskId, taskId));
+            if (parts.isEmpty()) {
+                return;
+            }
+            long success = parts.stream().filter(c -> "SUCCESS".equals(c.getStatus())).count();
+            int progress = cleaningProgress(success, parts.size());
+            taskMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DocumentProcessTaskEntity>()
+                    .eq(DocumentProcessTaskEntity::getId, taskId)
+                    .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
+                    .set(DocumentProcessTaskEntity::getProgress, progress)
+                    .set(DocumentProcessTaskEntity::getUpdateTime, LocalDateTime.now()));
+        } catch (Exception ex) {
+            log.warn("Refresh cleaning progress failed: taskId={} err={}", taskId, ex.getMessage());
         }
     }
 
@@ -526,6 +675,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
 
     /**
      * EMBEDDING（向量化任务）：对笔记最终正文切块 -> Embedding -> Milvus（块级 upsert 幂等）。
+     * 轮次驱动：每轮最多提交"可用许可数"个合格块，完成后 requeue 继续直至终态；
+     * 进度由 embedOne 在每块终态时实时刷新。
      */
     private void advanceEmbedding(DocumentProcessTaskEntity task) {
         try {
@@ -540,34 +691,18 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                 markFailed(task, "\u7b14\u8bb0\u5185\u5bb9\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u5411\u91cf\u5316");
                 return;
             }
-            List<EmbedChunkTaskEntity> chunks = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
-                    .eq(EmbedChunkTaskEntity::getTaskId, task.getId()));
-            if (chunks.isEmpty()) {
-                List<String> bounded = segments.size() > MAX_VECTOR_CHUNKS
-                        ? segments.subList(0, MAX_VECTOR_CHUNKS) : segments;
-                for (int i = 0; i < bounded.size(); i++) {
-                    EmbedChunkTaskEntity seg = new EmbedChunkTaskEntity();
-                    seg.setTaskId(task.getId());
-                    seg.setChunkIndex(i);
-                    seg.setContent(bounded.get(i));
-                    seg.setStatus("PENDING");
-                    seg.setRetryCount(0);
-                    embedChunkMapper.insert(seg);
-                }
-                chunks = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
-                        .eq(EmbedChunkTaskEntity::getTaskId, task.getId()));
-            }
+            List<EmbedChunkTaskEntity> chunks = ensureEmbedChunks(task, segments);
             long done = chunks.stream().filter(c -> "SUCCESS".equals(c.getStatus())).count();
-            if (done == chunks.size()) {
+            if (!chunks.isEmpty() && done == chunks.size()) {
                 completeTask(task);
                 return;
             }
-            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            List<EmbedChunkTaskEntity> eligible = new ArrayList<>();
             for (EmbedChunkTaskEntity chunk : chunks) {
                 if ("SUCCESS".equals(chunk.getStatus())) {
                     continue;
                 }
-                // PROCESSING：已有执行中的向量化调用，跳过（防止定时扫描重复提交）
+                // PROCESSING：已有执行中的向量化调用，跳过（防止重复提交）
                 if ("PROCESSING".equals(chunk.getStatus())) {
                     continue;
                 }
@@ -578,18 +713,33 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                         < (isAiUnavailable(chunk.getErrorMsg()) ? 60_000L : RETRY_BACKOFF_MS))) {
                     continue;
                 }
-                futures.add(CompletableFuture.runAsync(() -> embedOne(task, chunk), embedExecutor));
+                eligible.add(chunk);
             }
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+            boolean anyStarted = false;
+            if (!eligible.isEmpty()) {
+                int slots = Math.max(1, Math.min(eligible.size(), embedPermits.availablePermits()));
+                List<CompletableFuture<Void>> futures = new ArrayList<>();
+                for (int i = 0; i < slots; i++) {
+                    EmbedChunkTaskEntity chunk = eligible.get(i);
+                    chunk.setStatus("PROCESSING");
+                    embedChunkMapper.updateById(chunk);
+                    futures.add(CompletableFuture.runAsync(() -> embedOne(task, chunk), embedExecutor));
+                    anyStarted = true;
+                }
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            }
 
             List<EmbedChunkTaskEntity> after = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
                     .eq(EmbedChunkTaskEntity::getTaskId, task.getId()));
             long success = after.stream().filter(c -> "SUCCESS".equals(c.getStatus())).count();
             long failed = after.stream().filter(c -> "FAILED".equals(c.getStatus())).count();
-            updateProgress(task, 50 + (int) (success * 40 / Math.max(1, after.size())));
-            if (success == after.size()) {
+            updateProgress(task, embeddingProgress(success, after.size()));
+            if (!after.isEmpty() && success == after.size()) {
                 completeTask(task);
-            } else if (failed > 0 && after.stream().allMatch(c -> "SUCCESS".equals(c.getStatus()) || "FAILED".equals(c.getStatus()))) {
+                return;
+            }
+            if (failed > 0 && after.stream().allMatch(c -> "SUCCESS".equals(c.getStatus()) || "FAILED".equals(c.getStatus()))) {
                 boolean allEmbeddingUnavailable = after.stream()
                         .filter(c -> "FAILED".equals(c.getStatus()))
                         .allMatch(c -> isAiUnavailable(c.getErrorMsg()));
@@ -605,18 +755,62 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                     task.setUpdateTime(LocalDateTime.now());
                     taskMapper.updateById(task);
                     log.info("Document process skipped vectorization (no embedding service): taskId={}", task.getId());
+                    return;
                 } else if (retriesExhausted) {
                     markFailed(task, "向量化失败块数: " + failed + "（超过最大重试）");
+                    return;
                 }
-                // 重试未耗尽：保持任务非终态，由定时扫描按退避重试
+            }
+            if (anyStarted) {
+                // 本轮有实际进展且还有待处理块：requeue 下一轮持续推进
+                asyncAdvance(task.getId());
             }
         } catch (Exception ex) {
             markFailed(task, "向量化失败: " + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
         }
     }
 
+    /** 切块明细创建（首次进入 EMBEDDING 时按当前正文切块落库） */
+    private List<EmbedChunkTaskEntity> ensureEmbedChunks(DocumentProcessTaskEntity task, List<String> segments) {
+        List<EmbedChunkTaskEntity> existing = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
+                .eq(EmbedChunkTaskEntity::getTaskId, task.getId()));
+        if (!existing.isEmpty()) {
+            return existing;
+        }
+        List<String> bounded = segments.size() > MAX_VECTOR_CHUNKS
+                ? segments.subList(0, MAX_VECTOR_CHUNKS) : segments;
+        for (int i = 0; i < bounded.size(); i++) {
+            EmbedChunkTaskEntity seg = new EmbedChunkTaskEntity();
+            seg.setTaskId(task.getId());
+            seg.setChunkIndex(i);
+            seg.setContent(bounded.get(i));
+            seg.setStatus("PENDING");
+            seg.setRetryCount(0);
+            embedChunkMapper.insert(seg);
+        }
+        return embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
+                .eq(EmbedChunkTaskEntity::getTaskId, task.getId()));
+    }
+
+    /** 向量化阶段进度：45% 起步、随成功块数爬升、封顶 95%（100% 由完成收尾写入） */
+    private int embeddingProgress(long success, long total) {
+        if (total <= 0) {
+            return 45;
+        }
+        return Math.min(95, 45 + (int) ((success * 50L) / total));
+    }
+
     private void embedOne(DocumentProcessTaskEntity task, EmbedChunkTaskEntity chunk) {
-        if (!embedPermits.tryAcquire()) {
+        // 阻塞式获取许可（线程池大小==许可数，仅排队不空转）
+        boolean acquired = false;
+        try {
+            acquired = embedPermits.tryAcquire(5, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (!acquired) {
+            chunk.setStatus("PENDING");
+            embedChunkMapper.updateById(chunk);
             return;
         }
         com.zhixu.kb.common.utils.SecurityUtils.setUserId(task.getUserId());
@@ -642,6 +836,28 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         } finally {
             com.zhixu.kb.common.utils.SecurityUtils.clear();
             embedPermits.release();
+            // 块级进度实时落库
+            refreshEmbeddingProgress(task.getId());
+        }
+    }
+
+    /** 依向量化明细重算任务进度并定向更新（仅 progress/updateTime 列，终态任务跳过）。 */
+    private void refreshEmbeddingProgress(Long taskId) {
+        try {
+            List<EmbedChunkTaskEntity> chunks = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
+                    .eq(EmbedChunkTaskEntity::getTaskId, taskId));
+            if (chunks.isEmpty()) {
+                return;
+            }
+            long success = chunks.stream().filter(c -> "SUCCESS".equals(c.getStatus())).count();
+            int progress = embeddingProgress(success, chunks.size());
+            taskMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DocumentProcessTaskEntity>()
+                    .eq(DocumentProcessTaskEntity::getId, taskId)
+                    .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
+                    .set(DocumentProcessTaskEntity::getProgress, progress)
+                    .set(DocumentProcessTaskEntity::getUpdateTime, LocalDateTime.now()));
+        } catch (Exception ex) {
+            log.warn("Refresh embedding progress failed: taskId={} err={}", taskId, ex.getMessage());
         }
     }
 
@@ -698,6 +914,18 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         }
         if (!stuckClean.isEmpty()) {
             log.warn("Reset stuck clean chunks: taskId={} count={}", taskId, stuckClean.size());
+        }
+        // 向量化明细同样可能因进程重启残留 PROCESSING，一并重置
+        List<EmbedChunkTaskEntity> stuckEmbed = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
+                .eq(EmbedChunkTaskEntity::getTaskId, taskId)
+                .eq(EmbedChunkTaskEntity::getStatus, "PROCESSING")
+                .lt(EmbedChunkTaskEntity::getUpdateTime, threshold));
+        for (EmbedChunkTaskEntity e : stuckEmbed) {
+            e.setStatus("PENDING");
+            embedChunkMapper.updateById(e);
+        }
+        if (!stuckEmbed.isEmpty()) {
+            log.warn("Reset stuck embed chunks: taskId={} count={}", taskId, stuckEmbed.size());
         }
     }
 
@@ -794,8 +1022,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
 
     private Map<String, Object> buildTaskView(DocumentProcessTaskEntity task) {
         Map<String, Object> v = new HashMap<>();
-        v.put("taskId", task.getId());
-        v.put("noteId", task.getNoteId());
+        v.put("taskId", String.valueOf(task.getId()));
+        v.put("noteId", task.getNoteId() == null ? null : String.valueOf(task.getNoteId()));
         v.put("fileName", task.getFileName());
         v.put("subType", task.getFileId() != null ? "文档清洗" : "知识向量化");
         v.put("status", task.getStatus());

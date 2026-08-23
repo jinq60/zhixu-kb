@@ -10,7 +10,7 @@ const routes: RouteRecordRaw[] = [
 
   // 用户工作台（需要登录）
   { path: '/notes', component: () => import('../views/NoteList.vue'), meta: { requiresAuth: true } },
-  { path: '/notes/:id', component: () => import('../views/NoteEdit.vue'), meta: { requiresAuth: true } },
+  { path: '/notes/edit/:id', component: () => import('../views/NoteEdit.vue'), meta: { requiresAuth: true } },
   { path: '/categories', component: () => import('../views/CategoryList.vue'), meta: { requiresAuth: true } },
   { path: '/ask', component: () => import('../views/ConsultView.vue'), meta: { requiresAuth: true } },
   { path: '/graph', component: () => import('../views/GraphView.vue'), meta: { requiresAuth: true } },

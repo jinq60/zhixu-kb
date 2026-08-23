@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.ResultCode;
 import com.zhixu.kb.common.utils.HtmlSanitizer;
+import com.zhixu.kb.common.utils.LikeUtils;
 import com.zhixu.kb.common.utils.SecurityUtils;
 import com.zhixu.kb.note.entity.Category;
 import com.zhixu.kb.note.entity.FileInfo;
@@ -94,6 +95,9 @@ private final DocumentProcessTaskService documentProcessTaskService;
     /** 单次 OCR 最大图片数，防止请求线程被长时间占用 */
     private static final int MAX_OCR_BATCH = 10;
 
+    /** 单页条数上限：防止 size 超大分页拖垮数据库 */
+    private static final int MAX_PAGE_SIZE = 100;
+
     public Page<Note> list(int page, int size, Long categoryId) {
         Long userId = getUserIdOrThrow();
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
@@ -103,7 +107,7 @@ private final DocumentProcessTaskService documentProcessTaskService;
         if (categoryId != null) {
             wrapper.eq(Note::getCategoryId, categoryId);
         }
-        return noteMapper.selectPage(new Page<>(page, size), wrapper);
+        return noteMapper.selectPage(new Page<>(Math.max(1, page), safePageSize(size)), wrapper);
     }
 
     public Page<Note> search(int page, int size, String keyword, Long categoryId) {
@@ -111,24 +115,29 @@ private final DocumentProcessTaskService documentProcessTaskService;
         if (!StringUtils.hasText(keyword)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "Search keyword must not be empty");
         }
+        String escapedKeyword = LikeUtils.escape(keyword);
 
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getUserId, userId)
                 .eq(Note::getIsDeleted, 0)
-                .and(w -> w.like(Note::getTitle, keyword)
+                .and(w -> w.like(Note::getTitle, escapedKeyword)
                         .or()
-                        .like(Note::getContent, keyword)
+                        .like(Note::getContent, escapedKeyword)
                         .or()
-                        .like(Note::getOcrText, keyword)
+                        .like(Note::getOcrText, escapedKeyword)
                         .or()
-                        .like(Note::getSummary, keyword)
+                        .like(Note::getSummary, escapedKeyword)
                         .or()
-                        .like(Note::getKeywords, keyword))
+                        .like(Note::getKeywords, escapedKeyword))
                 .orderByDesc(Note::getUpdateTime);
         if (categoryId != null) {
             wrapper.eq(Note::getCategoryId, categoryId);
         }
-        return noteMapper.selectPage(new Page<>(page, size), wrapper);
+        return noteMapper.selectPage(new Page<>(Math.max(1, page), safePageSize(size)), wrapper);
+    }
+
+    private int safePageSize(int size) {
+        return Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
     }
 
     public NoteStatsResponse stats() {
@@ -446,7 +455,7 @@ private final DocumentProcessTaskService documentProcessTaskService;
 
     private Map<String, Object> toAiTaskView(AiAnalysisTaskManager.TaskState state) {
         Map<String, Object> view = new HashMap<>();
-        view.put("noteId", state.getNoteId());
+        view.put("noteId", state.getNoteId() == null ? null : String.valueOf(state.getNoteId()));
         view.put("noteTitle", state.getNoteTitle());
         view.put("running", state.isRunning());
         view.put("stage", state.getStage());

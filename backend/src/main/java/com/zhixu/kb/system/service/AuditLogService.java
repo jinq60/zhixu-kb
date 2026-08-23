@@ -19,6 +19,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 public class AuditLogService {
 
     private final OperationLogMapper operationLogMapper;
+    private final ClientIpResolver clientIpResolver;
 
     public void record(Long userId, String operationType, String operationDesc, String requestUrl) {
         try {
@@ -37,7 +38,7 @@ public class AuditLogService {
 
     private String resolveClientIp() {
         if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes) {
-            return ClientIpResolver.resolve(
+            return clientIpResolver.resolve(
                     ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest());
         }
         return "unknown";

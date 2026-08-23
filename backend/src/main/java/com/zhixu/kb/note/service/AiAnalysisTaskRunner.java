@@ -1,5 +1,6 @@
 package com.zhixu.kb.note.service;
 
+import com.zhixu.kb.common.utils.SecurityUtils;
 import com.zhixu.kb.system.model.LoginUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,25 @@ public class AiAnalysisTaskRunner {
             manager.complete(noteId, generation, friendlyMessage(ex));
         } finally {
             SecurityContextHolder.clearContext();
+        }
+    }
+
+    /**
+     * 供后台自动触发使用（无 HTTP 登录上下文），通过 ThreadLocal 设置用户 ID，供 AI 引擎路由用户级配置。
+     */
+    @Async("aiTaskExecutor")
+    public void runAuto(Long userId, Long noteId, AiAnalysisTaskManager manager, long generation) {
+        SecurityUtils.setUserId(userId);
+        try {
+            manager.updateStage(noteId, generation, "AI 分析中（调用大模型）");
+            aiAnalysisExecutor.execute(userId, noteId);
+            manager.complete(noteId, generation, null);
+            log.info("AI analysis task finished: noteId={}", noteId);
+        } catch (Exception ex) {
+            log.error("AI analysis task failed: noteId={}", noteId, ex);
+            manager.complete(noteId, generation, friendlyMessage(ex));
+        } finally {
+            SecurityUtils.clear();
         }
     }
 

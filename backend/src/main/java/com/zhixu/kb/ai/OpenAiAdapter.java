@@ -259,14 +259,23 @@ public class OpenAiAdapter implements AIEngineAdapter {
 
     @Override
     public boolean isHealthy() {
-        ResolvedApi api = resolveApi();
+        ResolvedApi api;
+        try {
+            api = resolveApi();
+        } catch (Exception ex) {
+            log.warn("openapi health check resolve failed: {}", ex.getMessage());
+            return false;
+        }
         if (!StringUtils.hasText(api.getApiKey())) {
             return false;
         }
-        // 健康探测结果缓存 60 秒，避免每次 AI 调用都额外请求 /models
+        // 健康探测按端点（baseUrl+model）缓存 60 秒：用户自配端点与平台端点互不污染，
+        // 且避免每次 AI 调用都额外请求 /models
+        String cacheKey = api.getBaseUrl() + "|" + api.getModel();
         long now = System.currentTimeMillis();
-        if (now - lastHealthProbeMs < HEALTH_PROBE_TTL_MS) {
-            return cachedHealthy;
+        HealthEntry cached = healthCache.get(cacheKey);
+        if (cached != null && now - cached.probedAt < HEALTH_PROBE_TTL_MS) {
+            return cached.healthy;
         }
         try {
             String url = api.getBaseUrl() + "/models";
@@ -274,20 +283,35 @@ public class OpenAiAdapter implements AIEngineAdapter {
             // 健康探测使用独立短超时（5s/10s），避免慢端点把 health 接口拖住
             ResponseEntity<Map> response = healthRestTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
             boolean healthy = response.getStatusCode().is2xxSuccessful();
-            cachedHealthy = healthy;
-            lastHealthProbeMs = now;
+            putHealthCache(cacheKey, now, healthy);
             return healthy;
         } catch (Exception ex) {
             log.warn("openapi health check failed: url={} err={}", api.getBaseUrl() + "/models", ex.getMessage());
-            cachedHealthy = false;
-            lastHealthProbeMs = now;
+            putHealthCache(cacheKey, now, false);
             return false;
         }
     }
 
     private static final long HEALTH_PROBE_TTL_MS = 60_000L;
-    private volatile long lastHealthProbeMs = 0L;
-    private volatile boolean cachedHealthy = false;
+
+    private final java.util.concurrent.ConcurrentHashMap<String, HealthEntry> healthCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void putHealthCache(String key, long probedAt, boolean healthy) {
+        // 容量保护：端点数异常膨胀时整体清空，缓存仅用于削峰探测频率
+        if (healthCache.size() > 100) {
+            healthCache.clear();
+        }
+        HealthEntry entry = new HealthEntry();
+        entry.probedAt = probedAt;
+        entry.healthy = healthy;
+        healthCache.put(key, entry);
+    }
+
+    private static final class HealthEntry {
+        volatile long probedAt;
+        volatile boolean healthy;
+    }
 
     private static final RestTemplate healthRestTemplate = createHealthRestTemplate();
 

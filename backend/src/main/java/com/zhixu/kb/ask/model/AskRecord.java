@@ -1,5 +1,7 @@
 package com.zhixu.kb.ask.model;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -27,6 +29,7 @@ public class AskRecord {
      */
     @Data
     public static class RelatedNote {
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long noteId;
         private String noteTitle;
         private Double similarity;

@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '@wangeditor/editor/dist/css/style.css'
 import { createEditor, createToolbar, type IDomEditor } from '@wangeditor/editor'
 import { ElMessage } from 'element-plus'
@@ -8,7 +8,7 @@ import { uploadFile } from '../api/file'
 
 const props = defineProps<{
   modelValue?: string
-  noteId?: number
+  noteId?: string | number
   fillHeight?: boolean
 }>()
 const emits = defineEmits<{
@@ -21,6 +21,7 @@ const toolbarRef = ref<HTMLElement | null>(null)
 const editorContainerRef = ref<HTMLElement | null>(null)
 const fallbackFullscreen = ref(false)
 const nativeFullscreen = ref(false)
+const destroyed = ref(false)
 
 
 
@@ -69,18 +70,21 @@ const toEditorHtml = (html?: string) => rewriteImageUrls(html || '', true)
 const toStorageHtml = (html?: string) => rewriteImageUrls(html || '', false)
 
 const onChange = (editor?: IDomEditor) => {
-  if (destroyed) return
+  if (destroyed.value) return
   // 编辑器销毁过程中 wangeditor 可能触发无参 change 事件，忽略之
   if (!editor) return
   emits('update:modelValue', toStorageHtml(editor.getHtml()))
 }
 
 /** 应用内容：统一使用 setHtml（wangeditor 内部会处理大文档，避免自行分片破坏标签结构） */
-let destroyed = false
 const applyContent = (html: string) => {
   const editor = editorRef.value
-  if (!editor || destroyed) return
-  editor.setHtml(html)
+  if (!editor || destroyed.value) return
+  nextTick(() => {
+    const current = editorRef.value
+    if (!current || destroyed.value) return
+    current.setHtml(html || '<p><br></p>')
+  })
 }
 
 watch(
@@ -171,11 +175,13 @@ const onKeydown = (e: KeyboardEvent) => {
 }
 
 onMounted(() => {
+  destroyed.value = false
   const container = editorContainerRef.value
   if (!container) return
+  const initial = toEditorHtml(props.modelValue || '')
   const editor = createEditor({
     selector: container,
-    html: '',
+    html: initial || '<p><br></p>',
     config: editorConfig.value,
     mode: 'default'
   })
@@ -184,16 +190,12 @@ onMounted(() => {
   if (toolbarRef.value) {
     createToolbar({ editor, selector: toolbarRef.value, config: toolbarConfig })
   }
-  const initial = toEditorHtml(props.modelValue || '')
-  if (initial) {
-    applyContent(initial)
-  }
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('fullscreenchange', syncNativeFullscreen)
 })
 
 onBeforeUnmount(() => {
-  destroyed = true
+  destroyed.value = true
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('fullscreenchange', syncNativeFullscreen)
   document.body.style.overflow = ''
@@ -203,8 +205,13 @@ onBeforeUnmount(() => {
   }
 
   const editor = editorRef.value
+  editorRef.value = null
   if (editor) {
-    editor.destroy()
+    try {
+      editor.destroy()
+    } catch {
+      // ignore cleanup errors
+    }
   }
 })
 

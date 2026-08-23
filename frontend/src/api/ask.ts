@@ -1,7 +1,7 @@
 import http from './http'
 
 export interface RelatedNote {
-  noteId: number
+  noteId: string | number
   noteTitle: string
   similarity?: number
 }
@@ -48,6 +48,23 @@ export async function submitAskStream(
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
+  const emitPayload = (raw: string) => {
+    const payload = raw.trim()
+    if (!payload || payload === '[DONE]') return
+    try {
+      const parsed = JSON.parse(payload)
+      if (typeof parsed === 'string') {
+        if (parsed) onChunk(parsed)
+        return
+      }
+      const delta =
+        parsed?.choices?.[0]?.delta?.content || parsed?.choices?.[0]?.message?.content || ''
+      if (delta) onChunk(delta)
+    } catch {
+      // 非 JSON 时按原文输出
+      onChunk(payload)
+    }
+  }
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -57,18 +74,7 @@ export async function submitAskStream(
     for (const line of lines) {
       const trimmed = line.trim()
       if (!trimmed.startsWith('data:')) continue
-      const payload = trimmed.substring(5).trim()
-      if (payload === '[DONE]') continue
-      if (payload) {
-        try {
-          const parsed = JSON.parse(payload)
-          const delta = parsed?.choices?.[0]?.delta?.content || parsed?.choices?.[0]?.message?.content || ''
-          if (delta) onChunk(delta)
-        } catch {
-          // 非 JSON 时直接输出原文
-          onChunk(payload)
-        }
-      }
+      emitPayload(trimmed.substring(5))
     }
   }
   const tail = decoder.decode()
@@ -76,8 +82,7 @@ export async function submitAskStream(
     buffer += tail
     const trimmed = buffer.trim()
     if (trimmed.startsWith('data:')) {
-      const payload = trimmed.substring(5).trim()
-      if (payload && payload !== '[DONE]') onChunk(payload)
+      emitPayload(trimmed.substring(5))
     }
   }
 }

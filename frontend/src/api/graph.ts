@@ -14,7 +14,7 @@ export interface GraphEdge {
 }
 
 export interface GraphData {
-  noteId?: number
+  noteId?: string
   noteTitle: string
   nodes: GraphNode[]
   edges: GraphEdge[]
@@ -22,25 +22,25 @@ export interface GraphData {
 }
 
 export interface GraphBuildResult {
-  noteId?: number
+  noteId?: string
   entityCount: number
   relationCount: number
   extractionSource: string
   message: string
 }
 
-export async function buildNoteGraph(noteId: number) {
+export async function buildNoteGraph(noteId: string | number) {
   // AI 抽取最长可能 240s（120s 超时 × 2 次尝试），超时放宽到 300s 防止响应被提前断开
   const { data } = await http.post(`/api/notes/${noteId}/graph/build`, null, { timeout: 300000 })
   return data.data as GraphBuildResult
 }
 
-export async function getNoteGraph(noteId: number) {
+export async function getNoteGraph(noteId: string | number) {
   const { data } = await http.get(`/api/notes/${noteId}/graph`)
   return data.data as GraphData
 }
 
-export async function deleteNoteGraph(noteId: number) {
+export async function deleteNoteGraph(noteId: string | number) {
   await http.delete(`/api/notes/${noteId}/graph`)
 }
 

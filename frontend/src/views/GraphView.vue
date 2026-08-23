@@ -21,7 +21,8 @@ type GraphMode = 'note' | 'category' | 'global'
 
 const notes = ref<Note[]>([])
 const categories = ref<Category[]>([])
-const selectedNoteId = ref<number | null>(null)
+// note ID 为雪花 ID，保持字符串；分类 ID 仍为自增数值
+const selectedNoteId = ref<string | null>(null)
 const selectedCategoryId = ref<number | null>(null)
 const mode = ref<GraphMode>('category')
 const graphData = ref<GraphData | null>(null)
@@ -50,12 +51,12 @@ const loadCategories = async () => {
   }
 }
 
-const selectNote = async (noteId: number) => {
+const selectNote = async (noteId: string) => {
   selectedNoteId.value = noteId
   await loadNoteGraph(noteId)
 }
 
-const loadNoteGraph = async (noteId: number) => {
+const loadNoteGraph = async (noteId: string | number) => {
   loading.value = true
   try {
     graphData.value = await getNoteGraph(noteId)
@@ -204,7 +205,7 @@ onMounted(async () => {
                 class="full-width"
                 @change="selectNote"
               >
-                <el-option v-for="note in notes" :key="note.id" :label="note.title" :value="Number(note.id)" />
+                <el-option v-for="note in notes" :key="note.id" :label="note.title" :value="String(note.id)" />
               </el-select>
 
               <div class="graph-actions">

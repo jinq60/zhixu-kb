@@ -49,10 +49,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
             .build();
     private final AppProperties appProperties;
     private final ObjectMapper objectMapper;
+    private final ClientIpResolver clientIpResolver;
 
-    public RateLimitFilter(AppProperties appProperties, ObjectMapper objectMapper) {
+    public RateLimitFilter(AppProperties appProperties, ObjectMapper objectMapper, ClientIpResolver clientIpResolver) {
         this.appProperties = appProperties;
         this.objectMapper = objectMapper;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @Override
@@ -101,6 +103,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             int after = counter.count.incrementAndGet();
             if (after > threshold) {
                 response.setStatus(429);
+                response.setHeader("Retry-After", "60");
                 response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                 Result<Void> error = Result.error(429, "请求过于频繁，请稍后再试");
                 response.getWriter().write(objectMapper.writeValueAsString(error));
@@ -120,7 +123,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private String resolveClientIp(HttpServletRequest request) {
-        return ClientIpResolver.resolve(request);
+        return clientIpResolver.resolve(request);
     }
 
 }

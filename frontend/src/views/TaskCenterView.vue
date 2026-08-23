@@ -12,7 +12,7 @@ import {
   type ActiveTask,
   type RecentTask
 } from '../api/file'
-import { listAIAnalysisTasks, submitAIAnalysis, deleteAIAnalysisTask, type AiAnalysisTaskItem } from '../api/note'
+import { getAiConfig, type AiUserConfig } from '../api/ai'
 
 const props = defineProps<{
   embedded?: boolean
@@ -24,8 +24,8 @@ interface UnifiedTask {
   key: string
   type: 'doc' | 'ai'
   subType: string
-  taskId?: number
-  noteId?: number
+  taskId?: string
+  noteId?: string
   name: string
   status: string
   statusLabel: string
@@ -39,19 +39,28 @@ interface UnifiedTask {
 }
 
 const loading = ref(false)
+const initialLoading = ref(true)
+const polling = ref(false)
 const docActive = ref<ActiveTask[]>([])
 const docRecent = ref<RecentTask[]>([])
-const aiActive = ref<AiAnalysisTaskItem[]>([])
-const aiRecent = ref<AiAnalysisTaskItem[]>([])
-const retryingId = ref<number | null>(null)
-const retryingAiId = ref<number | null>(null)
-const deletingId = ref<number | null>(null)
-const deletingAiId = ref<number | null>(null)
+const retryingId = ref<string | null>(null)
+const deletingId = ref<string | null>(null)
 const clearing = ref(false)
 const activeTab = ref<'all' | 'running' | 'completed' | 'failed'>('all')
 const currentPage = ref(1)
 const pageSize = ref(10)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let tickTimer: ReturnType<typeof setInterval> | null = null
+const localElapsed = ref<Map<string, number>>(new Map())
+const aiConfig = ref<AiUserConfig | null>(null)
+const aiConfigLoading = ref(false)
+
+const showAiConfigHint = computed(() => {
+  if (aiConfigLoading.value) return false
+  if (aiConfig.value?.configured) return false
+  // 有进行中的任务时才提示，避免空状态打扰
+  return allTasks.value.some((t) => isRunningStatus(t.status))
+})
 
 const STAGE_LABELS: Record<string, string> = {
   PENDING: '等待处理',
@@ -80,6 +89,28 @@ const formatElapsed = (seconds?: number) => {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return s > 0 ? `${m} 分 ${s} 秒` : `${m} 分钟`
+}
+
+const elapsedText = (task: UnifiedTask) => {
+  if (isRunningStatus(task.status)) {
+    const local = localElapsed.value.get(task.key)
+    if (local != null) return formatElapsed(local)
+  }
+  return formatElapsed(task.elapsedSeconds)
+}
+
+const syncLocalElapsed = () => {
+  const next = new Map(localElapsed.value)
+  allTasks.value.forEach((task) => {
+    if (isRunningStatus(task.status) && task.elapsedSeconds != null) {
+      if (!next.has(task.key)) {
+        next.set(task.key, task.elapsedSeconds)
+      }
+    } else {
+      next.delete(task.key)
+    }
+  })
+  localElapsed.value = next
 }
 
 const chunkText = (stats?: { total: number; success: number; failed: number; processing: number }) => {
@@ -134,36 +165,7 @@ const allTasks = computed<UnifiedTask[]>(() => {
       embedChunks: task.embedChunks
     })
   })
-  aiActive.value.forEach((task) => {
-    addUnique({
-      key: `a-${task.noteId}`,
-      type: 'ai',
-      subType: 'AI 整理',
-      noteId: task.noteId,
-      name: task.noteTitle || `笔记 #${task.noteId}`,
-      status: isRunningStatus(task.stage || '') ? 'RUNNING' : (task.stage || 'RUNNING'),
-      statusLabel: task.stage ? STAGE_LABELS[task.stage] || task.stage : 'AI 整理中',
-      progress: 50,
-      elapsedSeconds: task.elapsedSeconds,
-      stage: task.stage,
-      error: task.error || undefined
-    })
-  })
-  aiRecent.value.forEach((task) => {
-    addUnique({
-      key: `a-${task.noteId}`,
-      type: 'ai',
-      subType: 'AI 整理',
-      noteId: task.noteId,
-      name: task.noteTitle || `笔记 #${task.noteId}`,
-      status: task.error ? 'FAILED' : 'COMPLETED',
-      statusLabel: task.error ? '失败' : '已完成',
-      progress: task.error ? 0 : 100,
-      elapsedSeconds: task.elapsedSeconds,
-      error: task.error || undefined
-    })
-  })
-  return list.sort((a, b) => (b.taskId || b.noteId || 0) - (a.taskId || a.noteId || 0))
+  return list
 })
 
 const filteredTasks = computed(() => {
@@ -184,23 +186,32 @@ const pagedTasks = computed(() => {
 const runningCount = computed(() => allTasks.value.filter((t) => isRunningStatus(t.status)).length)
 const hasAny = computed(() => allTasks.value.length > 0)
 
-const loadTasks = async () => {
+const loadTasks = async (silent = false) => {
   if (loading.value) return
-  loading.value = true
-  try {
-    docActive.value = await getActiveTasks()
-    docRecent.value = await getRecentTasks()
-  } catch {
-    // 轮询失败保留上次数据
+  if (silent) {
+    if (polling.value) return
+    polling.value = true
+  } else {
+    loading.value = true
   }
   try {
-    const ai = await listAIAnalysisTasks()
-    aiActive.value = ai.active || []
-    aiRecent.value = ai.recent || []
+    const [active, recent] = await Promise.allSettled([getActiveTasks(), getRecentTasks()])
+    if (active.status === 'fulfilled') {
+      docActive.value = active.value
+    }
+    if (recent.status === 'fulfilled') {
+      docRecent.value = recent.value
+    }
   } catch {
-    // AI 整理任务列表轮询失败不影响文档任务
+    // 文档任务轮询失败保留上次数据
   }
-  loading.value = false
+  syncLocalElapsed()
+  if (silent) {
+    polling.value = false
+  } else {
+    loading.value = false
+    initialLoading.value = false
+  }
 }
 
 const onTabChange = () => {
@@ -208,35 +219,23 @@ const onTabChange = () => {
 }
 
 const onRetry = async (row: UnifiedTask) => {
-  if (row.type === 'doc' && row.taskId) {
-    retryingId.value = row.taskId
-    try {
-      await retryTask(row.taskId)
-      ElMessage.success('已重新提交处理')
-      await loadTasks()
-    } catch (e: any) {
-      ElMessage.error(e?.response?.data?.message || '重试失败')
-    } finally {
-      retryingId.value = null
-    }
-  } else if (row.type === 'ai' && row.noteId) {
-    retryingAiId.value = row.noteId
-    try {
-      await submitAIAnalysis(row.noteId)
-      ElMessage.success('AI 整理已重新提交')
-      await loadTasks()
-    } catch (e: any) {
-      ElMessage.error(e?.response?.data?.message || '重试失败')
-    } finally {
-      retryingAiId.value = null
-    }
+  if (row.type !== 'doc' || !row.taskId) return
+  retryingId.value = row.taskId
+  try {
+    await retryTask(row.taskId)
+    ElMessage.success('任务已重新提交')
+    await loadTasks(true)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '重试失败')
+  } finally {
+    retryingId.value = null
   }
 }
 
 const onDelete = async (row: UnifiedTask) => {
-  const name = row.type === 'doc' ? row.name : `笔记 ${row.name}`
+  if (row.type !== 'doc' || !row.taskId) return
   try {
-    await ElMessageBox.confirm(`确定删除任务「${name}」的记录吗？（不影响已写回的笔记正文）`, '删除任务', {
+    await ElMessageBox.confirm(`确定删除任务「${row.name}」的记录吗？（不影响已写回的笔记正文）`, '删除任务', {
       type: 'warning',
       confirmButtonText: '删除',
       cancelButtonText: '取消'
@@ -244,28 +243,15 @@ const onDelete = async (row: UnifiedTask) => {
   } catch {
     return
   }
-  if (row.type === 'doc' && row.taskId) {
-    deletingId.value = row.taskId
-    try {
-      await deleteTaskRecord(row.taskId)
-      ElMessage.success('任务记录已删除')
-      await loadTasks()
-    } catch (e: any) {
-      ElMessage.error(e?.response?.data?.message || '删除失败')
-    } finally {
-      deletingId.value = null
-    }
-  } else if (row.type === 'ai' && row.noteId) {
-    deletingAiId.value = row.noteId
-    try {
-      await deleteAIAnalysisTask(row.noteId)
-      ElMessage.success('任务记录已删除')
-      await loadTasks()
-    } catch (e: any) {
-      ElMessage.error(e?.response?.data?.message || '删除失败')
-    } finally {
-      deletingAiId.value = null
-    }
+  deletingId.value = row.taskId
+  try {
+    await deleteTaskRecord(row.taskId)
+    ElMessage.success('任务记录已删除')
+    await loadTasks(true)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '删除失败')
+  } finally {
+    deletingId.value = null
   }
 }
 
@@ -282,9 +268,8 @@ const onClearAll = async () => {
   clearing.value = true
   try {
     await clearAllTaskRecords()
-    aiRecent.value.forEach((t) => deleteAIAnalysisTask(t.noteId).catch(() => undefined))
     ElMessage.success('任务记录已清空')
-    await loadTasks()
+    await loadTasks(true)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || '清空失败')
   } finally {
@@ -292,19 +277,52 @@ const onClearAll = async () => {
   }
 }
 
-const openNote = (noteId?: number) => {
-  if (noteId) router.push(`/notes/${noteId}`)
+const openNote = (noteId?: string) => {
+  if (noteId) router.push(`/notes/edit/${noteId}`)
+}
+
+const loadAiConfig = async () => {
+  aiConfigLoading.value = true
+  try {
+    aiConfig.value = await getAiConfig()
+  } catch {
+    aiConfig.value = null
+  } finally {
+    aiConfigLoading.value = false
+  }
+}
+
+const goToAiSettings = () => {
+  router.push('/settings/ai')
 }
 
 onMounted(() => {
-  loadTasks()
-  pollTimer = setInterval(loadTasks, 3000)
+  loadTasks(false)
+  loadAiConfig()
+  pollTimer = setInterval(() => loadTasks(true), 6000)
+  tickTimer = setInterval(() => {
+    const next = new Map(localElapsed.value)
+    let changed = false
+    allTasks.value.forEach((task) => {
+      if (isRunningStatus(task.status) && next.has(task.key)) {
+        next.set(task.key, next.get(task.key)! + 1)
+        changed = true
+      }
+    })
+    if (changed) {
+      localElapsed.value = next
+    }
+  }, 1000)
 })
 
 onBeforeUnmount(() => {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
+  }
+  if (tickTimer) {
+    clearInterval(tickTimer)
+    tickTimer = null
   }
 })
 </script>
@@ -314,7 +332,7 @@ onBeforeUnmount(() => {
     <div v-if="!embedded" class="page-header">
       <div>
         <h2>任务中心</h2>
-        <p>文档解析 / AI 清洗 / 向量化 / AI 整理的细粒度进度监控（每 3 秒自动刷新）</p>
+        <p>文档解析 / AI 清洗 / 向量化入库的细粒度进度监控（每 3 秒自动刷新）</p>
       </div>
     </div>
 
@@ -325,21 +343,37 @@ onBeforeUnmount(() => {
         <el-radio-button label="completed">已完成</el-radio-button>
         <el-radio-button label="failed">失败</el-radio-button>
       </el-radio-group>
-      <el-button size="small" text type="danger" :loading="clearing" :disabled="!hasAny" @click="onClearAll">
-        清空全部任务记录
-      </el-button>
+      <div class="toolbar-right">
+        <el-button size="small" text type="danger" :loading="clearing" :disabled="!hasAny" @click="onClearAll">
+          清空全部任务记录
+        </el-button>
+      </div>
     </div>
 
+    <el-alert
+      v-if="showAiConfigHint"
+      type="info"
+      :closable="false"
+      show-icon
+      class="ai-config-hint"
+    >
+      <template #title>
+        任务处理较慢？
+        <el-button link type="primary" size="small" @click="goToAiSettings">配置自己的 AI API Key</el-button>
+        可避免平台共享额度拥堵，通常响应更快更稳定。
+      </template>
+    </el-alert>
+
     <el-empty
-      v-if="!hasAny"
-      description="暂无任务记录。上传文档或点击「AI 整理」后，任务会出现在这里"
+      v-if="!initialLoading && !hasAny"
+      description="暂无任务记录。上传文档后，系统会自动完成清洗、摘要/关键词生成并向量化入库"
       :image-size="embedded ? 60 : 90"
     />
 
     <template v-else>
       <div class="table-summary">共 {{ totalCount }} 条</div>
 
-      <div class="table-wrapper" v-loading="loading">
+      <div class="table-wrapper" v-loading="initialLoading" element-loading-text="加载任务中…">
         <el-table :data="pagedTasks" row-key="key" size="small" stripe>
           <el-table-column label="任务名称" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">
@@ -383,7 +417,7 @@ onBeforeUnmount(() => {
 
           <el-table-column label="耗时" width="100">
             <template #default="{ row }">
-              {{ formatElapsed(row.elapsedSeconds) }}
+              {{ elapsedText(row) }}
             </template>
           </el-table-column>
 
@@ -394,7 +428,7 @@ onBeforeUnmount(() => {
                 size="small"
                 type="primary"
                 text
-                :loading="(row.type === 'doc' && retryingId === row.taskId) || (row.type === 'ai' && retryingAiId === row.noteId)"
+                :loading="row.type === 'doc' && retryingId === row.taskId"
                 @click="onRetry(row)"
               >
                 重试
@@ -403,7 +437,7 @@ onBeforeUnmount(() => {
                 size="small"
                 text
                 type="danger"
-                :loading="(row.type === 'doc' && deletingId === row.taskId) || (row.type === 'ai' && deletingAiId === row.noteId)"
+                :loading="row.type === 'doc' && deletingId === row.taskId"
                 @click="onDelete(row)"
               >
                 删除
@@ -471,6 +505,20 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ai-config-hint {
+  margin-bottom: 12px;
+}
+
+.ai-config-hint :deep(.el-alert__title) {
+  font-size: 13px;
 }
 
 .task-tabs :deep(.el-radio-button__inner) {

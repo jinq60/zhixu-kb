@@ -1,7 +1,8 @@
 import http from './http'
 
 export interface Note {
-  id?: number
+  /** snowflake ID, serialized as string by backend */
+  id?: string | number
   title: string
   content?: string
   summary?: string
@@ -30,7 +31,7 @@ export interface PageResult<T> {
 
 export interface NoteSectionItem {
   id: number
-  noteId: number
+  noteId: string
   parentId?: number
   title: string
   content?: string
@@ -68,7 +69,7 @@ export interface NoteStats {
 }
 
 export interface PublicNoteDetail {
-  id: number
+  id: string
   title: string
   content?: string
   ocrText?: string
@@ -100,17 +101,17 @@ export async function getMyNoteStats() {
   return data.data as NoteStats
 }
 
-export async function getReadableNote(id: number) {
+export async function getReadableNote(id: string | number) {
   const { data } = await http.get(`/api/public/notes/${id}`)
   return data.data as PublicNoteDetail
 }
 
-export async function getReadableNoteStructure(id: number) {
+export async function getReadableNoteStructure(id: string | number) {
   const { data } = await http.get(`/api/public/notes/${id}/structure`)
   return data.data as NoteStructureResponse
 }
 
-export async function getNote(id: number) {
+export async function getNote(id: string | number) {
   const { data } = await http.get(`/api/notes/${id}`)
   return data.data as { note: Note; files: any[] }
 }
@@ -120,18 +121,18 @@ export async function createNote(payload: Note) {
   return data.data as Note
 }
 
-export async function updateNote(id: number, payload: Note) {
+export async function updateNote(id: string | number, payload: Note) {
   const { data } = await http.put(`/api/notes/${id}`, payload)
   return data.data as Note
 }
 
-export async function deleteNote(id: number) {
+export async function deleteNote(id: string | number) {
   await http.delete(`/api/notes/${id}`)
 }
 
 export type OCREngine = 'auto' | 'paddle' | 'deepseek'
 
-export async function triggerOCR(id: number, engine: OCREngine = 'auto', fileIds?: number[]) {
+export async function triggerOCR(id: string | number, engine: OCREngine = 'auto', fileIds?: number[]) {
   const payload: { engine: OCREngine; fileIds?: number[] } = { engine }
   if (fileIds?.length) {
     payload.fileIds = fileIds
@@ -142,7 +143,7 @@ export async function triggerOCR(id: number, engine: OCREngine = 'auto', fileIds
   return data.data as string
 }
 
-export async function submitAIAnalysis(id: number) {
+export async function submitAIAnalysis(id: string | number) {
   const { data } = await http.post(`/api/notes/${id}/ai-analysis`, null, {
     timeout: 20000
   })
@@ -156,13 +157,13 @@ export interface AiAnalysisStatus {
   finishedAt: number
 }
 
-export async function getAIAnalysisStatus(id: number) {
+export async function getAIAnalysisStatus(id: string | number) {
   const { data } = await http.get(`/api/notes/${id}/ai-analysis/status`)
   return data.data as AiAnalysisStatus
 }
 
 export interface AiAnalysisTaskItem {
-  noteId: number
+  noteId: string
   noteTitle?: string
   running: boolean
   stage?: string
@@ -179,20 +180,20 @@ export async function listAIAnalysisTasks() {
 }
 
 /** 删除指定笔记的 AI 整理任务记录 */
-export async function deleteAIAnalysisTask(noteId: number): Promise<void> {
+export async function deleteAIAnalysisTask(noteId: string | number): Promise<void> {
   await http.delete(`/api/notes/ai-analysis/tasks/${noteId}`)
 }
 
-export async function getNoteStructure(id: number) {
+export async function getNoteStructure(id: string | number) {
   const { data } = await http.get(`/api/notes/${id}/structure`)
   return data.data as NoteStructureResponse
 }
 
-export async function getNoteHistory(id: number) {
+export async function getNoteHistory(id: string | number) {
   const { data } = await http.get(`/api/notes/${id}/history`)
   return data.data as NoteHistoryItem[]
 }
 
-export async function restoreNoteHistory(id: number, historyId: number) {
+export async function restoreNoteHistory(id: string | number, historyId: number) {
   await http.post(`/api/notes/${id}/history/${historyId}/restore`)
 }

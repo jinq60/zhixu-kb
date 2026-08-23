@@ -6,7 +6,6 @@ import com.zhixu.kb.note.mapper.NoteMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
@@ -32,8 +31,9 @@ public class NoteEmbeddingService {
     /**
      * 向量化一篇笔记并写入 Milvus（先删旧块再插入新块）。
      * 失败记录告警并静默，不阻塞主流程。
+     * 注意：本方法仅一次只读查询 + 外部网络调用（Embedding/Milvus），
+     * 不加 @Transactional，避免秒级网络 IO 长时间占用数据库连接池。
      */
-    @Transactional
     public boolean vectorize(Long noteId) {
         if (!embeddingService.isEnabled() || !vectorStore.isEnabled()) {
             return false;

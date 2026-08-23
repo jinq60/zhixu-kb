@@ -75,7 +75,7 @@ watch(
     if (loggedIn) {
       loadActiveTasks()
       if (!taskTimer) {
-        taskTimer = setInterval(loadActiveTasks, 3000)
+        taskTimer = setInterval(loadActiveTasks, 8000)
       }
     } else if (taskTimer) {
       clearInterval(taskTimer)

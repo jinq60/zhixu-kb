@@ -81,12 +81,30 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }
-            } catch (Exception ignored) {
-                // Invalid token should not break the request pipeline.
+            } catch (Exception ex) {
+                // Invalid token should not break the request pipeline; debug 级留痕便于排查（如用户服务瞬时故障）
+                if (!isExpectedJwtFailure(ex)) {
+                    org.slf4j.LoggerFactory.getLogger(JwtAuthenticationFilter.class)
+                            .debug("JWT authentication skipped: {}", ex.toString());
+                }
             }
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * 过期/签名错误的 JWT 属正常噪音（io.jsonwebtoken 包异常），无需日志；
+     * 其余异常（如用户服务数据库故障）值得 debug 留痕。
+     */
+    private boolean isExpectedJwtFailure(Throwable ex) {
+        for (Throwable c = ex; c != null; c = c.getCause()) {
+            String name = c.getClass().getName();
+            if (name.startsWith("io.jsonwebtoken.")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isQueryTokenAllowed(HttpServletRequest request) {

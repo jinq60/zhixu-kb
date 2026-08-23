@@ -34,6 +34,8 @@ public class PublicNoteService {
     private final SysUserMapper sysUserMapper;
     private final HtmlSanitizer htmlSanitizer;
 
+    private static final int MAX_PAGE_SIZE = 100;
+
     public Page<PublicNoteSummary> listPublished(int page, int size, String keyword) {
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getIsDeleted, 0)
@@ -41,18 +43,20 @@ public class PublicNoteService {
                 .orderByDesc(Note::getUpdateTime);
 
         if (StringUtils.hasText(keyword)) {
-            wrapper.and(w -> w.like(Note::getTitle, keyword)
+            String escapedKeyword = com.zhixu.kb.common.utils.LikeUtils.escape(keyword);
+            wrapper.and(w -> w.like(Note::getTitle, escapedKeyword)
                     .or()
-                    .like(Note::getContent, keyword)
+                    .like(Note::getContent, escapedKeyword)
                     .or()
-                    .like(Note::getOcrText, keyword)
+                    .like(Note::getOcrText, escapedKeyword)
                     .or()
-                    .like(Note::getSummary, keyword)
+                    .like(Note::getSummary, escapedKeyword)
                     .or()
-                    .like(Note::getKeywords, keyword));
+                    .like(Note::getKeywords, escapedKeyword));
         }
 
-        Page<Note> rawPage = noteMapper.selectPage(new Page<>(page, size), wrapper);
+        Page<Note> rawPage = noteMapper.selectPage(
+                new Page<>(Math.max(1, page), Math.min(Math.max(size, 1), MAX_PAGE_SIZE)), wrapper);
         Page<PublicNoteSummary> resultPage = new Page<>(rawPage.getCurrent(), rawPage.getSize(), rawPage.getTotal());
         resultPage.setRecords(toSummaryList(rawPage.getRecords()));
         return resultPage;

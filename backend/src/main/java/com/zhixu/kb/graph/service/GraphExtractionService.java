@@ -36,6 +36,8 @@ public class GraphExtractionService {
     private static final int AI_CHUNK_LENGTH = 8000;
     /** 长文档 AI 分段抽取的最大段数（控制调用次数与耗时） */
     private static final int MAX_AI_CHUNKS = 5;
+    /** 超出段数上限时，剩余内容并入最后一段的截断保护上限 */
+    private static final int TAIL_MERGE_LIMIT = AI_CHUNK_LENGTH * 3;
     /** 规则抽取（全文频率统计）的文本上限，防止超长文本拖慢 CPU */
     private static final int RULE_TEXT_LIMIT = 50_000;
     private static final Pattern LAW_PATTERN = Pattern.compile("《([^》]{2,30})》");
@@ -95,7 +97,8 @@ public class GraphExtractionService {
     }
 
     /**
-     * 按段落切分为 ≤AI_CHUNK_LENGTH 的块，最多 MAX_AI_CHUNKS 段（超出部分并入最后一段）。
+     * 按段落切分为 ≤AI_CHUNK_LENGTH 的块，最多 MAX_AI_CHUNKS 段；
+     * 超出上限的内容并入最后一段（带截断保护），避免长文尾部实体静默丢失。
      */
     private List<String> splitChunks(String text) {
         List<String> chunks = new ArrayList<>();
@@ -105,9 +108,6 @@ public class GraphExtractionService {
             if (current.length() > 0 && current.length() + paragraph.length() + 1 > AI_CHUNK_LENGTH) {
                 chunks.add(current.toString());
                 current.setLength(0);
-                if (chunks.size() >= MAX_AI_CHUNKS - 1) {
-                    break;
-                }
             }
             if (current.length() > 0) {
                 current.append('\n');
@@ -119,6 +119,23 @@ public class GraphExtractionService {
         }
         if (chunks.isEmpty()) {
             chunks.add(text.length() > AI_CHUNK_LENGTH ? text.substring(0, AI_CHUNK_LENGTH) : text);
+        }
+        if (chunks.size() > MAX_AI_CHUNKS) {
+            StringBuilder tail = new StringBuilder();
+            for (int i = MAX_AI_CHUNKS - 1; i < chunks.size(); i++) {
+                if (tail.length() > 0) {
+                    tail.append('\n');
+                }
+                tail.append(chunks.get(i));
+                if (tail.length() >= TAIL_MERGE_LIMIT) {
+                    break;
+                }
+            }
+            List<String> merged = new ArrayList<>(chunks.subList(0, MAX_AI_CHUNKS - 1));
+            merged.add(tail.length() > TAIL_MERGE_LIMIT ? tail.substring(0, TAIL_MERGE_LIMIT) : tail.toString());
+            log.info("Graph extraction chunks merged to cap: total={} kept={} tailChars={}",
+                    chunks.size(), merged.size(), tail.length());
+            return merged;
         }
         return chunks;
     }

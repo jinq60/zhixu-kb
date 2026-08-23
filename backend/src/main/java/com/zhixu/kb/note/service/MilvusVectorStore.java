@@ -201,7 +201,7 @@ public class MilvusVectorStore {
 
     private JsonObject buildRow(Long userId, Long noteId, int chunkIndex, String chunkText, float[] v) {
         JsonObject row = new JsonObject();
-        row.addProperty("id", noteId * 100000L + chunkIndex);
+        row.addProperty("id", primaryKey(noteId, chunkIndex));
         row.addProperty("note_id", noteId);
         row.addProperty("user_id", userId);
         row.addProperty("chunk_index", chunkIndex);
@@ -212,6 +212,20 @@ public class MilvusVectorStore {
         }
         row.add("vector", vector);
         return row;
+    }
+
+    /**
+     * 稳定向量主键：noteId 与 chunkIndex 的确定性 62 位混合。
+     * 不能用 noteId*100000+chunkIndex：雪花 ID 为 19 位，乘法必然溢出 Int64。
+     * 混合结果确定 => 同 (noteId, chunkIndex) 幂等 upsert；62 位空间下碰撞概率可忽略，
+     * 且按笔记删除走 note_id 字段过滤，不依赖主键结构。
+     */
+    private static long primaryKey(long noteId, long chunkIndex) {
+        long h = noteId * 0x9E3779B97F4A7C15L + chunkIndex * 0xBF58476D1CE4E5B9L;
+        h ^= h >>> 32;
+        h *= 0x94D049BB133111EBL;
+        h ^= h >>> 29;
+        return h & 0x3FFFFFFFFFFFFFFFL;
     }
 
     private void upsert(List<JsonObject> rows) {
@@ -253,19 +267,54 @@ public class MilvusVectorStore {
         if (!isEnabled() || noteId == null) {
             return false;
         }
-        try {
-            io.milvus.v2.service.vector.response.QueryResp resp = client().query(
-                    io.milvus.v2.service.vector.request.QueryReq.builder()
-                            .collectionName(properties.getCollectionName())
-                            .filter("note_id == " + noteId)
-                            .limit(1)
-                            .build());
-            return resp != null && resp.getQueryResults() != null && !resp.getQueryResults().isEmpty();
-        } catch (Exception ex) {
-            log.warn("Milvus hasVectors query failed (treat as no vectors): noteId={} err={}", noteId, ex.getMessage());
-            return false;
-        }
+        return !existingNoteIds(Collections.singletonList(noteId)).isEmpty();
     }
+
+    /**
+     * 批量查询已存在向量的笔记 ID（note_id in [...] 分批过滤），
+     * 供启动回填使用，替代逐笔记一次网络往返的 hasVectors（N 次调用 → N/200 次）。
+     */
+    public java.util.Set<Long> existingNoteIds(List<Long> noteIds) {
+        java.util.Set<Long> result = new java.util.HashSet<>();
+        if (!isEnabled() || noteIds == null || noteIds.isEmpty()) {
+            return result;
+        }
+        int batch = 200;
+        for (int i = 0; i < noteIds.size(); i += batch) {
+            List<Long> sub = noteIds.subList(i, Math.min(i + batch, noteIds.size()));
+            StringBuilder filter = new StringBuilder("note_id in [");
+            for (int j = 0; j < sub.size(); j++) {
+                if (j > 0) {
+                    filter.append(',');
+                }
+                filter.append(sub.get(j));
+            }
+            filter.append(']');
+            try {
+                io.milvus.v2.service.vector.response.QueryResp resp = client().query(
+                        io.milvus.v2.service.vector.request.QueryReq.builder()
+                                .collectionName(properties.getCollectionName())
+                                .filter(filter.toString())
+                                .outputFields(Collections.singletonList("note_id"))
+                                .limit(Math.min(16000, sub.size() * MAX_CHUNKS_PER_NOTE))
+                                .build());
+                if (resp != null && resp.getQueryResults() != null) {
+                    for (io.milvus.v2.service.vector.response.QueryResp.QueryResult qr : resp.getQueryResults()) {
+                        Object v = qr.getEntity() == null ? null : qr.getEntity().get("note_id");
+                        if (v instanceof Number) {
+                            result.add(((Number) v).longValue());
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                log.warn("Milvus existingNoteIds query failed (treat as none): err={}", ex.getMessage());
+            }
+        }
+        return result;
+    }
+
+    /** 单篇笔记最大块数（与 NoteEmbeddingService.MAX_CHUNKS 对齐的批量查询 limit 估算基数） */
+    private static final int MAX_CHUNKS_PER_NOTE = 64;
 
     /**
      * 向量检索：按 user_id 过滤 + 余弦相似度 topK。

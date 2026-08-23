@@ -5,7 +5,7 @@ import { uploadFile, getTaskStatus, getTaskByNote, type UploadResponse } from '.
 import { UploadFilled, Document, Picture } from '@element-plus/icons-vue'
 
 const props = defineProps<{
-  noteId?: number
+  noteId?: string | number
 }>()
 const emit = defineEmits<{
   (e: 'uploaded', result: UploadResponse): void
@@ -17,9 +17,9 @@ const progress = ref(0)
 const stageText = ref('')
 const taskFinished = ref(false)
 let taskTimer: ReturnType<typeof setInterval> | null = null
-let currentTaskId: number | null = null
+let currentTaskId: string | number | null = null
 let pollErrorCount = 0
-let lastEmittedTaskId: number | null = null
+let lastEmittedTaskId: string | number | null = null
 const MAX_POLL_ERRORS = 10
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/jpg']
@@ -51,7 +51,7 @@ const STAGE_LABELS: Record<string, string> = {
 }
 
 /** 文档处理任务进度轮询（3s 一次，直到完成/失败；连续失败超过阈值自动停止） */
-const startTaskPolling = (taskId: number) => {
+const startTaskPolling = (taskId: string | number) => {
   if (taskTimer) clearInterval(taskTimer)
   currentTaskId = taskId
   pollErrorCount = 0
@@ -70,7 +70,7 @@ const startTaskPolling = (taskId: number) => {
         stageText.value = '清洗完成，正文已更新'
         taskFinished.value = true
         lastEmittedTaskId = taskId
-        ElMessage.success('文档已清洗并保存为可读正文；点击"AI 整理"可生成摘要并向量化入库')
+        ElMessage.success('文档已清洗并保存为可读正文；系统正在后台生成摘要、关键词并向量化入库')
         emit('taskCompleted')
       } else if (st.status === 'FAILED') {
         stopTaskPolling()
@@ -87,7 +87,7 @@ const startTaskPolling = (taskId: number) => {
         taskFinished.value = true
       }
     }
-  }, 3000)
+  }, 5000)
 }
 
 const stopTaskPolling = () => {

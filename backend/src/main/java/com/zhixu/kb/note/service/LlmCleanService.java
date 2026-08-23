@@ -63,8 +63,6 @@ public class LlmCleanService {
         if (text == null) {
             return true;
         }
-        String normalized = text.toLowerCase();
-        return normalized.contains("\u6682\u65f6\u65e0\u6cd5\u8c03\u7528\u5916\u90e8\u6a21\u578b")
-                || normalized.contains("\u8bf7\u7a0d\u540e\u91cd\u8bd5\u6216\u68c0\u67e5");
+        return text.toLowerCase().startsWith(com.zhixu.kb.ai.AIEngineAdapterRouter.FALLBACK_MARKER);
     }
 }

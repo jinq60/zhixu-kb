@@ -2,6 +2,10 @@ package com.zhixu.kb.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * 应用级参数：接口限流、系统监控告警、管理员引导。
  */
@@ -11,6 +15,7 @@ public class AppProperties {
     private RateLimit rateLimit = new RateLimit();
     private Monitor monitor = new Monitor();
     private Admin admin = new Admin();
+    private ClientIp clientIp = new ClientIp();
 
     public RateLimit getRateLimit() {
         return rateLimit;
@@ -34,6 +39,34 @@ public class AppProperties {
 
     public void setAdmin(Admin admin) {
         this.admin = admin;
+    }
+
+    public ClientIp getClientIp() {
+        return clientIp;
+    }
+
+    public void setClientIp(ClientIp clientIp) {
+        this.clientIp = clientIp;
+    }
+
+    /**
+     * 可信代理网段：仅当请求来源（remoteAddr）命中这些 IP/CIDR 时才信任
+     * X-Forwarded-For / X-Real-IP。默认覆盖回环与 RFC1918 私网/Docker 网桥，
+     * 公网直连后端端口时 XFF 一律不信任，防止伪造绕过限流。
+     */
+    public static class ClientIp {
+        private List<String> trustedProxies = new ArrayList<>(Arrays.asList(
+                "127.0.0.1", "::1",
+                "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                "fc00::/7"));
+
+        public List<String> getTrustedProxies() {
+            return trustedProxies;
+        }
+
+        public void setTrustedProxies(List<String> trustedProxies) {
+            this.trustedProxies = trustedProxies;
+        }
     }
 
     public static class RateLimit {

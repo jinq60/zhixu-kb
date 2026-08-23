@@ -6,11 +6,7 @@ import {
   getNote,
   getNoteHistory,
   getNoteStructure,
-  getAIAnalysisStatus,
-
-
   restoreNoteHistory,
-  submitAIAnalysis,
   triggerOCR,
   updateNote,
   type Note,
@@ -21,12 +17,13 @@ import {
   type OCREngine
 } from '../api/note'
 import { listCategories, type Category } from '../api/category'
-import { deleteFile, fetchFileBlob, getTaskByNote, getTaskStatus, type UploadResponse } from '../api/file'
+import { deleteFile, fetchFileBlob, type UploadResponse } from '../api/file'
 import { buildNoteGraph, deleteNoteGraph, getNoteGraph, type GraphData } from '../api/graph'
 import ImageUpload from '../components/ImageUpload.vue'
 import KnowledgeGraph from '../components/KnowledgeGraph.vue'
 import MermaidPreview from '../components/MermaidPreview.vue'
 import RichEditor from '../components/RichEditor.vue'
+import { ArrowLeft, Document, Expand, Fold, Plus, Refresh } from '@element-plus/icons-vue'
 
 // 显式组件名：配合 App.vue 的 KeepAlive include 缓存（避免重复初始化 wangeditor 等重组件）
 defineOptions({ name: 'NoteEdit' })
@@ -50,12 +47,12 @@ interface StructureTreeNode {
 
 const route = useRoute()
 const router = useRouter()
-const id = computed(() => Number(route.params.id))
+// note ID 为雪花 ID（可能超出 Number 安全整数范围），保持字符串形式；新建时为空
+const id = computed(() => (route.params.id ? String(route.params.id) : ''))
 
 const loading = ref(false)
 const saving = ref(false)
 const ocrLoading = ref(false)
-const aiLoading = ref(false)
 const structureLoading = ref(false)
 const historyLoading = ref(false)
 
@@ -141,13 +138,20 @@ const extractEmbeddedFileIds = (html?: string) => {
 
 const embeddedFileIdSet = computed(() => extractEmbeddedFileIds(note.content))
 
+const isImageFile = (file?: NoteFile): boolean =>
+  ['image/jpeg', 'image/png', 'image/jpg'].includes(String(file?.mimeType || '').toLowerCase())
+
 const ocrCandidateFiles = computed(() =>
   files.value.filter((f) => {
+    // OCR 仅支持图片；文档（pdf/txt/docx/md）走上传后的自动解析/清洗流程
+    if (!isImageFile(f)) return false
     const fileId = Number(f?.id)
     if (!Number.isFinite(fileId)) return true
     return !embeddedFileIdSet.value.has(fileId)
   })
 )
+
+const hasImageFiles = computed(() => files.value.some((f) => isImageFile(f)))
 
 const isEmbeddedFile = (file: NoteFile) => {
   const fileId = Number(file?.id)
@@ -406,7 +410,14 @@ const load = async () => {
     Object.assign(note, { status: 0, ...detail.note })
     files.value = sortFiles((detail.files || []).filter(Boolean))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '加载笔记失败')
+    const status = e?.response?.status
+    const message = e?.response?.data?.message || '加载笔记失败'
+    if (status === 401) {
+      // 401 由 axios 拦截器统一处理登出并跳转首页，这里不再二次导航避免路由冲突
+      ElMessage.warning('登录已过期，请重新登录')
+      return
+    }
+    ElMessage.error(message)
     router.push('/notes')
   } finally {
     loading.value = false
@@ -455,8 +466,8 @@ let activatedOnce = false
 
 onMounted(() => {
   activatedOnce = true
-  // 非法 id（如 /notes/abc）直接回列表，避免 NaN 请求
-  if (!Number.isFinite(id.value)) {
+  // 非法 id（如 /notes/abc 或空）直接回列表，避免无效请求
+  if (!id.value || !/^\d+$/.test(id.value)) {
     router.replace('/notes')
     return
   }
@@ -474,7 +485,7 @@ onActivated(() => {
     activatedOnce = true
     return
   }
-  if (!Number.isFinite(id.value)) {
+  if (!id.value || !/^\d+$/.test(id.value)) {
     return
   }
   fetchStructure()
@@ -485,14 +496,8 @@ onActivated(() => {
 watch(
   id,
   (newId) => {
-    if (aiPollTimer) {
-      clearInterval(aiPollTimer)
-      aiPollTimer = null
-    }
-    aiLoading.value = false
-    // 路由切出编辑页时 params.id 为空（Number(undefined)=NaN），
-    // 此时组件被 KeepAlive 缓存但 watch 仍触发，不能发起 NaN 请求
-    if (!Number.isFinite(newId)) {
+    // 路由切出编辑页时 params.id 为空（KeepAlive 缓存下 watch 仍触发），不能发起空 id 请求
+    if (!newId || !/^\d+$/.test(newId)) {
       return
     }
     note.id = newId
@@ -598,6 +603,11 @@ const saveCurrentNoteSilently = async () => {
 }
 
 const addToOcrQueue = (file: NoteFile) => {
+  // OCR 队列仅支持图片；文档自动走解析/清洗流程
+  if (!isImageFile(file)) {
+    ElMessage.warning('仅支持图片加入 OCR 队列，文档会在上传后自动解析并清洗')
+    return
+  }
   if (isEmbeddedFile(file)) {
     ElMessage.warning('已插入正文的图片不能加入 OCR 队列')
     return
@@ -673,81 +683,6 @@ const onOCR = async () => {
     ElMessage.error(e?.response?.data?.message || 'OCR 识别失败')
   } finally {
     ocrLoading.value = false
-  }
-}
-
-let aiPollTimer: ReturnType<typeof setInterval> | null = null
-
-const onAIAnalysis = async () => {
-  if (aiLoading.value) return
-  aiLoading.value = true
-  try {
-    await saveCurrentNoteSilently()
-    await submitAIAnalysis(id.value)
-    ElMessage.info('AI 整理已提交，正在后台整理，完成后自动刷新')
-    // 轮询任务状态
-    if (aiPollTimer) clearInterval(aiPollTimer)
-    aiPollTimer = setInterval(async () => {
-      try {
-        const status = await getAIAnalysisStatus(id.value)
-        if (!status.running) {
-          if (aiPollTimer) {
-            clearInterval(aiPollTimer)
-            aiPollTimer = null
-          }
-          if (status.error) {
-            ElMessage.error(`AI 整理失败：${status.error}`)
-            aiLoading.value = false
-            return
-          }
-          await Promise.all([fetchCategories(), load(), fetchStructure(), fetchHistory(), loadGraph()])
-          activeTab.value = 'mindmap'
-          ElMessage.success('AI 整理完成，正文、大纲和导图已同步更新')
-          // 跟踪 AI 整理触发的向量化任务（知识库入库进度）
-          trackVectorizeTask()
-          aiLoading.value = false
-        }
-      } catch {
-        // 轮询失败忽略，继续等待
-      }
-    }, 2000)
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || 'AI 整理提交失败')
-    aiLoading.value = false
-  }
-}
-
-/** 跟踪 AI 整理触发的向量化任务，直到完成/失败并提示（顶部角标同步可见） */
-let vectorizeTrackCancelled = false
-const trackVectorizeTask = async () => {
-  vectorizeTrackCancelled = false
-  try {
-    const task = await getTaskByNote(id.value)
-    if (vectorizeTrackCancelled) return
-    if (!task || task.status === 'COMPLETED' || task.status === 'FAILED' || task.currentStage !== 'EMBEDDING') {
-      return
-    }
-    ElMessage.info('知识库向量化中（后台切块+向量化，完成后可被问答检索）…')
-    const deadline = Date.now() + 5 * 60 * 1000
-    while (Date.now() < deadline && !vectorizeTrackCancelled) {
-      await new Promise((resolve) => setTimeout(resolve, 3000))
-      if (vectorizeTrackCancelled) return
-      const st = await getTaskStatus(task.taskId)
-      if (vectorizeTrackCancelled) return
-      if (st.status === 'COMPLETED') {
-        ElMessage.success('知识库向量化完成，笔记已可被知识问答检索')
-        return
-      }
-      if (st.status === 'FAILED') {
-        ElMessage.error(`向量化失败：${st.failReason || '未知原因'}`)
-        return
-      }
-    }
-    if (!vectorizeTrackCancelled) {
-      ElMessage.warning('向量化超时，可稍后在顶部任务面板查看状态')
-    }
-  } catch {
-    // 跟踪失败忽略
   }
 }
 
@@ -909,10 +844,6 @@ const toStructuredHtml = (text: string) => {
   return html
 }
 
-
-const isImageFile = (file?: NoteFile): boolean =>
-  ['image/jpeg', 'image/png', 'image/jpg'].includes(String(file?.mimeType || '').toLowerCase())
-
 const onPreviewFile = async (file: NoteFile) => {
   if (!file?.id) {
     ElMessage.warning('文件信息无效')
@@ -990,11 +921,6 @@ const onDeleteFile = async (file: NoteFile) => {
 }
 
 onBeforeUnmount(() => {
-  vectorizeTrackCancelled = true
-  if (aiPollTimer) {
-    clearInterval(aiPollTimer)
-    aiPollTimer = null
-  }
   if (previewUrl.value) {
     URL.revokeObjectURL(previewUrl.value)
     previewUrl.value = ''
@@ -1005,10 +931,30 @@ onBeforeUnmount(() => {
 <template>
   <div class="page" v-loading="loading">
     <div class="page-header">
-      <div class="header-main">
-        <el-input v-model="note.title" placeholder="请输入笔记标题" size="large" />
-        <div class="meta">
-          <el-select v-model="note.categoryId" placeholder="选择分类" clearable style="width: 200px">
+      <div class="header-top">
+        <el-button class="back-btn" text @click="router.push('/notes')">
+          <el-icon class="btn-icon"><ArrowLeft /></el-icon>
+          <span>工作台</span>
+        </el-button>
+        <el-input
+          v-model="note.title"
+          class="title-input"
+          placeholder="请输入笔记标题"
+          size="large"
+        >
+          <template #prefix>
+            <el-icon class="title-icon"><Document /></el-icon>
+          </template>
+        </el-input>
+        <div class="primary-actions">
+          <el-button type="primary" :loading="saving" class="save-btn" @click="onSave">保存</el-button>
+        </div>
+      </div>
+
+      <div class="header-meta">
+        <div class="meta-field">
+          <span class="meta-label">分类</span>
+          <el-select v-model="note.categoryId" placeholder="选择分类" clearable class="meta-select meta-select--category">
             <el-option
               v-for="(c, idx) in validCategories"
               :key="c.id ?? `cat-${idx}`"
@@ -1016,28 +962,33 @@ onBeforeUnmount(() => {
               :value="c.id"
             />
           </el-select>
-          <el-select v-model="note.status" placeholder="状态" style="width: 140px">
+        </div>
+        <div class="meta-field">
+          <span class="meta-label">状态</span>
+          <el-select v-model="note.status" class="meta-select meta-select--status">
             <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
-          <el-input v-model="note.keywords" placeholder="关键词（逗号分隔）" style="width: 260px" />
         </div>
-      </div>
-
-      <div class="actions">
-        <el-button @click="router.push('/notes')">返回工作台</el-button>
-        <el-select v-model="ocrEngine" size="default" class="ocr-engine-select">
-          <el-option
-            v-for="item in ocrEngineOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-        <el-button :loading="ocrLoading" :disabled="!ocrCandidateFiles.length" @click="onOCR">批量 OCR</el-button>
-        <el-button :loading="aiLoading" @click="onAIAnalysis">
-          {{ aiLoading ? 'AI 整理中…' : 'AI 整理（摘要+向量化入库）' }}
-        </el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+        <div class="meta-field meta-field--grow">
+          <span class="meta-label">关键词</span>
+          <el-input v-model="note.keywords" placeholder="多个关键词用逗号分隔，用于全文检索与知识图谱" />
+        </div>
+        <div class="ocr-group">
+          <span class="meta-label">OCR 引擎</span>
+          <el-select v-model="ocrEngine" class="ocr-engine-select">
+            <el-option
+              v-for="item in ocrEngineOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+          <el-tooltip content="对尚未嵌入正文的图片执行批量文字识别，识别结果写入笔记正文" placement="bottom">
+            <el-button :loading="ocrLoading" :disabled="!ocrCandidateFiles.length" @click="onOCR">
+              批量 OCR{{ ocrCandidateFiles.length ? `（${ocrCandidateFiles.length}）` : '' }}
+            </el-button>
+          </el-tooltip>
+        </div>
       </div>
     </div>
 
@@ -1048,16 +999,25 @@ onBeforeUnmount(() => {
             <div class="structure-side-header">
               <div>
                 <h4>结构目录</h4>
-                <p class="panel-tip">点击右上角“AI整理”可自动生成目录；这里支持折叠和手动微调，最后点右上角“保存”。</p>
+                <p class="panel-tip">上传文档后系统会自动生成目录；这里支持折叠和手动微调，最后点右上角“保存”。</p>
               </div>
             </div>
 
             <div class="structure-side-toolbar">
-              <el-button plain :loading="structureLoading" @click="fetchStructure">刷新结构</el-button>
-              <el-button plain @click="toggleStructureExpand">
-                {{ structureExpanded ? '折叠到两级' : '全部展开' }}
+              <el-button size="small" plain :loading="structureLoading" @click="fetchStructure">
+                <el-icon class="btn-icon"><Refresh /></el-icon>
+                <span>刷新</span>
               </el-button>
-              <el-button plain @click="addRootStructureSection">新增一级章节</el-button>
+              <el-button size="small" plain @click="toggleStructureExpand">
+                <el-icon class="btn-icon">
+                  <component :is="structureExpanded ? Fold : Expand" />
+                </el-icon>
+                <span>{{ structureExpanded ? '折叠' : '展开' }}</span>
+              </el-button>
+              <el-button size="small" plain @click="addRootStructureSection">
+                <el-icon class="btn-icon"><Plus /></el-icon>
+                <span>新章节</span>
+              </el-button>
             </div>
 
             <div class="structure-meta" v-if="structure.updateTime">
@@ -1210,7 +1170,7 @@ onBeforeUnmount(() => {
             </li>
           </ul>
 
-          <p v-if="files.length && !ocrCandidateFiles.length" class="panel-tip warning-tip">
+          <p v-if="files.length && !ocrCandidateFiles.length && hasImageFiles" class="panel-tip warning-tip">
             当前图片都已插入正文，如需继续 OCR，请再上传新的原图。
           </p>
           <el-empty v-else-if="!files.length" description="暂无上传图片" :image-size="84" />
@@ -1302,32 +1262,123 @@ onBeforeUnmount(() => {
 
 .page-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
   margin-bottom: 16px;
 }
 
-.header-main {
-  flex: 1;
-}
-
-.meta {
+.header-top {
   display: flex;
+  align-items: center;
   gap: 12px;
-  margin-top: 10px;
-  align-items: center;
-  flex-wrap: wrap;
 }
 
-.actions {
+.back-btn {
+  flex-shrink: 0;
+  color: #606266;
+}
+
+.back-btn + .title-input {
+  margin-left: 0;
+}
+
+.title-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.title-input :deep(.el-input__wrapper) {
+  border-radius: 8px;
+}
+
+.title-input :deep(.el-input__inner) {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.title-icon {
+  color: #c0c4cc;
+  font-size: 16px;
+}
+
+.primary-actions {
   display: flex;
-  gap: 10px;
   align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.primary-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.ai-icon {
+  color: #7c3aed;
+}
+
+.save-btn {
+  min-width: 88px;
+}
+
+.btn-icon {
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px dashed #f0f2f5;
+}
+
+.meta-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.meta-label {
+  font-size: 13px;
+  color: #909399;
+  white-space: nowrap;
+}
+
+.meta-select--category {
+  width: 168px;
+}
+
+.meta-select--status {
+  width: 96px;
+}
+
+.meta-field--grow {
+  flex: 1;
+  min-width: 240px;
+}
+
+.meta-field--grow .el-input {
+  width: 100%;
+}
+
+.ocr-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 16px;
+  border-left: 1px solid #ebeef5;
 }
 
 .ocr-engine-select {
-  width: 170px;
+  width: 132px;
 }
 
 .grid {
@@ -1409,7 +1460,16 @@ onBeforeUnmount(() => {
 }
 
 .structure-side-toolbar {
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.structure-side-toolbar .el-button {
+  width: 100%;
+  margin-left: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .structure-tree-wrap {
@@ -1731,7 +1791,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .page-header,
   .workspace-header,
   .structure-side-header,
   .structure-editor-header,
@@ -1740,12 +1799,25 @@ onBeforeUnmount(() => {
     align-items: flex-start;
   }
 
-  .actions,
-  .workspace-actions,
-  .structure-side-actions,
-  .structure-side-toolbar,
-  .structure-editor-actions {
+  .header-top {
     flex-wrap: wrap;
+  }
+
+  /* 窄屏：标题独占一行，返回/动作按钮收进上一行 */
+  .title-input {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .header-meta,
+  .ocr-group {
+    gap: 10px;
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .meta-field--grow {
+    min-width: 100%;
   }
 }
 

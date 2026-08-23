@@ -68,14 +68,14 @@ public class EmailCodeService {
         this.mailUsername = mailUsername;
     }
 
-    public String send(String email) {
-        return doSend(email, REDIS_PREFIX, REDIS_SEND_PREFIX, memoryStore, memorySendTime,
+    public void send(String email) {
+        doSend(email, REDIS_PREFIX, REDIS_SEND_PREFIX, memoryStore, memorySendTime,
                 "login:" + email,
                 "知序智能知识库 - 登录验证码", "您的验证码是：%s，5 分钟内有效，请勿泄露给任何人。");
     }
 
-    public String sendBindCode(String email) {
-        return doSend(email, BIND_REDIS_PREFIX, BIND_REDIS_SEND_PREFIX, bindMemoryStore, bindMemorySendTime,
+    public void sendBindCode(String email) {
+        doSend(email, BIND_REDIS_PREFIX, BIND_REDIS_SEND_PREFIX, bindMemoryStore, bindMemorySendTime,
                 "bind:" + email,
                 "知序智能知识库 - 邮箱绑定验证码", "您的邮箱绑定验证码是：%s，5 分钟内有效，请勿泄露给任何人。");
     }
@@ -88,7 +88,7 @@ public class EmailCodeService {
         doVerify(email, code, BIND_REDIS_PREFIX, bindMemoryStore, "bind:" + email);
     }
 
-    private String doSend(String email, String redisPrefix, String redisSendPrefix,
+    private void doSend(String email, String redisPrefix, String redisSendPrefix,
                           Map<String, CodeEntry> storeMap, Map<String, Long> sendMap,
                           String attemptsKey,
                           String subject, String bodyTemplate) {
@@ -110,7 +110,6 @@ public class EmailCodeService {
         }
         sendRealEmail(email, code, subject, bodyTemplate);
         log.info("邮箱验证码已发送 email={}", maskEmail(email));
-        return code;
     }
 
     private void doVerify(String email, String code, String redisPrefix,
