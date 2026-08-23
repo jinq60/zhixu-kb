@@ -20,7 +20,11 @@ instance.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       const auth = useAuthStore()
-      auth.logout()
+      // 仅在确实持有 token 时才登出：避免多个并行请求同时收到 401 时
+      // 重复执行 logout/push('/login')（与用户端 http.ts 同一防护策略）
+      if (auth.token) {
+        auth.logout()
+      }
     }
     return Promise.reject(error)
   }

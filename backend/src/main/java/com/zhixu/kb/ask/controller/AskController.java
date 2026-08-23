@@ -43,7 +43,7 @@ public class AskController {
         return Result.success(askService.ask(SecurityUtils.getUserId(), request.getQuestion(), request.getConversationId()));
     }
 
-    @PostMapping(value = "/stream", produces = MediaType.TEXT_PLAIN_VALUE)
+    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<StreamingResponseBody> askStream(@Valid @RequestBody AskRequest request) {
         Long userId = SecurityUtils.getUserId();
         StreamingResponseBody body = outputStream -> {
@@ -68,7 +68,8 @@ public class AskController {
         };
         return ResponseEntity.ok()
                 .header("X-Accel-Buffering", "no")
-                .contentType(MediaType.TEXT_PLAIN)
+                // 标准 SSE Content-Type：网关/代理按流式响应处理，避免缓冲或按纯文本截断
+                .contentType(MediaType.TEXT_EVENT_STREAM)
                 .body(body);
     }
 

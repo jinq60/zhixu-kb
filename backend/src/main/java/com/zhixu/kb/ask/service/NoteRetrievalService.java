@@ -178,7 +178,11 @@ public class NoteRetrievalService {
         ranked.forEach(r -> {
             Double fused = rrfScores.get(r.getNoteId());
             if (fused != null) {
-                r.setSimilarity(fused);
+                // 融合分仅用于排序；落库/展示前归一化到 [0,1]：
+                // 原始 RRF 分量级极小（单路榜首 ≈ 1/61 ≈ 0.016，双路榜首 ≈ 0.033），
+                // 直接存储会被前端误读为"相似度百分比"。以双路榜首理论最大值为基准做单调映射。
+                double normalized = Math.min(1.0D, fused * (RRF_K + 1) / 2.0D);
+                r.setSimilarity(Math.round(normalized * 1000D) / 1000D);
             }
         });
         ranked.sort(Comparator.comparingDouble(RetrievedNote::getSimilarity).reversed());

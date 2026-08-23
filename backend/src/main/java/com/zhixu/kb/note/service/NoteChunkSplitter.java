@@ -1,5 +1,7 @@
 package com.zhixu.kb.note.service;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -9,8 +11,9 @@ import java.util.regex.Pattern;
  * 语义切分：基于笔记 HTML 标题结构（h1-h6）切块，超长段按句子边界二次切分，块间重叠。
  * - 保留标题作为块前缀（提供上下文，防止切太碎丢失语义）
  * - 相邻小块合并（< minChars 与下一块合并，避免碎片）
- * - 总块数上限，防止超大文档无限切块
+ * - 总块数上限，防止超大文档无限切块（截断时输出告警日志）
  */
+@Slf4j
 public final class NoteChunkSplitter {
 
     /** 单块目标字符数 */
@@ -45,9 +48,16 @@ public final class NoteChunkSplitter {
         }
         // 3) 合并过小的碎片
         List<String> merged = mergeSmallChunks(chunks);
-        // 4) 块数上限
+        // 4) 块数上限：截断时必须告警——尾部内容不参与向量检索，不能静默丢失
         if (merged.size() > MAX_CHUNKS) {
-            return merged.subList(0, MAX_CHUNKS);
+            int droppedChars = 0;
+            for (int i = MAX_CHUNKS; i < merged.size(); i++) {
+                droppedChars += merged.get(i).length();
+            }
+            log.warn("Chunk split truncated: totalChunks={} max={} droppedChars={} sourceChars={} "
+                            + "（超出部分不参与 RAG 向量检索）",
+                    merged.size(), MAX_CHUNKS, droppedChars, text.length());
+            return new ArrayList<>(merged.subList(0, MAX_CHUNKS));
         }
         return merged;
     }

@@ -107,7 +107,9 @@ ai:
     timeout-ms: 60000
     max-retries: 3
   # 向量化（RAG embedding）：复用端点池的 baseUrl + apiKey 调 /embeddings；
-  # 端点不支持 embedding 或调用失败时自动降级为纯关键词检索
+  # model 为自动探测时的首选候选模型（维度须与 milvus.dimension 一致才会被采用，
+  # 不匹配或不可用时按候选列表继续探测）；端点不支持 embedding 或调用失败时
+  # 自动降级为纯关键词检索。管理后台端点显式配置的 embeddingModel 优先于本配置。
   embedding:
     enabled: ${AI_EMBEDDING_ENABLED:true}
     model: ${AI_EMBEDDING_MODEL:openai/text-embedding-3-small}

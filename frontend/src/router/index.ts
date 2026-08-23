@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationNormalized, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const routes: RouteRecordRaw[] = [
@@ -34,21 +34,26 @@ const router = createRouter({
   }
 })
 
-router.beforeEach((to) => {
+/**
+ * 全局认证守卫（导出以便单测复用真实实现，避免测试复制逻辑导致实现漂移）：
+ * - 已登录访问 OAuth 回调页无意义，直接进工作台
+ * - 未登录访问需要权限的页面，唤起登录弹窗并回到首页（携带 redirect/login 参数）
+ */
+export function authGuard(to: RouteLocationNormalized) {
   const auth = useAuthStore()
 
-  // 已登录用户访问 OAuth 回调页无意义，直接进工作台
   if (auth.isLoggedIn && to.path === '/oauth-callback') {
     return '/notes'
   }
 
-  // 未登录访问需要权限的页面，唤起登录弹窗并回到首页
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     auth.openLoginModal()
     return { path: '/home', query: { ...to.query, redirect: to.fullPath, login: '1' } }
   }
 
   return true
-})
+}
+
+router.beforeEach(authGuard)
 
 export default router

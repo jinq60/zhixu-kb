@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+// 直接复用真实守卫实现，路由结构变化时测试不会假绿
+import { authGuard } from '../router'
 
-// 与 src/router/index.ts 一致的守卫逻辑（登录制 + 公开页直达）
+// 与 src/router/index.ts 一致的路由表（meta 标记），组件用桩替代
 function createTestRouter() {
   const routes = [
     { path: '/notes/view/:id', component: { template: '<div>NoteView</div>' }, meta: { public: true } },
@@ -21,22 +23,7 @@ function createTestRouter() {
     routes
   })
 
-  router.beforeEach((to) => {
-    const auth = useAuthStore()
-
-    // 已登录用户访问 OAuth 回调页无意义，直接进工作台
-    if (auth.isLoggedIn && to.path === '/oauth-callback') {
-      return '/notes'
-    }
-
-    // 未登录访问需要权限的页面，唤起登录弹窗并回到首页
-    if (to.meta.requiresAuth && !auth.isLoggedIn) {
-      auth.openLoginModal()
-      return { path: '/home', query: { ...to.query, redirect: to.fullPath, login: '1' } }
-    }
-
-    return true
-  })
+  router.beforeEach(authGuard)
 
   return router
 }

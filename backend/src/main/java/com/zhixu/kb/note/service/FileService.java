@@ -109,6 +109,12 @@ public class FileService {
                 if (StringUtils.hasText(parsed.html)) {
                     // Xberg HTML 同样过滤文档自带元信息/目录区/重复标题，避免干扰正文阅读
                     normalizedText = documentNormalizeService.filterNoiseLines(parsed.html);
+                    // 从 HTML 提取纯文本作为 extractedText：
+                    // 否则 extractedText 为空会落入本地 POI/PDFBox 分支，导致同一文档被解析两遍
+                    String plainFromHtml = htmlToPlainText(parsed.html);
+                    if (StringUtils.hasText(plainFromHtml)) {
+                        extractedText = plainFromHtml;
+                    }
                 }
             }
             // Xberg 不可用或返回空：回退到本地提取
@@ -915,6 +921,44 @@ public class FileService {
             log.warn("Xberg parse service unavailable, fallback to local extraction: {}", ex.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 将 Xberg 返回的结构化 HTML 转为纯文本：块级标签转换行、行内标签剥除、常见实体解码。
+     * 用于填充 extractedText，避免 Xberg 解析成功后再次触发本地 POI/PDFBox 提取。
+     */
+    private static String htmlToPlainText(String html) {
+        String text = html.replaceAll("(?i)<(br|/p|/div|/h[1-6]|/li|/tr|/table)[^>]*>", "\n")
+                .replaceAll("<[^>]+>", " ")
+                .replace("&nbsp;", " ")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                // &amp; 必须最后解码，避免 &amp;lt; 被二次解码为 <
+                .replace("&amp;", "&");
+        StringBuilder sb = new StringBuilder(text.length());
+        boolean prevSpace = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\n') {
+                sb.append('\n');
+                prevSpace = false;
+            } else if (Character.isWhitespace(c)) {
+                if (!prevSpace) {
+                    sb.append(' ');
+                }
+                prevSpace = true;
+            } else {
+                sb.append(c);
+                prevSpace = false;
+            }
+        }
+        String result = sb.toString().trim();
+        if (result.length() > MAX_EXTRACTED_CHARS) {
+            result = result.substring(0, MAX_EXTRACTED_CHARS);
+        }
+        return result.isEmpty() ? null : result;
     }
 
     private static class ParsedDocument {

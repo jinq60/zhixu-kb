@@ -1,6 +1,8 @@
 package com.zhixu.kb.note.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zhixu.kb.ai.EmbeddingService;
 import com.zhixu.kb.note.mapper.CleanChunkTaskMapper;
 import com.zhixu.kb.note.mapper.DocumentProcessTaskMapper;
@@ -26,7 +28,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -51,6 +52,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
 
     private static final int MAX_RETRY = 5;
     private static final long RETRY_BACKOFF_MS = 10_000;
+    /** AI 引擎不可用退避：对齐端点冷却 60s，指数递增无意义，固定值即可 */
+    private static final long AI_UNAVAILABLE_BACKOFF_MS = 60_000L;
     private static final long STUCK_MS = 10 * 60 * 1000L;
     /** 全文 LLM 清洗单片上限：从 5 万降到 1.5 万，增加可并行块数、缩短大文档总耗时 */
     private static final int LLM_CLEAN_PART_MAX = 15_000;
@@ -79,8 +82,14 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     /** 任务异步推进线程（不阻塞上传/整理调用方） */
     private final ExecutorService advanceExecutor = Executors.newSingleThreadExecutor();
 
-    /** 按 taskId 细粒度锁，避免 advance 全局串行 */
-    private final Map<Long, Lock> taskLocks = new ConcurrentHashMap<>();
+    /** 按 taskId 细粒度锁，避免 advance 全局串行。
+     *  使用带过期回收的 Caffeine 缓存（30 分钟无访问过期 + 容量上限）：
+     *  纯 ConcurrentHashMap 只增不减，任务数增长会慢性泄漏；
+     *  活跃任务每轮定时扫描都会触碰（刷新访问时间），不会被误回收。 */
+    private final Cache<Long, Lock> taskLocks = Caffeine.newBuilder()
+            .expireAfterAccess(Duration.ofMinutes(30))
+            .maximumSize(10_000)
+            .build();
 
     /**
      * 创建上传任务（PENDING，解析在任务内异步执行）。上传接口不阻塞。
@@ -242,7 +251,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                 || "COMPLETED".equals(task.getStatus()) || "FAILED".equals(task.getStatus())) {
             return;
         }
-        Lock lock = taskLocks.computeIfAbsent(task.getId(), k -> new ReentrantLock());
+        Lock lock = taskLocks.asMap().computeIfAbsent(task.getId(), k -> new ReentrantLock());
         if (!lock.tryLock()) {
             // 已有其他线程在推进本任务，本次直接跳过
             return;
@@ -380,15 +389,31 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     }
 
     /**
-     * 重试退避：AI 引擎不可用（端点冷却/限流）时等 60s（对齐端点冷却），其他错误等 10s。
+     * 重试退避：AI 引擎不可用（端点冷却/限流）固定等 60s（对齐端点冷却）；
+     * 其他错误按已重试次数指数退避：10s → 20s → 40s → 60s（封顶），减少高频无效重试。
      */
     private boolean shouldBackoff(CleanChunkTaskEntity part) {
-        if (part.getUpdateTime() == null) {
+        return shouldBackoff(part.getErrorMsg(), part.getRetryCount(), part.getUpdateTime());
+    }
+
+    private boolean shouldBackoff(String errorMsg, Integer retryCount, LocalDateTime updateTime) {
+        if (updateTime == null) {
             return false;
         }
-        long elapsed = Duration.between(part.getUpdateTime(), LocalDateTime.now()).toMillis();
-        long backoff = isAiUnavailable(part.getErrorMsg()) ? 60_000L : RETRY_BACKOFF_MS;
-        return elapsed < backoff;
+        long elapsed = Duration.between(updateTime, LocalDateTime.now()).toMillis();
+        return elapsed < backoffMs(errorMsg, retryCount);
+    }
+
+    private long backoffMs(String errorMsg, Integer retryCount) {
+        if (isAiUnavailable(errorMsg)) {
+            return AI_UNAVAILABLE_BACKOFF_MS;
+        }
+        int attempt = (retryCount == null || retryCount < 1) ? 1 : retryCount;
+        long backoff = RETRY_BACKOFF_MS;
+        while (attempt-- > 1 && backoff < AI_UNAVAILABLE_BACKOFF_MS) {
+            backoff *= 2;
+        }
+        return Math.min(backoff, AI_UNAVAILABLE_BACKOFF_MS);
     }
 
     private boolean isAiUnavailable(String errorMsg) {
@@ -609,16 +634,20 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     /**
      * 依清洗明细重算任务进度并定向更新（仅 progress/updateTime 列，
      * 不覆盖并发写入的状态/阶段；终态任务跳过）。
+     * 用计数查询代替全量 selectList：明细含大文本列（raw/cleaned content），
+     * 每块完成都拉全部行会造成 O(n²) 读放大。
      */
     private void refreshCleaningProgress(Long taskId) {
         try {
-            List<CleanChunkTaskEntity> parts = cleanChunkMapper.selectList(new LambdaQueryWrapper<CleanChunkTaskEntity>()
+            Long total = cleanChunkMapper.selectCount(new LambdaQueryWrapper<CleanChunkTaskEntity>()
                     .eq(CleanChunkTaskEntity::getTaskId, taskId));
-            if (parts.isEmpty()) {
+            if (total == null || total == 0L) {
                 return;
             }
-            long success = parts.stream().filter(c -> "SUCCESS".equals(c.getStatus())).count();
-            int progress = cleaningProgress(success, parts.size());
+            Long success = cleanChunkMapper.selectCount(new LambdaQueryWrapper<CleanChunkTaskEntity>()
+                    .eq(CleanChunkTaskEntity::getTaskId, taskId)
+                    .eq(CleanChunkTaskEntity::getStatus, "SUCCESS"));
+            int progress = cleaningProgress(success, total);
             taskMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DocumentProcessTaskEntity>()
                     .eq(DocumentProcessTaskEntity::getId, taskId)
                     .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
@@ -708,9 +737,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                 }
                 if ("FAILED".equals(chunk.getStatus())
                         && (chunk.getRetryCount() >= task.getMaxRetry()
-                        || chunk.getUpdateTime() != null
-                        && Duration.between(chunk.getUpdateTime(), LocalDateTime.now()).toMillis()
-                        < (isAiUnavailable(chunk.getErrorMsg()) ? 60_000L : RETRY_BACKOFF_MS))) {
+                        || shouldBackoff(chunk.getErrorMsg(), chunk.getRetryCount(), chunk.getUpdateTime()))) {
                     continue;
                 }
                 eligible.add(chunk);
@@ -841,16 +868,18 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         }
     }
 
-    /** 依向量化明细重算任务进度并定向更新（仅 progress/updateTime 列，终态任务跳过）。 */
+    /** 依向量化明细重算任务进度并定向更新（仅 progress/updateTime 列，终态任务跳过；计数查询避免大文本读放大）。 */
     private void refreshEmbeddingProgress(Long taskId) {
         try {
-            List<EmbedChunkTaskEntity> chunks = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
+            Long total = embedChunkMapper.selectCount(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
                     .eq(EmbedChunkTaskEntity::getTaskId, taskId));
-            if (chunks.isEmpty()) {
+            if (total == null || total == 0L) {
                 return;
             }
-            long success = chunks.stream().filter(c -> "SUCCESS".equals(c.getStatus())).count();
-            int progress = embeddingProgress(success, chunks.size());
+            Long success = embedChunkMapper.selectCount(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
+                    .eq(EmbedChunkTaskEntity::getTaskId, taskId)
+                    .eq(EmbedChunkTaskEntity::getStatus, "SUCCESS"));
+            int progress = embeddingProgress(success, total);
             taskMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DocumentProcessTaskEntity>()
                     .eq(DocumentProcessTaskEntity::getId, taskId)
                     .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
@@ -889,9 +918,12 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     }
 
     private void updateProgress(DocumentProcessTaskEntity task, int progress) {
-        task.setProgress(progress);
-        task.setUpdateTime(LocalDateTime.now());
-        taskMapper.updateById(task);
+        // 终态保护：条件更新，避免与 completeTask/markFailed 竞态时把终态任务进度覆盖回中间值
+        taskMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DocumentProcessTaskEntity>()
+                .eq(DocumentProcessTaskEntity::getId, task.getId())
+                .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
+                .set(DocumentProcessTaskEntity::getProgress, progress)
+                .set(DocumentProcessTaskEntity::getUpdateTime, LocalDateTime.now()));
     }
 
     private void markFailed(DocumentProcessTaskEntity task, String reason) {

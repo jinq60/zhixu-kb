@@ -31,7 +31,8 @@ import java.util.Map;
 /**
  * 向量化服务：调用 OpenAI 兼容 /embeddings 端点。
  * 端点选择：用户级向量化配置 → 平台端点池（配置了 embedding 模型的端点优先；
- * 未配置的端点自动探测常见 embedding 模型，结果按端点缓存）。
+ * 未配置的端点自动探测 embedding 模型——ai.embedding.model 配置的模型作为首选候选，
+ * 其后依次尝试常见模型；探测结果按端点缓存）。
  * 全部不可用时抛异常，由调用方降级为纯关键词检索。
  */
 @Slf4j
@@ -180,7 +181,7 @@ public class EmbeddingService {
         if (Boolean.TRUE.equals(embeddingProbeFailedCache.getIfPresent(cacheKey))) {
             return null;
         }
-        for (String candidate : CANDIDATE_EMBEDDING_MODELS) {
+        for (String candidate : candidateModels()) {
             try {
                 List<float[]> probe = embedWith(endpoint.getBaseUrl(), endpoint.getApiKey(), candidate,
                         Collections.singletonList("test"), null);
@@ -202,6 +203,25 @@ public class EmbeddingService {
         embeddingProbeFailedCache.put(cacheKey, Boolean.TRUE);
         log.warn("no usable embedding model detected on endpoint: baseUrl={}", endpoint.getBaseUrl());
         return null;
+    }
+
+    /**
+     * 探测候选模型列表：ai.embedding.model 显式配置的模型优先（使配置真实生效），
+     * 其后按常见模型顺序兜底；维度校验会自动跳过与 Milvus 配置不符的候选。
+     */
+    private List<String> candidateModels() {
+        String configured = aiProperties.getEmbedding().getModel();
+        if (!StringUtils.hasText(configured)) {
+            return CANDIDATE_EMBEDDING_MODELS;
+        }
+        List<String> candidates = new ArrayList<>(CANDIDATE_EMBEDDING_MODELS.size() + 1);
+        candidates.add(configured.trim());
+        for (String candidate : CANDIDATE_EMBEDDING_MODELS) {
+            if (!candidate.equals(configured.trim())) {
+                candidates.add(candidate);
+            }
+        }
+        return candidates;
     }
 
     /**
