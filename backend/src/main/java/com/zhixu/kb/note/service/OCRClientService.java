@@ -72,10 +72,16 @@ public class OCRClientService {
             }
 
             log.warn("OCR primary engine '{}' failed, retrying fallback '{}'", primaryEngine, fallbackEngine);
-            String body = invokeRecognize(imageBytes, fallbackEngine);
-            List<String> fallbackResult = parseRecognizeResponse(body);
-            onSuccess();
-            return fallbackResult;
+            try {
+                String body = invokeRecognize(imageBytes, fallbackEngine);
+                List<String> fallbackResult = parseRecognizeResponse(body);
+                onSuccess();
+                return fallbackResult;
+            } catch (BusinessException fallbackErr) {
+                // 主引擎与 fallback 均失败：各计入一次连续失败，保证熔断阈值语义准确
+                onFailure();
+                throw fallbackErr;
+            }
         }
     }
 

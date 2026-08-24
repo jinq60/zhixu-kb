@@ -290,6 +290,10 @@ private final DocumentProcessTaskService documentProcessTaskService;
 
         try {
             String text = runBatchOCR(targets, engine);
+            if (!StringUtils.hasText(text)) {
+                // 所有图片均未识别出内容时明确告知，而非静默把 ocrText 写成空串
+                throw new BusinessException(ResultCode.BAD_REQUEST, "OCR 未识别到文字，请确认图片清晰且包含文本内容");
+            }
             return transactionTemplate.execute(status -> {
                 Note fresh = findOwnNote(id);
                 fresh.setOcrText(text);
