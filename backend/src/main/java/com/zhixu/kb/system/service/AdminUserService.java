@@ -31,7 +31,8 @@ public class AdminUserService {
     private final SysUserRoleMapper userRoleMapper;
     private final AuditLogService auditLogService;
 
-    /** 角色变更互斥锁：保证"至少一名管理员"的校验与变更原子化，防止并发降级导致零管理员 */
+    /** 角色变更互斥锁：单实例内快速路径串行化；跨实例正确性由
+     *  SysRoleMapper#lockAdminRoleRowForChange 的数据库行锁保证 */
     private final Object roleChangeLock = new Object();
 
     @Transactional(readOnly = true)
@@ -78,6 +79,9 @@ public class AdminUserService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "角色仅支持 user / admin");
         }
         synchronized (roleChangeLock) {
+            // 数据库层互斥：锁住 admin 角色行，使"至少一名管理员"校验跨实例串行化
+            // （JVM 锁仅单实例内有效；FOR UPDATE 行锁让并发角色变更在所有实例上排队）
+            roleMapper.lockAdminRoleRowForChange();
             if ("user".equals(normalized) && isAdmin(userId) && adminCount() <= 1) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "至少保留一名管理员，无法降级最后一名管理员");
             }

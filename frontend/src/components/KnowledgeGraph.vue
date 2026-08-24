@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+// ECharts 按需引入：仅注册知识图谱用到的模块（graph 图 + tooltip/legend + canvas 渲染），
+// 相比整包 import * as echarts 显著减小构建包体
+import { init, use } from 'echarts/core'
+import type { EChartsType } from 'echarts/core'
+import { GraphChart } from 'echarts/charts'
+import { LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import type { GraphData } from '../api/graph'
+
+use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer])
 
 const props = defineProps<{
   data: GraphData | null
@@ -9,7 +17,7 @@ const props = defineProps<{
 }>()
 
 const container = ref<HTMLDivElement>()
-let chart: echarts.ECharts | null = null
+let chart: EChartsType | null = null
 let resizeObserver: ResizeObserver | null = null
 
 const escapeHtml = (raw: string): string =>
@@ -123,7 +131,7 @@ const render = async () => {
     return
   }
   if (!chart) {
-    chart = echarts.init(container.value)
+    chart = init(container.value)
   }
   chart.setOption(buildOption(props.data!), true)
 }

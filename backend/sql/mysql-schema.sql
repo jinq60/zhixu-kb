@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS note (
     INDEX idx_user_id (user_id),
     INDEX idx_category_id (category_id),
     INDEX idx_create_time (create_time),
-    FULLTEXT INDEX ft_content (title, content) WITH PARSER ngram
+    FULLTEXT INDEX ft_content (title, content) WITH PARSER ngram,
+    FULLTEXT INDEX ft_meta (summary, keywords, ocr_text) WITH PARSER ngram
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='笔记表';
 
 CREATE TABLE IF NOT EXISTS file_info (

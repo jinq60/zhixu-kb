@@ -87,13 +87,20 @@ public class NoteRetrievalService {
             log.warn("Vector recall failed, skip: {}", e.getMessage());
         }
 
-        // 1) FULLTEXT 全库命中（解决旧笔记检索不到的问题）
+        // 1) FULLTEXT 全库命中（解决旧笔记检索不到的问题）。
+        //    两路 MATCH OR：ft_content(title, content) + ft_meta(summary, keywords, ocr_text)，
+        //    命中仅存在于摘要/关键词/OCR 文本的笔记不再依赖"最近扫描"兜底。
+        //    ft_meta 索引由 SearchIndexMigrator 启动时幂等补建；缺失时本查询抛错，
+        //    由下方 catch 降级为最近笔记扫描，不影响服务可用性。
         try {
             List<Note> ftHits = noteMapper.selectList(new QueryWrapper<Note>()
                     .select("id", "title", "summary", "keywords", "content", "ocr_text")
                     .eq("user_id", userId)
                     .eq("is_deleted", 0)
-                    .apply("MATCH(title, content) AGAINST({0} IN NATURAL LANGUAGE MODE)", trimmedQuery)
+                    .and(w -> w
+                            .apply("MATCH(title, content) AGAINST({0} IN NATURAL LANGUAGE MODE)", trimmedQuery)
+                            .or()
+                            .apply("MATCH(summary, keywords, ocr_text) AGAINST({0} IN NATURAL LANGUAGE MODE)", trimmedQuery))
                     .orderByDesc("id")
                     .last("LIMIT " + MAX_FULLTEXT_HITS));
             if (ftHits != null) {

@@ -79,8 +79,10 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     /** 向量化并发 */
     private final ExecutorService embedExecutor = Executors.newFixedThreadPool(4);
     private final Semaphore embedPermits = new Semaphore(4);
-    /** 任务异步推进线程（不阻塞上传/整理调用方） */
-    private final ExecutorService advanceExecutor = Executors.newSingleThreadExecutor();
+    /** 任务异步推进线程池（不阻塞上传/整理调用方）。
+     *  多线程安全性由 taskLocks 保证（同一任务串行推进，不同任务可并行）：
+     *  单线程时一个慢任务的 join 等待会推迟其他任务的推进轮次。 */
+    private final ExecutorService advanceExecutor = Executors.newFixedThreadPool(4);
 
     /** 按 taskId 细粒度锁，避免 advance 全局串行。
      *  使用带过期回收的 Caffeine 缓存（30 分钟无访问过期 + 容量上限）：
