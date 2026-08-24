@@ -200,6 +200,14 @@ public class MilvusVectorStore {
             }
             log.warn("Milvus collection {} uses legacy index ({}), rebuilding as FLAT for full recall",
                     name, currentType);
+            // Milvus 约束：集合处于 loaded 状态时禁止删除索引，需先释放
+            try {
+                client().releaseCollection(io.milvus.v2.service.collection.request.ReleaseCollectionReq.builder()
+                        .collectionName(name)
+                        .build());
+            } catch (Exception ignored) {
+                // 释放失败不阻塞（可能本就未加载）
+            }
             client().dropIndex(io.milvus.v2.service.index.request.DropIndexReq.builder()
                     .collectionName(name)
                     .indexName(indexNames.get(0))
