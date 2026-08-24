@@ -263,6 +263,10 @@ services:
       FILE_UPLOAD_PATH: /app/uploads/images/
       APP_RATE_LIMIT_PER_MINUTE: ${APP_RATE_LIMIT_PER_MINUTE:-120}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5175}
+      # SSRF 防护：本机/容器若使用 Clash/Mihomo 等 fake-ip 代理，AI 端点域名会解析到
+      # 198.18.0.0/15 或 IPv6 ULA 段，默认会被 SafeUrlValidator 拒绝。
+      # Docker 环境默认放行（与本地启动脚本一致），生产环境请显式设置 SSRF_ALLOW_FAKE_IP=false。
+      JAVA_TOOL_OPTIONS: "-Dssrf.allow-fake-ip-ranges=${SSRF_ALLOW_FAKE_IP:-true}"
     ports:
       - "8080:8080"
     volumes:
