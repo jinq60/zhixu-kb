@@ -115,11 +115,10 @@ public class UserAiConfigService {
         view.setConfigured(true);
         view.setProvider(entity.getProvider());
         view.setBaseUrl(entity.getBaseUrl());
-        view.setApiKeyMasked(maskKey(cryptoService.decrypt(entity.getApiKey())));
+        view.setApiKeyMasked(safeMask(entity.getApiKey()));
         view.setModel(entity.getModel());
         view.setEmbeddingBaseUrl(entity.getEmbeddingBaseUrl());
-        view.setEmbeddingApiKeyMasked(entity.getEmbeddingApiKey() == null
-                ? null : maskKey(cryptoService.decrypt(entity.getEmbeddingApiKey())));
+        view.setEmbeddingApiKeyMasked(safeMask(entity.getEmbeddingApiKey()));
         view.setEmbeddingModel(entity.getEmbeddingModel());
         view.setEnabled(entity.getEnabled() == null || entity.getEnabled() == 1);
         return view;
@@ -151,11 +150,13 @@ public class UserAiConfigService {
         entity.setProvider(provider);
         entity.setBaseUrl(baseUrl);
         entity.setModel(model);
-        // 传入新 key 时更新；未传则保留原 key
+        // 传入新 key 时更新；未传则保留原 key。
+        // "是否已配置过 Key"只判密文非空：若在此处 decrypt（如 CRYPTO_AES_KEY 已轮换）
+        // 会抛异常，把本应提示"请重填 Key"的场景变成 500
         String newKey = trimToNull(request.getApiKey());
         if (StringUtils.hasText(newKey)) {
             entity.setApiKey(cryptoService.encrypt(newKey));
-        } else if (entity.getApiKey() == null || !StringUtils.hasText(cryptoService.decrypt(entity.getApiKey()))) {
+        } else if (!StringUtils.hasText(entity.getApiKey())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "API Key 不能为空（未配置过 Key 时必须填写）");
         }
         // 向量化端点（可选）：手动配置时校验保存；
@@ -230,8 +231,10 @@ public class UserAiConfigService {
                 result.put("model", model);
             }
         } catch (Exception ex) {
+            // 安全：不把底层异常原文（DNS/超时细节等内部信息）回显给前端，详情进服务端日志
+            log.warn("AI connection test failed: {}", ex.getMessage());
             result.put("success", false);
-            result.put("message", "连接失败：" + ex.getMessage());
+            result.put("message", "连接失败，请检查接口地址与 API Key 是否正确");
         }
         return result;
     }
@@ -306,6 +309,26 @@ public class UserAiConfigService {
         return "custom";
     }
 
+    /**
+     * 解密后脱敏。解密失败（如 CRYPTO_AES_KEY 轮换）不抛异常——
+     * 否则整个配置读取接口 500，用户会被锁死在设置页外无法重填 Key 自救。
+     */
+    private String safeMask(String cipherText) {
+        if (!StringUtils.hasText(cipherText)) {
+            return null;
+        }
+        try {
+            return maskKey(cryptoService.decrypt(cipherText));
+        } catch (Exception ex) {
+            log.warn("AI config key unreadable (key rotated?), prompt re-enter: {}", ex.getMessage());
+            return "****（密钥不可读，请重新填写并保存）";
+        }
+    }
+
+    /**
+     * 掩码只保留末 4 位：主流厂商 Key 前 4 位几乎恒为 "sk-" 等固定前缀，
+     * 露出"首4+末4"对短 Key 相当于暴露一半以上熵，可用于撞库确认。
+     */
     private String maskKey(String key) {
         if (!StringUtils.hasText(key)) {
             return "";
@@ -313,7 +336,7 @@ public class UserAiConfigService {
         if (key.length() <= 8) {
             return "****";
         }
-        return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
+        return "****" + key.substring(key.length() - 4);
     }
 
     private String trimToNull(String value) {

@@ -31,7 +31,13 @@ if (-not (Test-Path -LiteralPath (Join-Path $backendDir "mvnw.cmd"))) {
 Write-Host "==> Starting backend (requires Java 8) ..." -ForegroundColor Cyan
 Push-Location $backendDir
 try {
-    .\mvnw.cmd spring-boot:run
+    # 本机若使用 Clash/Mihomo 等 fake-ip 模式代理，AI 端点域名会解析到 198.18.0.0/15
+    # 或 IPv6 ULA 段（默认被 SSRF 防护拒绝）。设置 SSRF_ALLOW_FAKE_IP=1 可在开发环境放行。
+    if ($env:SSRF_ALLOW_FAKE_IP -eq "1") {
+        .\mvnw.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-Dssrf.allow-fake-ip-ranges=true"
+    } else {
+        .\mvnw.cmd spring-boot:run
+    }
 } finally {
     Pop-Location
 }

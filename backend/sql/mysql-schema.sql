@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS sys_user (
     username VARCHAR(50) NOT NULL UNIQUE COMMENT '用户名',
     password VARCHAR(100) NOT NULL COMMENT '密码(BCrypt)',
     email VARCHAR(100) UNIQUE COMMENT '邮箱',
+    -- 邮箱所有权已验证（邮箱验证码登录/绑定、OAuth 提供同邮箱且 provider 已验证）。
+    -- 未验证的邮箱不得作为 OAuth/验证码登录的身份合并锚点，防止抢注账号
+    email_verified TINYINT NOT NULL DEFAULT 0 COMMENT '邮箱是否已验证(0否 1是)',
     avatar VARCHAR(255) COMMENT '头像URL',
     status TINYINT DEFAULT 1 COMMENT '状态(0禁用 1正常)',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -20,6 +23,9 @@ CREATE TABLE IF NOT EXISTS sys_user (
     INDEX idx_username (username),
     INDEX idx_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
+
+-- 已有部署升级时手动执行（MySQL 8.0 不支持 ADD COLUMN IF NOT EXISTS）：
+-- ALTER TABLE sys_user ADD COLUMN email_verified TINYINT NOT NULL DEFAULT 0 COMMENT '邮箱是否已验证(0否 1是)' AFTER email;
 
 CREATE TABLE IF NOT EXISTS sys_role (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '角色ID',

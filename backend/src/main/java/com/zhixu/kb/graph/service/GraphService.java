@@ -356,7 +356,9 @@ public class GraphService {
     public boolean delete(Long noteId) {
         Long userId = SecurityUtils.getUserId();
         Note note = noteMapper.selectById(noteId);
-        if (note == null || !note.getUserId().equals(userId)) {
+        // 归属校验方向与其他方法保持一致（Objects.equals 双侧 null 安全，
+        // 避免历史脏数据 user_id 为 null 时 NPE→500）
+        if (userId == null || note == null || !java.util.Objects.equals(note.getUserId(), userId)) {
             throw new BusinessException(ResultCode.NOT_FOUND, "笔记不存在");
         }
         if (!neo4jAccessor.isAvailable()) {

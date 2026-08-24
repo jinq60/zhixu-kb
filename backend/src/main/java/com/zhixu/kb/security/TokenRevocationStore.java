@@ -21,6 +21,8 @@ import java.time.Instant;
 public class TokenRevocationStore {
 
     private final Cache<String, Instant> revokedTokens;
+    /** 用户级撤销时间点（修改密码等凭证变更时写入）：userId -> epoch ms */
+    private final Cache<Long, Long> userRevokedAt;
     private final StringRedisTemplate redisTemplate;
 
     /**
@@ -38,6 +40,10 @@ public class TokenRevocationStore {
         this.revokedTokens = Caffeine.newBuilder()
                 .expireAfterWrite(revokedTokenTtl)
                 .maximumSize(100_000)
+                .build();
+        this.userRevokedAt = Caffeine.newBuilder()
+                .expireAfterWrite(revokedTokenTtl)
+                .maximumSize(50_000)
                 .build();
     }
 
@@ -78,6 +84,60 @@ public class TokenRevocationStore {
             }
         }
         return false;
+    }
+
+    /**
+     * 用户级凭证撤销：记录"该时刻之前签发的全部 token 一并失效"。
+     * 用于修改密码等凭证变更场景——无法枚举用户的所有活跃 token，
+     * 以签发时间（JWT iat）为界批量作废。双写本地内存 + Redis（多实例生效）。
+     */
+    public void revokeUser(Long userId) {
+        if (userId == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        userRevokedAt.put(userId, now);
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.opsForValue().set(userRevokedKey(userId), String.valueOf(now), revokedTokenTtl);
+            } catch (Exception ex) {
+                org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
+                        .error("User revocation Redis write failed: {}", ex.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 查询用户凭证撤销时间点（epoch ms）；null 表示无用户级撤销。
+     * JWT 签发时间早于该时间点的 token 应视为无效。
+     */
+    public Long getUserRevokedAt(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        Long local = userRevokedAt.getIfPresent(userId);
+        if (local != null) {
+            return local;
+        }
+        if (redisTemplate != null) {
+            try {
+                String value = redisTemplate.opsForValue().get(userRevokedKey(userId));
+                if (value != null && !value.trim().isEmpty()) {
+                    long revokedAt = Long.parseLong(value.trim());
+                    // 回填本地，避免每次请求都打 Redis
+                    userRevokedAt.put(userId, revokedAt);
+                    return revokedAt;
+                }
+            } catch (Exception ex) {
+                org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
+                        .error("User revocation Redis check failed: {}", ex.getMessage());
+            }
+        }
+        return null;
+    }
+
+    private String userRevokedKey(Long userId) {
+        return "session:user-revoked:" + userId;
     }
 
     private String tokenKey(String token) {

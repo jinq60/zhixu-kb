@@ -149,7 +149,14 @@ public class AiEndpointService {
         if (entity == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "端点不存在");
         }
-        String key = cryptoService.decrypt(entity.getApiKey());
+        String key;
+        try {
+            key = cryptoService.decrypt(entity.getApiKey());
+        } catch (Exception ex) {
+            // 密钥不可读（如 CRYPTO_AES_KEY 已轮换）：明确提示重填而非 500
+            log.warn("AI endpoint key unreadable: id={}", id);
+            throw new BusinessException(ResultCode.BAD_REQUEST, "端点密钥不可读，请重新填写 API Key 并保存");
+        }
         SafeUrlValidator.validateBeforeRequest(entity.getBaseUrl());
         String normalized = entity.getBaseUrl().endsWith("/")
                 ? entity.getBaseUrl().substring(0, entity.getBaseUrl().length() - 1)
@@ -172,8 +179,10 @@ public class AiEndpointService {
             result.put("message", ok ? "连接成功" : "连接失败：HTTP " + response.getStatusCodeValue());
             result.put("model", entity.getModel());
         } catch (Exception ex) {
+            // 安全：不把底层异常原文（DNS/超时细节等内部信息）回显给前端，详情进服务端日志
+            log.warn("AI endpoint connection test failed: id={} err={}", id, ex.getMessage());
             result.put("success", false);
-            result.put("message", "连接失败：" + ex.getMessage());
+            result.put("message", "连接失败，请检查接口地址与 API Key 是否正确");
         }
         return result;
     }
@@ -207,7 +216,7 @@ public class AiEndpointService {
         AiEndpointView view = new AiEndpointView();
         view.setId(entity.getId());
         view.setBaseUrl(entity.getBaseUrl());
-        view.setApiKeyMasked(maskKey(cryptoService.decrypt(entity.getApiKey())));
+        view.setApiKeyMasked(safeMask(entity.getApiKey()));
         view.setModel(entity.getModel());
         view.setEmbeddingModel(entity.getEmbeddingModel());
         view.setEnabled(entity.getEnabled() == null || entity.getEnabled() == 1);
@@ -223,6 +232,26 @@ public class AiEndpointService {
         return view;
     }
 
+    /**
+     * 解密后脱敏。解密失败（如 CRYPTO_AES_KEY 轮换）不抛异常——否则列表接口整体 500，
+     * 管理员无法进入端点管理页修复。
+     */
+    private String safeMask(String cipherText) {
+        if (!StringUtils.hasText(cipherText)) {
+            return null;
+        }
+        try {
+            return maskKey(cryptoService.decrypt(cipherText));
+        } catch (Exception ex) {
+            log.warn("AI endpoint key unreadable (key rotated?), prompt re-enter: {}", ex.getMessage());
+            return "****（密钥不可读，请重新填写并保存）";
+        }
+    }
+
+    /**
+     * 掩码只保留末 4 位：主流厂商 Key 前 4 位几乎恒为 "sk-" 等固定前缀，
+     * 露出"首4+末4"对短 Key 相当于暴露一半以上熵，可用于撞库确认。
+     */
     private String maskKey(String key) {
         if (!StringUtils.hasText(key)) {
             return "";
@@ -230,7 +259,7 @@ public class AiEndpointService {
         if (key.length() <= 8) {
             return "****";
         }
-        return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
+        return "****" + key.substring(key.length() - 4);
     }
 
     private String trimToNull(String value) {

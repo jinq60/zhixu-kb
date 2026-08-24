@@ -58,6 +58,8 @@ public class EmbeddingService {
     private final Cache<String, String> embeddingModelCache;
     /** 端点 -> 探测失败标记（负缓存 2 分钟，避免逐块重复探测） */
     private final Cache<String, Boolean> embeddingProbeFailedCache;
+    /** 用户 -> 当前生效 embedding 模型名（60 秒 TTL，仅用于查询缓存 key 隔离，避免每次查库） */
+    private final Cache<Long, String> userModelHintCache;
 
     public EmbeddingService(AiProperties aiProperties, AiApiPool aiApiPool, ObjectMapper objectMapper,
                             UserAiConfigService userAiConfigService, MilvusProperties milvusProperties) {
@@ -78,6 +80,10 @@ public class EmbeddingService {
                 .expireAfterWrite(Duration.ofMinutes(2))
                 .maximumSize(200)
                 .build();
+        this.userModelHintCache = Caffeine.newBuilder()
+                .expireAfterWrite(Duration.ofSeconds(60))
+                .maximumSize(10_000)
+                .build();
     }
 
     public boolean isEnabled() {
@@ -97,20 +103,59 @@ public class EmbeddingService {
 
     /**
      * 将文本向量化（float32 数组），带 10 分钟查询缓存。
+     * 缓存 key 必须包含模型/维度/用户：不同用户可能配置不同 embedding 模型
+     * （如 OpenAI 1536 维 vs bge-m3 1024 维），仅按文本缓存会把 A 的向量
+     * 错发给 B，导致 Milvus 维度不匹配、语义检索静默降级。
      *
      * @return float[] 向量；失败抛异常
      */
-    public float[] embed(String text) {
-        String key = truncateToMaxChars(text == null ? "" : text);
+    public float[] embed(Long userId, String text) {
+        String truncated = truncateToMaxChars(text == null ? "" : text);
+        String key = cacheKey(userId, truncated);
         float[] cached = queryVectorCache.getIfPresent(key);
         if (cached != null) {
             return cached;
         }
-        float[] vector = embedBatch(Collections.singletonList(key)).get(0);
+        float[] vector = embedBatch(Collections.singletonList(truncated)).get(0);
         if (vector != null && vector.length > 0) {
             queryVectorCache.put(key, vector);
         }
         return vector;
+    }
+
+    /** 缓存 key：用户 + 当前生效 embedding 模型 + 文本。模型解析失败时退化为 userId+文本。 */
+    private String cacheKey(Long userId, String truncatedText) {
+        return userId + "|" + resolvedModelHint(userId) + "|" + milvusProperties.getDimension() + "|" + truncatedText;
+    }
+
+    /**
+     * 用户当前生效的 embedding 模型名（仅作缓存隔离用途，短 TTL 避免每次查询都查库）。
+     * 用户自配 embedding 端点返回其模型名；未配置或解析失败返回 "-"（走平台端点池）。
+     */
+    private String resolvedModelHint(Long userId) {
+        if (userId == null) {
+            return "-";
+        }
+        String hint = userModelHintCache.getIfPresent(userId);
+        if (hint != null) {
+            return hint;
+        }
+        String model = "-";
+        try {
+            java.util.Optional<UserAiConfigService.ResolvedApiConfig> cfg = userAiConfigService.resolveEmbeddingConfig();
+            if (cfg.isPresent() && StringUtils.hasText(cfg.get().getModel())) {
+                model = cfg.get().getModel();
+            }
+        } catch (Exception ignored) {
+            // 配置读取/解密失败不影响向量化主流程
+        }
+        userModelHintCache.put(userId, model);
+        return model;
+    }
+
+    /** 兼容旧签名（平台级调用，无用户上下文）：按平台维度隔离缓存 */
+    public float[] embed(String text) {
+        return embed(null, text);
     }
 
     /**

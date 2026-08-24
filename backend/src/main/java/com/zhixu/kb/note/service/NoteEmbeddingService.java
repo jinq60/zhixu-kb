@@ -53,9 +53,12 @@ public class NoteEmbeddingService {
             if (vectors == null || vectors.size() != bounded.size()) {
                 return false;
             }
-            // 替换旧块：先删后插
-            vectorStore.deleteByNote(noteId);
+            // 替换旧块：先插后删。
+            // upsert 主键确定幂等；顺序保证"新块写入成功后才清理旧块"——
+            // 若先删后插，插入失败会导致整篇笔记向量丢失（语义检索降级）；
+            // 而先插后删最坏情况是旧块短暂残留（分块数变少时），下次向量化自动收敛
             vectorStore.insert(note.getUserId(), noteId, bounded, vectors);
+            vectorStore.deleteByNote(noteId, bounded.size());
             return true;
         } catch (Exception ex) {
             log.warn("Note vectorize failed (fallback to keyword retrieval): noteId={} err={}", noteId, ex.getMessage());
@@ -71,7 +74,7 @@ public class NoteEmbeddingService {
             return new ArrayList<>();
         }
         try {
-            float[] queryVector = embeddingService.embed(query.trim());
+            float[] queryVector = embeddingService.embed(userId, query.trim());
             if (queryVector == null || queryVector.length == 0) {
                 return new ArrayList<>();
             }

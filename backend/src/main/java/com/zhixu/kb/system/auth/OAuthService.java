@@ -223,9 +223,15 @@ public class OAuthService {
         JsonNode userNode = readJson(userResp.getBody());
 
         boolean emailVerified = userNode.path("email_verified").asBoolean(false);
+        String sub = userNode.path("sub").asText();
+        // 安全：sub 为空说明上游返回异常体（错误响应/格式变更），若放行会让所有人共用
+        // account="" 身份记录，等同于账号接管面；与 GitHub 的 githubId 校验对齐
+        if (!StringUtils.hasText(sub)) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "Google 授权失败：无法获取用户标识");
+        }
         OAuthUserInfo info = new OAuthUserInfo();
         info.setProvider(AuthMethod.GOOGLE);
-        info.setAccount(userNode.path("sub").asText());
+        info.setAccount(sub);
         info.setEmail(emailVerified ? userNode.path("email").asText() : "");
         info.setNickname(userNode.path("name").asText());
         return info;
@@ -250,6 +256,11 @@ public class OAuthService {
                 .build().toUriString();
         ResponseEntity<String> openidResp = restTemplate.getForEntity(openidUrl, String.class);
         String openid = parseQqResponse(openidResp.getBody()).path("openid").asText();
+        // 安全：openid 为空说明上游返回异常体（错误响应/格式变更），若放行会让所有人共用
+        // account="" 身份记录，等同于账号接管面；与 GitHub 的 githubId 校验对齐
+        if (!StringUtils.hasText(openid)) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "QQ 授权失败：无法获取用户标识");
+        }
 
         String infoUrl = UriComponentsBuilder.fromHttpUrl("https://graph.qq.com/user/get_user_info")
                 .queryParam("access_token", accessToken)

@@ -12,6 +12,7 @@ public enum ResultCode {
     FORBIDDEN(403, "forbidden"),
     NOT_FOUND(404, "not found"),
     PAYLOAD_TOO_LARGE(413, "payload too large"),
+    TOO_MANY_REQUESTS(429, "too many requests"),
     SERVER_ERROR(500, "server error"),
     SERVICE_UNAVAILABLE(503, "service unavailable");
 

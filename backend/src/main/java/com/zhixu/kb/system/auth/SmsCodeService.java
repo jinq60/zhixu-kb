@@ -53,7 +53,7 @@ public class SmsCodeService {
         this.redisTemplate = redisTemplateProvider.getIfAvailable();
     }
 
-    public String send(String phone) {
+    public void send(String phone) {
         if (phone == null || !phone.matches("^1[3-9]\\d{9}$")) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "手机号格式不正确");
         }
@@ -68,27 +68,26 @@ public class SmsCodeService {
         }
         // 实际项目中替换为短信网关调用
         log.info("短信验证码已生成 phone={}", maskPhone(phone));
-        return code;
     }
 
     public void verify(String phone, String code) {
         if (phone == null || code == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "手机号或验证码不能为空");
         }
-        if (verifyAttempts.size() > 10000) {
-            verifyAttempts.clear();
-        }
-        AtomicInteger attempts = verifyAttempts.computeIfAbsent(phone, k -> new AtomicInteger(0));
-        if (attempts.get() >= MAX_VERIFY_ATTEMPTS) {
+        AtomicInteger attempts = verifyAttempts.get(phone);
+        if (attempts != null && attempts.get() >= MAX_VERIFY_ATTEMPTS) {
             remove(phone);
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
         }
         String stored = fetch(phone);
         if (stored == null) {
+            // 未发放过验证码时不创建失败计数条目：防止攻击者用随机手机号灌大计数表、
+            // 触发全量清理后重置目标手机号的计数（绕过单码 5 次上限）
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码已过期，请重新获取");
         }
         if (!constantTimeEquals(stored, code)) {
-            attempts.incrementAndGet();
+            // 仅在真实比对失败时才创建/递增计数条目
+            verifyAttempts.computeIfAbsent(phone, k -> new AtomicInteger(0)).incrementAndGet();
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误");
         }
         verifyAttempts.remove(phone);
@@ -96,15 +95,18 @@ public class SmsCodeService {
     }
 
     private void checkResend(String phone) {
+        // 注意：业务限流异常必须抛在 try/catch 之外——BusinessException 是 RuntimeException，
+        // 若在 try 内抛出会被下面的 catch(Exception) 吞掉，导致 Redis 在线时限流完全失效（可被短信轰炸）
+        Boolean exists = null;
         if (redisTemplate != null) {
             try {
-                Boolean exists = redisTemplate.hasKey(REDIS_SEND_PREFIX + phone);
-                if (Boolean.TRUE.equals(exists)) {
-                    throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
-                }
+                exists = redisTemplate.hasKey(REDIS_SEND_PREFIX + phone);
             } catch (Exception e) {
                 log.warn("Redis 检查发送频率失败，降级内存判断");
             }
+        }
+        if (Boolean.TRUE.equals(exists)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
         }
         Long last = memorySendTime.get(phone);
         if (last != null && System.currentTimeMillis() - last < RESEND_INTERVAL.toMillis()) {

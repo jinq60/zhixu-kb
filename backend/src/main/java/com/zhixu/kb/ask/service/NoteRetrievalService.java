@@ -67,12 +67,23 @@ public class NoteRetrievalService {
             List<com.zhixu.kb.note.service.NoteEmbeddingService.VectorHit> vectorHits =
                     noteEmbeddingService.searchSimilar(userId, trimmedQuery, 15);
             if (vectorHits != null && !vectorHits.isEmpty()) {
+                // 批量取回笔记（避免逐条 selectById 的 N+1 查询），保持向量相似度降序
+                List<Long> hitIds = vectorHits.stream()
+                        .map(com.zhixu.kb.note.service.NoteEmbeddingService.VectorHit::getNoteId)
+                        .filter(java.util.Objects::nonNull)
+                        .distinct()
+                        .collect(Collectors.toList());
+                java.util.Map<Long, Note> hitNotes = hitIds.isEmpty()
+                        ? Collections.emptyMap()
+                        : noteMapper.selectBatchIds(hitIds).stream()
+                                .filter(n -> n.getIsDeleted() == null || n.getIsDeleted() == 0)
+                                .collect(java.util.stream.Collectors.toMap(Note::getId, n -> n));
                 for (com.zhixu.kb.note.service.NoteEmbeddingService.VectorHit hit : vectorHits) {
                     if (hit.getNoteId() == null || seen.contains(hit.getNoteId())) {
                         continue;
                     }
-                    Note n = noteMapper.selectById(hit.getNoteId());
-                    if (n != null && (n.getIsDeleted() == null || n.getIsDeleted() == 0)) {
+                    Note n = hitNotes.get(hit.getNoteId());
+                    if (n != null) {
                         seen.add(n.getId());
                         notes.add(n);
                         vectorRankedIds.add(n.getId());

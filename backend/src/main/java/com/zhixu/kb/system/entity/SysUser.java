@@ -15,6 +15,8 @@ public class SysUser {
     private String username;
     private String password;
     private String email;
+    /** 邮箱所有权是否已验证（0/1）：未验证邮箱不得作为身份合并锚点 */
+    private Integer emailVerified;
     private String avatar;
     private Integer status;
     private LocalDateTime createTime;

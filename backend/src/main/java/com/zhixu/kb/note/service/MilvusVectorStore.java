@@ -27,7 +27,6 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -152,21 +151,72 @@ public class MilvusVectorStore {
                     .collectionName(name)
                     .collectionSchema(schema)
                     .build());
-            Map<String, Object> extraParams = new HashMap<>();
-            extraParams.put("nlist", 128);
+            // FLAT 暴力检索：个人知识库为小数据集（单用户通常 <1 万块向量），
+            // Milvus 官方建议此规模用 FLAT 保证 100% 召回；IVF_FLAT(nlist=128) 在
+            // 小集合 + user_id 过滤场景下受 nprobe 影响可能漏召回甚至空结果。
+            // 数据量增长到百万级时再评估切换 IVF/HNSW。
             client().createIndex(CreateIndexReq.builder()
                     .collectionName(name)
                     .indexParams(Collections.singletonList(IndexParam.builder()
                             .indexName("vector_idx")
                             .fieldName("vector")
-                            .indexType(IndexParam.IndexType.IVF_FLAT)
+                            .indexType(IndexParam.IndexType.FLAT)
                             .metricType(IndexParam.MetricType.COSINE)
-                            .extraParams(extraParams)
                             .build()))
                     .build());
-            log.info("Milvus collection created: {}", name);
+            log.info("Milvus collection created (FLAT index): {}", name);
+        } else {
+            ensureFlatIndex(name);
         }
         client().loadCollection(LoadCollectionReq.builder().collectionName(name).build());
+    }
+
+    /**
+     * 存量集合索引类型检查：历史版本创建的 IVF_FLAT 集合迁移为 FLAT（重建索引，向量保留），
+     * 保证召回率与本项目目标规模匹配。失败仅告警，不阻塞服务。
+     */
+    private void ensureFlatIndex(String name) {
+        try {
+            java.util.List<String> indexNames = client().listIndexes(
+                    io.milvus.v2.service.index.request.ListIndexesReq.builder().collectionName(name).build());
+            if (indexNames == null || indexNames.isEmpty()) {
+                return;
+            }
+            io.milvus.v2.service.index.response.DescribeIndexResp indexDesc = client().describeIndex(
+                    io.milvus.v2.service.index.request.DescribeIndexReq.builder()
+                            .collectionName(name)
+                            .indexName(indexNames.get(0))
+                            .build());
+            String currentType = null;
+            if (indexDesc != null) {
+                io.milvus.v2.service.index.response.DescribeIndexResp.IndexDesc desc =
+                        indexDesc.getIndexDescByFieldName("vector");
+                if (desc != null && desc.getIndexType() != null) {
+                    currentType = String.valueOf(desc.getIndexType());
+                }
+            }
+            if ("FLAT".equalsIgnoreCase(currentType)) {
+                return;
+            }
+            log.warn("Milvus collection {} uses legacy index ({}), rebuilding as FLAT for full recall",
+                    name, currentType);
+            client().dropIndex(io.milvus.v2.service.index.request.DropIndexReq.builder()
+                    .collectionName(name)
+                    .indexName(indexNames.get(0))
+                    .build());
+            client().createIndex(CreateIndexReq.builder()
+                    .collectionName(name)
+                    .indexParams(Collections.singletonList(IndexParam.builder()
+                            .indexName("vector_idx")
+                            .fieldName("vector")
+                            .indexType(IndexParam.IndexType.FLAT)
+                            .metricType(IndexParam.MetricType.COSINE)
+                            .build()))
+                    .build());
+            log.info("Milvus index rebuilt as FLAT: {}", name);
+        } catch (Exception ex) {
+            log.warn("Milvus ensure flat index failed (keep existing): {}", ex.getMessage());
+        }
     }
 
     /**
@@ -246,13 +296,24 @@ public class MilvusVectorStore {
      * 删除某笔记的全部向量块。
      */
     public void deleteByNote(Long noteId) {
+        deleteByNote(noteId, null);
+    }
+
+    /**
+     * 删除某笔记的向量块（保留前 keepChunks 块）。
+     * 用于"先插新块、再清旧块"的替换流程：只清理 chunk_index >= keepChunks 的残留块，
+     * 避免误删刚写入的新向量。keepChunks 为 null 时删除全部。
+     */
+    public void deleteByNote(Long noteId, Integer keepChunks) {
         if (!isEnabled() || noteId == null) {
             return;
         }
+        String filter = "note_id == " + noteId
+                + (keepChunks == null ? "" : " && chunk_index >= " + keepChunks);
         try {
             client().delete(DeleteReq.builder()
                     .collectionName(properties.getCollectionName())
-                    .filter("note_id == " + noteId)
+                    .filter(filter)
                     .build());
         } catch (Exception ex) {
             log.warn("Milvus delete failed (ignore): {}", ex.getMessage());
@@ -330,7 +391,8 @@ public class MilvusVectorStore {
                 .topK(Math.max(1, Math.min(topK, 100)))
                 .outputFields(java.util.Arrays.asList("note_id", "chunk_text", "chunk_index"))
                 .metricType(IndexParam.MetricType.COSINE)
-                .consistencyLevel(ConsistencyLevel.STRONG)
+                // BOUNDED 一致性足够：RAG 检索容忍秒级可见性延迟，STRONG 会显著增加检索延迟
+                .consistencyLevel(ConsistencyLevel.BOUNDED)
                 .build());
         if (resp == null || resp.getSearchResults() == null || resp.getSearchResults().isEmpty()) {
             return Collections.emptyList();

@@ -49,6 +49,10 @@ public class IdentityService {
 
     /**
      * OAuth 登录解析：优先按 provider+account，再按 email 关联，否则新建。
+     * 安全：按 email 关联仅信任"本地账号邮箱已验证"的账号——注册通道填写的
+     * 邮箱未经验证，若直接作为身份锚点，攻击者可抢先用受害者邮箱注册，
+     * 待受害者 OAuth 登录时被静默绑进攻击者账号。OAuth 提供方（GitHub/Google）
+     * 已确保返回的 email 是 provider 侧验证过的。
      */
     @Transactional
     public SysUser resolveOAuthUser(String provider, String account, String email, String nickname) {
@@ -59,8 +63,23 @@ public class IdentityService {
         if (StringUtils.hasText(email)) {
             user = findByEmail(email);
             if (user != null) {
-                bindAuth(user.getId(), provider, account);
-                return user;
+                if (isEmailVerified(user)) {
+                    bindAuth(user.getId(), provider, account);
+                    return user;
+                }
+                // 本地账号邮箱未验证：不自动合并（防止抢注锚点）；
+                // 该 OAuth 身份走新账号路径，用户名加后缀避免冲突
+                String base = StringUtils.hasText(nickname) ? nickname : provider + "_" + account;
+                String username = base;
+                while (userMapper.selectOne(new QueryWrapper<SysUser>().lambda()
+                        .eq(SysUser::getUsername, username)) != null) {
+                    username = base + "_" + randomSuffix();
+                }
+                SysUser created = registrationHelper.createUser(username, email,
+                        registrationHelper.randomPassword(), provider, account);
+                // 新建账号的邮箱来自 OAuth 提供方的已验证邮箱，直接标记可信
+                markEmailVerified(created);
+                return created;
             }
         }
         String username = StringUtils.hasText(nickname) ? nickname : provider + "_" + account;
@@ -68,21 +87,46 @@ public class IdentityService {
                 .eq(SysUser::getUsername, username)) != null) {
             username = username + "_" + randomSuffix();
         }
-        return registrationHelper.createUser(username, email, registrationHelper.randomPassword(), provider, account);
+        SysUser created = registrationHelper.createUser(username, email, registrationHelper.randomPassword(), provider, account);
+        // OAuth 提供方（GitHub/Google）仅返回已验证邮箱，标记为可信锚点
+        if (StringUtils.hasText(email)) {
+            markEmailVerified(created);
+        }
+        return created;
     }
 
     /**
-     * 邮箱验证码登录解析：按 email 查找或创建。
+     * 邮箱验证码登录解析：能收到验证码即证明了邮箱所有权。
+     * 命中既有账号时同时把该账号标记为"邮箱已验证"——此后该邮箱可作为可信身份锚点。
      */
     @Transactional
     public SysUser resolveEmailCodeUser(String email) {
         SysUser user = findByEmail(email);
         if (user != null) {
+            markEmailVerified(user);
             return user;
         }
         removeStaleEmailAuth(email);
         String username = generateUsernameFromEmail(email);
-        return registrationHelper.createUser(username, email, registrationHelper.randomPassword(), AuthMethod.EMAIL_CODE, email);
+        SysUser created = registrationHelper.createUser(username, email, registrationHelper.randomPassword(), AuthMethod.EMAIL_CODE, email);
+        // 验证码登录创建的账号：邮箱所有权已被证明，直接标记可信
+        markEmailVerified(created);
+        return created;
+    }
+
+    /** 判断账号邮箱是否已验证（历史数据 null 按 0 处理） */
+    public boolean isEmailVerified(SysUser user) {
+        return user != null && user.getEmailVerified() != null && user.getEmailVerified() == 1;
+    }
+
+    /** 标记邮箱已验证（幂等） */
+    @Transactional
+    public void markEmailVerified(SysUser user) {
+        if (user == null || isEmailVerified(user)) {
+            return;
+        }
+        user.setEmailVerified(1);
+        userMapper.updateById(user);
     }
 
     /**

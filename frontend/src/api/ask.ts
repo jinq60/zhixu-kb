@@ -43,6 +43,11 @@ export async function submitAskStream(
     signal
   })
   if (!response.ok || !response.body) {
+    // fetch 不经过 axios 拦截器：token 过期时手动触发登出（与 http.ts 401 行为一致：
+    // 仅在仍有 token 时登出，避免并行请求重复触发），引导用户重新登录
+    if (response.status === 401 && authStore.token) {
+      authStore.logout().catch(() => undefined)
+    }
     throw new Error(`流式请求失败: ${response.status}`)
   }
   const reader = response.body.getReader()

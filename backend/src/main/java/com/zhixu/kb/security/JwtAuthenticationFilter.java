@@ -75,6 +75,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     filterChain.doFilter(request, response);
                     return;
                 }
+                // 用户级凭证撤销（如修改密码）：签发时间早于撤销时间点的 token 一律拒绝
+                java.util.Date issuedAt = jwtUtils.extractIssuedAt(token);
+                Long userId = (userDetails instanceof com.zhixu.kb.system.model.LoginUser
+                        && ((com.zhixu.kb.system.model.LoginUser) userDetails).getUser() != null)
+                        ? ((com.zhixu.kb.system.model.LoginUser) userDetails).getUser().getId()
+                        : null;
+                if (issuedAt != null && userId != null) {
+                    Long revokedAt = revocationStore.getUserRevokedAt(userId);
+                    if (revokedAt != null && issuedAt.getTime() < revokedAt) {
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
+                }
                 if (jwtUtils.isTokenValid(token, userDetails)) {
                     UsernamePasswordAuthenticationToken authentication =
                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());

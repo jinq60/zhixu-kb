@@ -35,6 +35,7 @@ public class PasswordAuthProvider implements AuthProvider {
     private final UserRegistrationHelper registrationHelper;
     private final RegistrationLimiter registrationLimiter;
     private final ClientIpResolver clientIpResolver;
+    private final com.zhixu.kb.system.auth.LoginAttemptLimiter loginAttemptLimiter;
 
     @Override
     public String method() {
@@ -48,18 +49,25 @@ public class PasswordAuthProvider implements AuthProvider {
         if (username == null || password == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "用户名或密码不能为空");
         }
+        // 防爆破：超限时直接拒绝，避免继续执行昂贵的 BCrypt 比对（CPU 放大面）
+        String clientIp = resolveClientIp();
+        loginAttemptLimiter.check(clientIp, username);
         SysUser user = userMapper.selectOne(new QueryWrapper<SysUser>().lambda()
                 .eq(SysUser::getUsername, username));
         if (user != null) {
-            checkStatus(user);
-            if (!passwordEncoder.matches(password, user.getPassword())) {
+            boolean matched = passwordEncoder.matches(password, user.getPassword());
+            if (!matched) {
+                loginAttemptLimiter.recordFailure(clientIp, username);
                 throw new BusinessException(ResultCode.UNAUTHORIZED, "用户名或密码错误");
             }
+            // 账户状态校验放在密码验证通过之后：禁用/正常状态的差异不得在未验证密码前泄露
+            checkStatus(user);
+            loginAttemptLimiter.recordSuccess(clientIp, username);
             return new AuthResult(user, false);
         }
         // 自动注册
         validateRegistration(username, password);
-        registrationLimiter.checkAndIncrement(resolveClientIp());
+        registrationLimiter.checkAndIncrement(clientIp);
         SysUser newUser = registrationHelper.createUser(username, null, password,
                 AuthMethod.PASSWORD, username);
         return new AuthResult(newUser, true);

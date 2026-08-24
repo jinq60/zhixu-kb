@@ -119,7 +119,9 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        // cost 12：默认 10 在单机约几十毫秒，可被高频撞库放大成 CPU 消耗面；
+        // 提升至 12（约 4 倍耗时）配合登录失败限流，抬高爆破成本
+        return new BCryptPasswordEncoder(12);
     }
 
     @Bean

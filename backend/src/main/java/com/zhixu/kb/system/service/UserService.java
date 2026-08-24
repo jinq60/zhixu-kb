@@ -36,6 +36,7 @@ public class UserService {
     private final IdentityService identityService;
     private final EmailCodeService emailCodeService;
     private final AuditLogService auditLogService;
+    private final com.zhixu.kb.security.TokenRevocationStore tokenRevocationStore;
 
     public UserProfileResponse getProfile(Long userId) {
         SysUser user = userMapper.selectById(userId);
@@ -82,6 +83,9 @@ public class UserService {
         if (!hasPassword) {
             identityService.bindAuth(userId, AuthMethod.PASSWORD, user.getUsername());
         }
+        // 安全止血：凭证变更后，签发时间早于当前时刻的存量 JWT 全部失效
+        // （否则旧 token 最长 24h 内仍然可用，用户因疑似泄露改密后无法立即止损）
+        tokenRevocationStore.revokeUser(userId);
         auditLogService.record(userId, "PASSWORD_CHANGE", "用户修改密码", "/api/user/password");
     }
 
@@ -114,6 +118,8 @@ public class UserService {
         }
         SysUser user = userMapper.selectById(userId);
         user.setEmail(email);
+        // 验证码校验通过即证明邮箱所有权，标记为可信（可作 OAuth/验证码登录的身份锚点）
+        user.setEmailVerified(1);
         userMapper.updateById(user);
         identityService.removeStaleEmailAuth(email);
         identityService.bindAuth(userId, AuthMethod.EMAIL_CODE, email);

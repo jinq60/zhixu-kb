@@ -38,7 +38,8 @@ public class Neo4jAccessor {
         try (Session session = driver.session()) {
             return session.writeTransaction(tx -> mapper.map(tx, cypher, params));
         } catch (Exception ex) {
-            log.warn("Neo4j write failed: {}", ex.getMessage());
+            // 保留堆栈：Neo4j 宕机/超时与"真的没有图谱数据"必须可区分，否则排障困难
+            log.warn("Neo4j write failed: {}", ex.getMessage(), ex);
             return null;
         }
     }
@@ -51,7 +52,7 @@ public class Neo4jAccessor {
         try (Session session = driver.session()) {
             return session.readTransaction(tx -> mapper.map(tx, cypher, params));
         } catch (Exception ex) {
-            log.warn("Neo4j read failed: {}", ex.getMessage());
+            log.warn("Neo4j read failed: {}", ex.getMessage(), ex);
             return null;
         }
     }

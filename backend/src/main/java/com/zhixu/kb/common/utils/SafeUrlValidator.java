@@ -23,6 +23,16 @@ public final class SafeUrlValidator {
     /** DNS 解析器（测试可注入替身，避免依赖外部网络） */
     private static volatile HostResolver hostResolver = SafeUrlValidator::resolveDefault;
 
+    /**
+     * 代理 fake-ip 兼容开关（默认关闭）。
+     * Clash/Mihomo 等代理的 fake-ip 模式会把外网域名解析到 198.18.0.0/15 或
+     * IPv6 ULA(fc00::/7) 段，流量由 TUN 转发。仅在本机开发环境显式开启；
+     * 生产环境保持 false——这两段属于真实保留地址段，放行等于允许 SSRF 打内网。
+     * 通过 -Dssrf.allow-fake-ip-ranges=true 开启。
+     */
+    private static final boolean ALLOW_FAKE_IP_RANGES =
+            Boolean.parseBoolean(System.getProperty("ssrf.allow-fake-ip-ranges", "false"));
+
     private SafeUrlValidator() {
     }
 
@@ -130,9 +140,11 @@ public final class SafeUrlValidator {
             if (first >= 224) {
                 return true;
             }
-            // 198.18.0.0/15（benchmark 段）放行：Clash/Mihomo 等代理的 fake-ip 模式
-            // 将外网域名解析到该段，实际流量由代理 TUN 转发，并非真实内网服务；
-            // 真实内网段（10/172.16-31/192.168/169.254/100.64/127/224+）仍全部拒绝。
+            // 198.18.0.0/15（benchmark 段）：默认拒绝；仅开发环境开启
+            // ssrf.allow-fake-ip-ranges 后放行（Clash/Mihomo fake-ip 模式）
+            if (first == 198 && second >= 18 && second <= 19) {
+                return !ALLOW_FAKE_IP_RANGES;
+            }
             return false;
         }
         if (addr instanceof Inet6Address) {
@@ -143,8 +155,14 @@ public final class SafeUrlValidator {
             if ((b[0] & 0xFF) == 0xFE && (b[1] & 0xC0) == 0x80) {
                 return true;
             }
-            // fc00::/7（ULA）放行：fake-ip 代理会把外网域名解析到 ULA 段（如 fdfe:dcba::/48），
-            // 流量由代理转发；真实链路本地（fe80::/10）与 ::1 仍拒绝。
+            if ((b[0] & 0xFF) == 0xFC || (b[0] & 0xFF) == 0xFD) {
+                // fc00::/7（ULA 真实私网段）默认拒绝；同上，仅开发环境 fake-ip 兼容时放行
+                if (!ALLOW_FAKE_IP_RANGES) {
+                    return true;
+                }
+                return false;
+            }
+            // 链路本地 fe80::/10 已在上方拦截，此处兜底 ::1
             return Arrays.equals(b, new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1});
         }
         return true;

@@ -169,7 +169,6 @@ public class OpenAiAdapter implements AIEngineAdapter {
             return fallback();
         }
         int attempts = Math.max(1, api.getMaxRetries() == null ? 1 : api.getMaxRetries());
-        String lastText = fallback();
         try {
             for (int attempt = 1; attempt <= attempts; attempt++) {
                 try {
@@ -192,7 +191,9 @@ public class OpenAiAdapter implements AIEngineAdapter {
             }
             log.warn("traceId={} aiEngine=openapi action=generate all_attempts_failed costMs={}",
                     MDC.get("traceId"), System.currentTimeMillis() - start);
-            return lastText;
+            // 降级文案必须在全部重试结束后生成：此时 lastErrorStatus 才携带本次失败的
+            // HTTP 状态（402/401/429 等），提前计算会永远返回通用文案、针对性引导失效
+            return fallback();
         } finally {
             // 任何退出路径（含 resolveApi 异常）都必须清理线程本地状态，防止跨请求串用
             userConfigTried.remove();
