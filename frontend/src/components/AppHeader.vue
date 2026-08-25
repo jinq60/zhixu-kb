@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { getActiveTasks, getRecentTasks, type ActiveTask, type RecentTask } from '../api/file'
 import { listAIAnalysisTasks, type AiAnalysisTaskItem } from '../api/note'
+import { listGraphTasks, type GraphTaskItem } from '../api/graph'
 import TaskCenterView from '../views/TaskCenterView.vue'
 import {
   ArrowRight,
@@ -32,6 +33,8 @@ const activeTasks = ref<ActiveTask[]>([])
 const recentTasks = ref<RecentTask[]>([])
 const aiActiveTasks = ref<AiAnalysisTaskItem[]>([])
 const aiRecentTasks = ref<AiAnalysisTaskItem[]>([])
+const graphActiveTasks = ref<GraphTaskItem[]>([])
+const graphRecentTasks = ref<GraphTaskItem[]>([])
 const taskDialogVisible = ref(false)
 let taskTimer: ReturnType<typeof setInterval> | null = null
 let taskLoading = false
@@ -54,6 +57,13 @@ const loadActiveTasks = async () => {
   } catch {
     // AI 整理任务列表轮询失败不影响文档任务
   }
+  try {
+    const graph = await listGraphTasks()
+    graphActiveTasks.value = graph.active || []
+    graphRecentTasks.value = graph.recent || []
+  } catch {
+    // 图谱任务列表轮询失败不影响其他任务
+  }
   taskLoading = false
 }
 
@@ -61,11 +71,14 @@ const loadActiveTasks = async () => {
 // loadActiveTasks()，其中引用了 isHome，声明顺序颠倒会触发 TDZ 错误（Cannot access before initialization）
 const isHome = computed(() => route.path === '/' || route.path === '/home')
 const isWorkspace = computed(() => !isHome.value)
-/** 进行中的任务总数（文档 + AI 整理） */
-const activeCount = computed(() => activeTasks.value.length + aiActiveTasks.value.length)
+/** 进行中的任务总数（文档 + AI 整理 + 知识图谱） */
+const activeCount = computed(() => activeTasks.value.length + aiActiveTasks.value.length + graphActiveTasks.value.length)
 /** 是否存在最近失败的任务（红点提醒） */
 const hasFailedTasks = computed(
-  () => recentTasks.value.some((t) => t.status === 'FAILED') || aiRecentTasks.value.some((t) => !!t.error)
+  () =>
+    recentTasks.value.some((t) => t.status === 'FAILED') ||
+    aiRecentTasks.value.some((t) => !!t.error) ||
+    graphRecentTasks.value.some((t) => !!t.error)
 )
 
 // 登录后启动全局任务轮询（3s），退出登录停止
@@ -81,6 +94,8 @@ watch(
       clearInterval(taskTimer)
       taskTimer = null
       activeTasks.value = []
+      aiActiveTasks.value = []
+      graphActiveTasks.value = []
       taskDialogVisible.value = false
     }
   },

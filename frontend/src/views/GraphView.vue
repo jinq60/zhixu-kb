@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listNotes, type Note } from '../api/note'
 import { listCategories, type Category } from '../api/category'
@@ -12,6 +12,7 @@ import {
   getGlobalGraph,
   buildGlobalGraph,
   searchGraph,
+  getGraphTaskStatus,
   type GraphData,
   type GraphNode
 } from '../api/graph'
@@ -31,6 +32,37 @@ const building = ref(false)
 const searchKeyword = ref('')
 const searchResults = ref<GraphNode[]>([])
 const searching = ref(false)
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+const pollGraphTask = (taskId: string, onComplete: () => void) => {
+  stopPolling()
+  pollTimer = setInterval(async () => {
+    try {
+      const status = await getGraphTaskStatus(taskId)
+      if (!status.running) {
+        stopPolling()
+        building.value = false
+        if (status.error) {
+          ElMessage.error(status.error)
+        } else {
+          ElMessage.success('图谱构建完成')
+          onComplete()
+        }
+      }
+    } catch (e: any) {
+      stopPolling()
+      building.value = false
+      ElMessage.error(e?.response?.data?.message || '查询构建状态失败')
+    }
+  }, 3000)
+}
 
 const loadNotes = async () => {
   try {
@@ -72,12 +104,11 @@ const handleBuildNote = async () => {
   building.value = true
   try {
     const result = await buildNoteGraph(selectedNoteId.value)
-    ElMessage[result.entityCount > 0 ? 'success' : 'warning'](result.message)
-    await loadNoteGraph(selectedNoteId.value)
+    ElMessage.success('图谱构建已提交，可在任务中心查看进度')
+    pollGraphTask(result.taskId, () => loadNoteGraph(selectedNoteId.value!))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '图谱构建失败')
-  } finally {
     building.value = false
+    ElMessage.error(e?.response?.data?.message || '图谱构建提交失败')
   }
 }
 
@@ -118,12 +149,11 @@ const handleBuildCategory = async () => {
   building.value = true
   try {
     const result = await buildCategoryGraph(selectedCategoryId.value)
-    ElMessage[result.entityCount > 0 ? 'success' : 'warning'](result.message)
-    await loadCategoryGraph(selectedCategoryId.value)
+    ElMessage.success('分类图谱构建已提交，可在任务中心查看进度')
+    pollGraphTask(result.taskId, () => loadCategoryGraph(selectedCategoryId.value!))
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '分类图谱构建失败')
-  } finally {
     building.value = false
+    ElMessage.error(e?.response?.data?.message || '分类图谱构建提交失败')
   }
 }
 
@@ -142,12 +172,11 @@ const handleBuildGlobal = async () => {
   building.value = true
   try {
     const result = await buildGlobalGraph()
-    ElMessage[result.entityCount > 0 ? 'success' : 'warning'](result.message)
-    await loadGlobalGraph()
+    ElMessage.success('全局图谱构建已提交，可在任务中心查看进度')
+    pollGraphTask(result.taskId, () => loadGlobalGraph())
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '全局图谱构建失败')
-  } finally {
     building.value = false
+    ElMessage.error(e?.response?.data?.message || '全局图谱构建提交失败')
   }
 }
 
@@ -175,6 +204,10 @@ watch(mode, () => {
 
 onMounted(async () => {
   await Promise.all([loadNotes(), loadCategories()])
+})
+
+onBeforeUnmount(() => {
+  stopPolling()
 })
 </script>
 

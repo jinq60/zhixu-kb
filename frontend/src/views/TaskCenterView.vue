@@ -13,6 +13,20 @@ import {
   type RecentTask
 } from '../api/file'
 import { getAiConfig, type AiUserConfig } from '../api/ai'
+import {
+  listAIAnalysisTasks,
+  deleteAIAnalysisTask,
+  submitAIAnalysis,
+  type AiAnalysisTaskItem
+} from '../api/note'
+import {
+  listGraphTasks,
+  deleteGraphTask,
+  buildNoteGraph,
+  buildCategoryGraph,
+  buildGlobalGraph,
+  type GraphTaskItem
+} from '../api/graph'
 
 const props = defineProps<{
   embedded?: boolean
@@ -22,7 +36,7 @@ const router = useRouter()
 
 interface UnifiedTask {
   key: string
-  type: 'doc' | 'ai'
+  type: 'doc' | 'ai' | 'graph'
   subType: string
   taskId?: string
   noteId?: string
@@ -43,8 +57,16 @@ const initialLoading = ref(true)
 const polling = ref(false)
 const docActive = ref<ActiveTask[]>([])
 const docRecent = ref<RecentTask[]>([])
+const aiActive = ref<AiAnalysisTaskItem[]>([])
+const aiRecent = ref<AiAnalysisTaskItem[]>([])
+const graphActive = ref<GraphTaskItem[]>([])
+const graphRecent = ref<GraphTaskItem[]>([])
 const retryingId = ref<string | null>(null)
 const deletingId = ref<string | null>(null)
+const aiRetryingNoteId = ref<string | null>(null)
+const aiDeletingNoteId = ref<string | null>(null)
+const graphRetryingTaskId = ref<string | null>(null)
+const graphDeletingTaskId = ref<string | null>(null)
 const clearing = ref(false)
 const activeTab = ref<'all' | 'running' | 'completed' | 'failed'>('all')
 const currentPage = ref(1)
@@ -66,13 +88,14 @@ const STAGE_LABELS: Record<string, string> = {
   PENDING: '等待处理',
   PARSING: '解析文本',
   CLEANING: 'AI 清洗中',
+  AI_ANALYZING: 'AI 整理中',
   EMBEDDING: '向量化中',
   COMPLETED: '已完成',
   FAILED: '失败',
   SKIPPED: '已跳过'
 }
 
-const STAGE_ORDER = ['PENDING', 'PARSING', 'CLEANING', 'EMBEDDING', 'COMPLETED']
+const STAGE_ORDER = ['PENDING', 'PARSING', 'CLEANING', 'AI_ANALYZING', 'EMBEDDING', 'COMPLETED']
 
 const isRunningStatus = (status: string) => status !== 'COMPLETED' && status !== 'FAILED' && status !== 'SKIPPED'
 
@@ -165,6 +188,49 @@ const allTasks = computed<UnifiedTask[]>(() => {
       embedChunks: task.embedChunks
     })
   })
+  const aiToUnified = (task: AiAnalysisTaskItem, active: boolean): UnifiedTask => {
+    const status = task.error ? 'FAILED' : active ? 'RUNNING' : 'COMPLETED'
+    return {
+      key: `a-${task.noteId}`,
+      type: 'ai',
+      subType: 'AI 整理',
+      noteId: task.noteId,
+      name: task.noteTitle || `笔记 #${task.noteId}`,
+      status,
+      statusLabel: task.error ? '失败' : active ? task.stage || 'AI 整理中' : '已完成',
+      progress: active ? 0 : task.error ? 0 : 100,
+      elapsedSeconds: task.elapsedSeconds,
+      stage: task.stage,
+      error: task.error || undefined
+    }
+  }
+  aiActive.value.forEach((task) => addUnique(aiToUnified(task, true)))
+  aiRecent.value.forEach((task) => addUnique(aiToUnified(task, false)))
+
+  const graphToUnified = (task: GraphTaskItem, active: boolean): UnifiedTask => {
+    const status = task.error ? 'FAILED' : active ? 'RUNNING' : 'COMPLETED'
+    const subTypeMap: Record<string, string> = {
+      NOTE: '笔记图谱',
+      CATEGORY: '分类图谱',
+      GLOBAL: '全局图谱'
+    }
+    return {
+      key: `g-${task.taskId}`,
+      type: 'graph',
+      subType: subTypeMap[task.taskType] || '知识图谱',
+      taskId: task.taskId,
+      noteId: task.taskType === 'NOTE' ? task.targetId : undefined,
+      name: task.targetName || `任务 #${task.taskId}`,
+      status,
+      statusLabel: task.error ? '失败' : active ? task.stage || '构建中' : '已完成',
+      progress: active ? 0 : task.error ? 0 : 100,
+      elapsedSeconds: task.elapsedSeconds,
+      stage: task.stage,
+      error: task.error || undefined
+    }
+  }
+  graphActive.value.forEach((task) => addUnique(graphToUnified(task, true)))
+  graphRecent.value.forEach((task) => addUnique(graphToUnified(task, false)))
   return list
 })
 
@@ -195,15 +261,28 @@ const loadTasks = async (silent = false) => {
     loading.value = true
   }
   try {
-    const [active, recent] = await Promise.allSettled([getActiveTasks(), getRecentTasks()])
+    const [active, recent, ai, graph] = await Promise.allSettled([
+      getActiveTasks(),
+      getRecentTasks(),
+      listAIAnalysisTasks(),
+      listGraphTasks()
+    ])
     if (active.status === 'fulfilled') {
       docActive.value = active.value
     }
     if (recent.status === 'fulfilled') {
       docRecent.value = recent.value
     }
+    if (ai.status === 'fulfilled') {
+      aiActive.value = ai.value.active || []
+      aiRecent.value = ai.value.recent || []
+    }
+    if (graph.status === 'fulfilled') {
+      graphActive.value = graph.value.active || []
+      graphRecent.value = graph.value.recent || []
+    }
   } catch {
-    // 文档任务轮询失败保留上次数据
+    // 任务轮询失败保留上次数据
   }
   syncLocalElapsed()
   if (silent) {
@@ -219,39 +298,116 @@ const onTabChange = () => {
 }
 
 const onRetry = async (row: UnifiedTask) => {
-  if (row.type !== 'doc' || !row.taskId) return
-  retryingId.value = row.taskId
-  try {
-    await retryTask(row.taskId)
-    ElMessage.success('任务已重新提交')
-    await loadTasks(true)
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '重试失败')
-  } finally {
-    retryingId.value = null
+  if (row.type === 'doc') {
+    if (!row.taskId) return
+    retryingId.value = row.taskId
+    try {
+      await retryTask(row.taskId)
+      ElMessage.success('任务已重新提交')
+      await loadTasks(true)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.message || '重试失败')
+    } finally {
+      retryingId.value = null
+    }
+  } else if (row.type === 'ai') {
+    if (!row.noteId) return
+    aiRetryingNoteId.value = row.noteId
+    try {
+      await submitAIAnalysis(row.noteId)
+      ElMessage.success('AI 整理已重新提交')
+      await loadTasks(true)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.message || '重试失败')
+    } finally {
+      aiRetryingNoteId.value = null
+    }
+  } else if (row.type === 'graph') {
+    if (!row.taskId) return
+    graphRetryingTaskId.value = row.taskId
+    try {
+      const taskType = row.taskId.split(':')[0]
+      if (taskType === 'NOTE' && row.noteId) {
+        await buildNoteGraph(row.noteId)
+      } else if (taskType === 'CATEGORY' && row.taskId.split(':')[1]) {
+        await buildCategoryGraph(Number(row.taskId.split(':')[1]))
+      } else if (taskType === 'GLOBAL') {
+        await buildGlobalGraph()
+      }
+      ElMessage.success('图谱构建已重新提交')
+      await loadTasks(true)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.message || '重试失败')
+    } finally {
+      graphRetryingTaskId.value = null
+    }
   }
 }
 
 const onDelete = async (row: UnifiedTask) => {
-  if (row.type !== 'doc' || !row.taskId) return
-  try {
-    await ElMessageBox.confirm(`确定删除任务「${row.name}」的记录吗？（不影响已写回的笔记正文）`, '删除任务', {
-      type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消'
-    })
-  } catch {
-    return
-  }
-  deletingId.value = row.taskId
-  try {
-    await deleteTaskRecord(row.taskId)
-    ElMessage.success('任务记录已删除')
-    await loadTasks(true)
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '删除失败')
-  } finally {
-    deletingId.value = null
+  if (row.type === 'doc') {
+    if (!row.taskId) return
+    try {
+      await ElMessageBox.confirm(`确定删除任务「${row.name}」的记录吗？（不影响已写回的笔记正文）`, '删除任务', {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消'
+      })
+    } catch {
+      return
+    }
+    deletingId.value = row.taskId
+    try {
+      await deleteTaskRecord(row.taskId)
+      ElMessage.success('任务记录已删除')
+      await loadTasks(true)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.message || '删除失败')
+    } finally {
+      deletingId.value = null
+    }
+  } else if (row.type === 'ai') {
+    if (!row.noteId) return
+    try {
+      await ElMessageBox.confirm(`确定删除任务「${row.name}」的记录吗？`, '删除任务', {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消'
+      })
+    } catch {
+      return
+    }
+    aiDeletingNoteId.value = row.noteId
+    try {
+      await deleteAIAnalysisTask(row.noteId)
+      ElMessage.success('任务记录已删除')
+      await loadTasks(true)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.message || '删除失败')
+    } finally {
+      aiDeletingNoteId.value = null
+    }
+  } else if (row.type === 'graph') {
+    if (!row.taskId) return
+    try {
+      await ElMessageBox.confirm(`确定删除任务「${row.name}」的记录吗？`, '删除任务', {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消'
+      })
+    } catch {
+      return
+    }
+    graphDeletingTaskId.value = row.taskId
+    try {
+      await deleteGraphTask(row.taskId)
+      ElMessage.success('任务记录已删除')
+      await loadTasks(true)
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.message || '删除失败')
+    } finally {
+      graphDeletingTaskId.value = null
+    }
   }
 }
 
@@ -332,7 +488,7 @@ onBeforeUnmount(() => {
     <div v-if="!embedded" class="page-header">
       <div>
         <h2>任务中心</h2>
-        <p>文档解析 / AI 清洗 / 向量化入库的细粒度进度监控（每 3 秒自动刷新）</p>
+        <p>文档解析 / AI 清洗 / 向量化入库 / AI 整理的细粒度进度监控（每 6 秒自动刷新）</p>
       </div>
     </div>
 
@@ -366,13 +522,11 @@ onBeforeUnmount(() => {
 
     <el-empty
       v-if="!initialLoading && !hasAny"
-      description="暂无任务记录。上传文档后，系统会自动完成清洗、摘要/关键词生成并向量化入库"
+      description="暂无任务记录。上传文档、提交 AI 整理或构建知识图谱后，任务进度会在这里显示"
       :image-size="embedded ? 60 : 90"
     />
 
     <template v-else>
-      <div class="table-summary">共 {{ totalCount }} 条</div>
-
       <div class="table-wrapper" v-loading="initialLoading" element-loading-text="加载任务中…">
         <el-table :data="pagedTasks" row-key="key" size="small" stripe>
           <el-table-column label="任务名称" min-width="180" show-overflow-tooltip>
@@ -395,7 +549,7 @@ onBeforeUnmount(() => {
 
           <el-table-column label="类型" width="110">
             <template #default="{ row }">
-              <el-tag size="small" :type="row.type === 'ai' ? 'warning' : 'primary'" effect="plain">
+              <el-tag size="small" :type="row.type === 'ai' ? 'warning' : row.type === 'graph' ? 'success' : 'primary'" effect="plain">
                 {{ row.subType }}
               </el-tag>
             </template>
@@ -428,7 +582,7 @@ onBeforeUnmount(() => {
                 size="small"
                 type="primary"
                 text
-                :loading="row.type === 'doc' && retryingId === row.taskId"
+                :loading="(row.type === 'doc' && retryingId === row.taskId) || (row.type === 'ai' && aiRetryingNoteId === row.noteId) || (row.type === 'graph' && graphRetryingTaskId === row.taskId)"
                 @click="onRetry(row)"
               >
                 重试
@@ -437,7 +591,7 @@ onBeforeUnmount(() => {
                 size="small"
                 text
                 type="danger"
-                :loading="row.type === 'doc' && deletingId === row.taskId"
+                :loading="(row.type === 'doc' && deletingId === row.taskId) || (row.type === 'ai' && aiDeletingNoteId === row.noteId) || (row.type === 'graph' && graphDeletingTaskId === row.taskId)"
                 @click="onDelete(row)"
               >
                 删除
@@ -523,12 +677,6 @@ onBeforeUnmount(() => {
 
 .task-tabs :deep(.el-radio-button__inner) {
   padding: 6px 14px;
-}
-
-.table-summary {
-  font-size: 13px;
-  color: #606266;
-  margin-bottom: 8px;
 }
 
 .table-wrapper {

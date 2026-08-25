@@ -49,7 +49,8 @@ public class AiAnalysisExecutor {
         if (task != null && task.getFileId() != null && task.getStatus() != null
                 && !"COMPLETED".equals(task.getStatus())
                 && !"FAILED".equals(task.getStatus())
-                && !"SKIPPED".equals(task.getStatus())) {
+                && !"SKIPPED".equals(task.getStatus())
+                && !"AI_ANALYZING".equals(task.getCurrentStage())) {
             String stageText = "PARSING".equals(task.getCurrentStage()) ? "解析" : "清洗";
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "文档正在" + stageText + "处理中（进度 "
@@ -78,14 +79,11 @@ public class AiAnalysisExecutor {
         // 只写元数据：分类/摘要/关键词（正文原样保留）
         applyAIAnalysis(note, analysis, userId);
         noteMapper.updateById(note);
-        // AI 整理后触发向量化任务（切块+Embedding+Milvus，顶部任务面板可见进度）
-        try {
-            documentProcessTaskService.createVectorizeTask(userId, noteId, note.getTitle());
-        } catch (Exception e) {
-            log.warn("submit vectorize task failed: noteId={}", noteId, e.getMessage());
-        }
 
-        // 第二轮 AI 整理：只写元数据（分类/摘要/关键词）并触发向量化，不再生成目录；
+        // 向量化任务由文档处理管线统一触发，避免重复创建；
+        // 手动触发的 AI 整理不再额外创建向量化任务（仅元数据变更，无需重跑向量）。
+
+        // 第二轮 AI 整理：只写元数据（分类/摘要/关键词），不再生成目录；
         // 目录由第一轮文档清洗从正文标题层级提取，确保与正文严格对应。
         noteHistoryService.recordNoteSnapshot(
                 note.getId(),

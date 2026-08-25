@@ -18,7 +18,7 @@ import {
 } from '../api/note'
 import { listCategories, type Category } from '../api/category'
 import { deleteFile, fetchFileBlob, type UploadResponse } from '../api/file'
-import { buildNoteGraph, deleteNoteGraph, getNoteGraph, type GraphData } from '../api/graph'
+import { buildNoteGraph, deleteNoteGraph, getNoteGraph, getGraphTaskStatus, type GraphData } from '../api/graph'
 import ImageUpload from '../components/ImageUpload.vue'
 import KnowledgeGraph from '../components/KnowledgeGraph.vue'
 import MermaidPreview from '../components/MermaidPreview.vue'
@@ -70,6 +70,37 @@ const activeTab = ref('mindmap')
 const graphData = ref<GraphData | null>(null)
 const graphLoading = ref(false)
 const graphBuilding = ref(false)
+let graphPollTimer: ReturnType<typeof setInterval> | null = null
+
+const stopGraphPolling = () => {
+  if (graphPollTimer) {
+    clearInterval(graphPollTimer)
+    graphPollTimer = null
+  }
+}
+
+const pollGraphTask = (taskId: string) => {
+  stopGraphPolling()
+  graphPollTimer = setInterval(async () => {
+    try {
+      const status = await getGraphTaskStatus(taskId)
+      if (!status.running) {
+        stopGraphPolling()
+        graphBuilding.value = false
+        if (status.error) {
+          ElMessage.error(status.error)
+        } else {
+          ElMessage.success('图谱构建完成')
+          await loadGraph()
+        }
+      }
+    } catch (e: any) {
+      stopGraphPolling()
+      graphBuilding.value = false
+      ElMessage.error(e?.response?.data?.message || '查询构建状态失败')
+    }
+  }, 3000)
+}
 const structure = ref<NoteStructureResponse>({
   outline: [],
   sections: [],
@@ -702,12 +733,11 @@ const onBuildGraph = async () => {
   try {
     await saveCurrentNoteSilently()
     const result = await buildNoteGraph(id.value)
-    ElMessage[result.entityCount > 0 ? 'success' : 'warning'](result.message)
-    await loadGraph()
+    ElMessage.success('图谱构建已提交，可在任务中心查看进度')
+    pollGraphTask(result.taskId)
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '图谱构建失败')
-  } finally {
     graphBuilding.value = false
+    ElMessage.error(e?.response?.data?.message || '图谱构建提交失败')
   }
 }
 
@@ -921,6 +951,7 @@ const onDeleteFile = async (file: NoteFile) => {
 }
 
 onBeforeUnmount(() => {
+  stopGraphPolling()
   if (previewUrl.value) {
     URL.revokeObjectURL(previewUrl.value)
     previewUrl.value = ''

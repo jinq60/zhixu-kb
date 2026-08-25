@@ -70,8 +70,10 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     private final DocumentNormalizeService documentNormalizeService;
     private final NoteStructureService noteStructureService;
     private final TransactionTemplate transactionTemplate;
-    private final AiAnalysisTaskManager aiAnalysisTaskManager;
-    private final ObjectProvider<AiAnalysisTaskRunner> aiAnalysisTaskRunnerProvider;
+    private final ObjectProvider<AiAnalysisExecutor> aiAnalysisExecutorProvider;
+
+    /** 向量化任务创建按 noteId 细粒度锁，防止清洗完成与 AI 整理并发创建重复任务 */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Object> vectorizeTaskLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 清洗并发：提升到 8，配合更小的 chunk 提升大文档吞吐 */
     private final ExecutorService cleanExecutor = Executors.newFixedThreadPool(8);
@@ -151,29 +153,36 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
      * 同一笔记若已存在未终态向量化任务则复用，避免重复向量化/重复任务记录。
      */
     public DocumentProcessTaskEntity createVectorizeTask(Long userId, Long noteId, String fileName) {
-        DocumentProcessTaskEntity existing = taskMapper.selectOne(new LambdaQueryWrapper<DocumentProcessTaskEntity>()
-                .eq(DocumentProcessTaskEntity::getNoteId, noteId)
-                .isNull(DocumentProcessTaskEntity::getFileId)
-                .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
-                .orderByDesc(DocumentProcessTaskEntity::getId)
-                .last("LIMIT 1"));
-        if (existing != null) {
-            log.info("Reuse existing vectorize task: taskId={} noteId={}", existing.getId(), noteId);
-            return existing;
+        Object lock = vectorizeTaskLocks.computeIfAbsent(noteId, k -> new Object());
+        synchronized (lock) {
+            try {
+                DocumentProcessTaskEntity existing = taskMapper.selectOne(new LambdaQueryWrapper<DocumentProcessTaskEntity>()
+                        .eq(DocumentProcessTaskEntity::getNoteId, noteId)
+                        .isNull(DocumentProcessTaskEntity::getFileId)
+                        .notIn(DocumentProcessTaskEntity::getStatus, "COMPLETED", "FAILED", "SKIPPED")
+                        .orderByDesc(DocumentProcessTaskEntity::getId)
+                        .last("LIMIT 1"));
+                if (existing != null) {
+                    log.info("Reuse existing vectorize task: taskId={} noteId={}", existing.getId(), noteId);
+                    return existing;
+                }
+                DocumentProcessTaskEntity task = new DocumentProcessTaskEntity();
+                task.setUserId(userId);
+                task.setNoteId(noteId);
+                task.setFileName(fileName);
+                task.setStatus("EMBEDDING");
+                task.setCurrentStage("EMBEDDING");
+                // 与 embeddingProgress 起点一致：随块完成实时爬升
+                task.setProgress(45);
+                task.setRetryCount(0);
+                task.setMaxRetry(MAX_RETRY);
+                taskMapper.insert(task);
+                asyncAdvance(task.getId());
+                return task;
+            } finally {
+                vectorizeTaskLocks.remove(noteId, lock);
+            }
         }
-        DocumentProcessTaskEntity task = new DocumentProcessTaskEntity();
-        task.setUserId(userId);
-        task.setNoteId(noteId);
-        task.setFileName(fileName);
-        task.setStatus("EMBEDDING");
-        task.setCurrentStage("EMBEDDING");
-        // 与 embeddingProgress 起点一致：随块完成实时爬升
-        task.setProgress(45);
-        task.setRetryCount(0);
-        task.setMaxRetry(MAX_RETRY);
-        taskMapper.insert(task);
-        asyncAdvance(task.getId());
-        return task;
     }
 
     /**
@@ -234,7 +243,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     public void scheduledScan() {
         try {
             List<DocumentProcessTaskEntity> active = taskMapper.selectList(new LambdaQueryWrapper<DocumentProcessTaskEntity>()
-                    .in(DocumentProcessTaskEntity::getStatus, "PENDING", "PARSING", "CLEANING", "EMBEDDING"));
+                    .in(DocumentProcessTaskEntity::getStatus, "PENDING", "PARSING", "CLEANING", "AI_ANALYZING", "EMBEDDING"));
             for (DocumentProcessTaskEntity task : active) {
                 resetStuckChunks(task.getId());
                 advance(task);
@@ -266,6 +275,9 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                     break;
                 case "CLEANING":
                     advanceCleaning(task);
+                    break;
+                case "AI_ANALYZING":
+                    advanceAiAnalyzing(task);
                     break;
                 case "EMBEDDING":
                     advanceEmbedding(task);
@@ -473,7 +485,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     }
 
     /**
-     * 清洗完成：合并清洗结果写回笔记正文（仅当正文仍是解析原文时覆盖），任务完成。
+     * 清洗完成：合并清洗结果写回笔记正文（仅当正文仍是解析原文时覆盖），
+     * 然后进入 AI_ANALYZING 阶段，由同一条任务完成摘要/关键词/分类整理。
      * 先检查任务是否已被并发线程收尾（scheduledScan 与异步推进可能同时到达），防止重复写回/双完成。
      */
     private void finishCleaning(DocumentProcessTaskEntity task, List<CleanChunkTaskEntity> parts) {
@@ -494,52 +507,65 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         // 编辑器直接以可读格式展示（区分标题层级、无需用户再手动排版）
         String structuredHtml = documentNormalizeService.toStructuredHtml(source);
         writeBackToNote(task, StringUtils.hasText(structuredHtml) ? structuredHtml : source);
-        completeTask(task);
-        // 清洗完成后自动触发 AI 整理与向量化，用户无需手动点击“AI 整理”
-        autoTriggerPostCleaning(task);
+        // 清洗完成后继续在同一条任务内执行 AI 整理（摘要/关键词/分类），不再单独创建 AI 整理任务
+        com.zhixu.kb.note.entity.Note note = noteMapper.selectById(task.getNoteId());
+        boolean hasMetadata = note != null
+                && StringUtils.hasText(note.getSummary())
+                && StringUtils.hasText(note.getKeywords());
+        if (hasMetadata) {
+            completeTask(task);
+            autoCreateVectorizeTask(task);
+        } else {
+            updateStage(task, "AI_ANALYZING", 55);
+            advance(task);
+        }
     }
 
     /**
-     * 文档清洗完成后自动触发后续管线：向量化任务 + AI 整理（生成摘要/关键词/分类）。
-     * 两者互不阻塞、可并行执行；createVectorizeTask 会复用已有未终态向量化任务，避免重复。
+     * AI 整理阶段：在文档处理任务内同步执行 AI 整理，完成后进入终态并触发向量化。
      */
-    private void autoTriggerPostCleaning(DocumentProcessTaskEntity task) {
+    private void advanceAiAnalyzing(DocumentProcessTaskEntity task) {
+        DocumentProcessTaskEntity fresh = taskMapper.selectById(task.getId());
+        if (fresh == null || isTerminal(fresh.getStatus())) {
+            return;
+        }
+        try {
+            aiAnalysisExecutorProvider.getObject().execute(task.getUserId(), task.getNoteId());
+            updateProgress(task, 85);
+            completeTask(task);
+            autoCreateVectorizeTask(task);
+        } catch (Exception ex) {
+            log.error("AI analysis failed in document task: taskId={} noteId={}", task.getId(), task.getNoteId(), ex);
+            markFailed(task, friendlyAiError(ex));
+        }
+    }
+
+    private void autoCreateVectorizeTask(DocumentProcessTaskEntity task) {
         try {
             com.zhixu.kb.note.entity.Note note = noteMapper.selectById(task.getNoteId());
             if (note == null || (note.getIsDeleted() != null && note.getIsDeleted() == 1)) {
                 return;
             }
-            // 立即创建向量化任务，与 AI 整理并行执行
-            try {
-                createVectorizeTask(task.getUserId(), task.getNoteId(), note.getTitle());
-            } catch (Exception ex) {
-                log.warn("Auto create vectorize task failed: taskId={} noteId={} err={}",
-                        task.getId(), task.getNoteId(), ex.getMessage());
-            }
-            // 自动触发 AI 整理（仅当笔记尚无完整元数据时），生成摘要/关键词/分类
-            boolean hasMetadata = StringUtils.hasText(note.getSummary())
-                    && StringUtils.hasText(note.getKeywords());
-            if (!hasMetadata) {
-                autoSubmitAiAnalysis(task.getUserId(), task.getNoteId(), note.getTitle());
-            }
+            createVectorizeTask(task.getUserId(), task.getNoteId(), note.getTitle());
         } catch (Exception ex) {
-            log.warn("Auto trigger post-cleaning failed: taskId={} noteId={} err={}",
+            log.warn("Auto create vectorize task failed: taskId={} noteId={} err={}",
                     task.getId(), task.getNoteId(), ex.getMessage());
         }
     }
 
-    private void autoSubmitAiAnalysis(Long userId, Long noteId, String noteTitle) {
-        if (!aiAnalysisTaskManager.tryStart(userId, noteId, noteTitle)) {
-            log.info("AI analysis already running, skip auto submit: noteId={}", noteId);
-            return;
+    private String friendlyAiError(Exception ex) {
+        if (ex instanceof com.zhixu.kb.common.exception.BusinessException) {
+            return ex.getMessage();
         }
-        long generation = aiAnalysisTaskManager.generationOf(noteId);
-        try {
-            aiAnalysisTaskRunnerProvider.getObject().runAuto(userId, noteId, aiAnalysisTaskManager, generation);
-        } catch (Exception ex) {
-            aiAnalysisTaskManager.release(noteId, generation);
-            log.warn("Auto submit AI analysis failed: noteId={} err={}", noteId, ex.getMessage());
+        String msg = ex.getMessage() == null ? "" : ex.getMessage().toLowerCase();
+        if (msg.contains("timeout") || msg.contains("timed out")) {
+            return "AI 整理响应超时";
         }
+        if (msg.contains("暂时无法调用外部模型")) {
+            return "AI 引擎暂时不可用";
+        }
+        String raw = ex.getMessage() == null ? "AI 整理失败" : ex.getMessage();
+        return raw.length() > 200 ? raw.substring(0, 200) : raw;
     }
 
     /**
@@ -1059,7 +1085,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         v.put("taskId", String.valueOf(task.getId()));
         v.put("noteId", task.getNoteId() == null ? null : String.valueOf(task.getNoteId()));
         v.put("fileName", task.getFileName());
-        v.put("subType", task.getFileId() != null ? "文档清洗" : "知识向量化");
+        v.put("subType", task.getFileId() != null ? "笔记整理" : "知识向量化");
         v.put("status", task.getStatus());
         v.put("currentStage", task.getCurrentStage());
         v.put("progress", task.getProgress());
