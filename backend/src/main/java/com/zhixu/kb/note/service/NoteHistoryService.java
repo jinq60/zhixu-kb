@@ -44,6 +44,7 @@ public class NoteHistoryService {
     private final NoteStructureMapper noteStructureMapper;
     private final NoteMindmapMapper noteMindmapMapper;
     private final NoteStructureService noteStructureService;
+    private final NoteVectorizeTaskRunner noteVectorizeTaskRunner;
     private final ObjectMapper objectMapper;
 
     public void recordNoteSnapshot(Long noteId, String operationType, String operationDesc, String requestUrl, Object requestParams) {
@@ -166,6 +167,20 @@ public class NoteHistoryService {
                 REQUEST_URL_PREFIX + noteId + "/history/" + historyId + "/restore",
                 historyId
         );
+
+        // 恢复后正文/摘要已回滚到旧版本：提交后重新向量化，
+        // 否则 Milvus 中仍是恢复前内容，RAG 问答持续返回陈旧语义
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            noteVectorizeTaskRunner.run(noteId);
+                        }
+                    });
+        } else {
+            noteVectorizeTaskRunner.run(noteId);
+        }
     }
 
     /**

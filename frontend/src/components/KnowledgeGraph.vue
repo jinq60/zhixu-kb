@@ -65,7 +65,7 @@ const computeDegrees = (nodes: GraphNode[], edges: GraphEdge[]) => {
 /** 聚焦模式：大图仅保留核心节点，减少视觉混乱 */
 const filteredData = computed(() => {
   let nodes = props.data?.nodes || []
-  const edges = props.data?.edges || []
+  let edges = props.data?.edges || []
   const degrees = computeDegrees(nodes, edges)
 
   if (focusMode.value && nodes.length > 40) {
@@ -75,6 +75,8 @@ const filteredData = computed(() => {
     const keepCount = Math.max(24, Math.floor(nodes.length * 0.4))
     const kept = new Set(sorted.slice(0, keepCount).map((n) => n.id || n.name))
     nodes = nodes.filter((n) => kept.has(n.id || n.name))
+    // 同步过滤边：保留指向已删节点的边会让 ECharts 隐式创建幽灵节点
+    edges = edges.filter((e) => kept.has(e.source) && kept.has(e.target))
   }
 
   return { nodes, edges, degrees }
@@ -300,6 +302,22 @@ onBeforeUnmount(() => {
   chart = null
   fullscreenChart?.dispose()
   fullscreenChart = null
+  // 全屏状态下被卸载（如浏览器后退）时恢复页面滚动，避免整个应用锁滚动
+  document.body.style.overflow = ''
+})
+
+watch(showChart, async (val) => {
+  if (!val) {
+    // wrapper 由 v-if 销毁重建：旧实例若不销毁会继续渲染到已脱离 DOM 的容器上，
+    // 导致数据恢复后画布永久空白且实例泄漏
+    if (chart) {
+      chart.dispose()
+      chart = null
+    }
+    return
+  }
+  await nextTick()
+  render()
 })
 
 watch(() => props.data, () => {

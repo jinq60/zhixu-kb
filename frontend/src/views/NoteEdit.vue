@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -491,12 +491,11 @@ const fetchHistory = async () => {
   }
 }
 
-// KeepAlive 组件首次挂载时 onActivated 与 onMounted 都会触发，
-// 用标记跳过首次，避免目录/图谱/历史被重复请求
-let activatedOnce = false
+// KeepAlive 组件首次挂载时 onMounted 与 onActivated 都会触发（顺序：mounted → activated），
+// 用标记跳过首次激活（onMounted 已完成加载），避免目录/图谱/历史被重复请求
+let pendingFirstActivate = true
 
 onMounted(() => {
-  activatedOnce = true
   // 非法 id（如 /notes/abc 或空）直接回列表，避免无效请求
   if (!id.value || !/^\d+$/.test(id.value)) {
     router.replace('/notes')
@@ -510,10 +509,11 @@ onMounted(() => {
 })
 
 onActivated(() => {
-  // KeepAlive 缓存命中（返回同一笔记）时刷新轻量数据，保证目录/图谱/历史最新；
+  // 首次挂载后的激活直接跳过；此后 KeepAlive 缓存命中（返回同一笔记）时
+  // 刷新轻量数据，保证目录/图谱/历史最新；
   // 不重新拉取正文，避免 wangeditor 大文档 setHtml 卡顿
-  if (!activatedOnce) {
-    activatedOnce = true
+  if (pendingFirstActivate) {
+    pendingFirstActivate = false
     return
   }
   if (!id.value || !/^\d+$/.test(id.value)) {
@@ -522,6 +522,12 @@ onActivated(() => {
   fetchStructure()
   fetchHistory()
   loadGraph()
+})
+
+// KeepAlive 下离开编辑页只触发 deactivated 不触发 unmount：
+// 必须暂停轮询，否则切到其他页面后仍每 3s 轮询并弹出"构建完成"提示
+onDeactivated(() => {
+  stopGraphPolling()
 })
 
 watch(

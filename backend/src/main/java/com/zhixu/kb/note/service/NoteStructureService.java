@@ -46,6 +46,7 @@ public class NoteStructureService {
     private final NoteSectionMapper noteSectionMapper;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
+    private final com.zhixu.kb.common.utils.HtmlSanitizer htmlSanitizer;
 
     public NoteStructureResponse getStructure(Long noteId) {
         Note note = findOwnNote(noteId);
@@ -79,7 +80,38 @@ private NoteStructureResponse buildStructureResponse(Note note) {
         if (contentMirror) {
             sections = flattenOutlineToSections(outline);
         }
+        // 输出侧统一剥离标签：大纲/章节标题内容为用户可控 HTML 字符串，
+        // 公开接口匿名可达，若前端以 v-html 渲染即成存储型 XSS 注入点
+        sanitizeForOutput(outline);
+        sanitizeSectionsForOutput(sections);
         return new NoteStructureResponse(outline, sections, mermaid, updateTime);
+    }
+
+    private void sanitizeForOutput(List<OutlineNode> nodes) {
+        if (nodes == null || nodes.isEmpty()) {
+            return;
+        }
+        for (OutlineNode node : nodes) {
+            if (node == null) {
+                continue;
+            }
+            node.setTitle(htmlSanitizer.sanitizeText(node.getTitle()));
+            node.setContent(htmlSanitizer.sanitizeText(node.getContent()));
+            sanitizeForOutput(node.getChildren());
+        }
+    }
+
+    private void sanitizeSectionsForOutput(List<NoteSection> sections) {
+        if (sections == null || sections.isEmpty()) {
+            return;
+        }
+        for (NoteSection section : sections) {
+            if (section == null) {
+                continue;
+            }
+            section.setTitle(htmlSanitizer.sanitizeText(section.getTitle()));
+            section.setContent(htmlSanitizer.sanitizeText(section.getContent()));
+        }
     }
 
     /**

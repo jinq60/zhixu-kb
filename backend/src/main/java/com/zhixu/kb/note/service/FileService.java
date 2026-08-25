@@ -23,6 +23,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -158,12 +159,11 @@ public class FileService {
         String contentType = file.getContentType();
         if (storageProperties.getAllowedTypes() != null
                 && !storageProperties.getAllowedTypes().isEmpty()) {
+            // 安全校验只信任扩展名白名单；MIME 由客户端可控（子串匹配曾导致 exe 伪造 image/png 绕过），不作为放行依据
             boolean allowedByExt = ext != null && storageProperties.getAllowedTypes().stream()
                     .anyMatch(type -> type.equalsIgnoreCase(ext));
-            boolean allowedByMime = contentType != null && storageProperties.getAllowedTypes().stream()
-                    .anyMatch(type -> contentType.toLowerCase(Locale.ROOT).contains(type.toLowerCase(Locale.ROOT)));
-            if (!allowedByExt && !allowedByMime) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "不支持的文件类型（无扩展名或 MIME 类型异常文件一律拒绝）");
+            if (!allowedByExt) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "不支持的文件类型");
             }
             // 图片额外校验 MIME 与扩展名一致，防止重命名绕过
             if (ext != null && IMAGE_EXTS.contains(ext.toLowerCase(Locale.ROOT))) {
@@ -758,6 +758,50 @@ public class FileService {
         }
     }
 
+    /** 分片临时目录 TTL：超过该时长无活动的 identifier 目录将被回收 */
+    private static final long CHUNK_TEMP_TTL_MS = 24 * 3600_000L;
+
+    /**
+     * 定时清理：回收超龄分片目录。启动清理只覆盖"重启"场景，
+     * 长驻进程下中断的上传会永久残留——认证用户可用无限个 identifier
+     * 各存满单目录配额，逐步占满磁盘。
+     */
+    @Scheduled(fixedDelay = 6 * 3600_000L, initialDelay = 30 * 60_000L)
+    public void sweepStaleChunkTemp() {
+        try {
+            String root = StringUtils.hasText(storageProperties.getPath())
+                    ? storageProperties.getPath()
+                    : "./uploads/images/";
+            Path tmpDir = Paths.get(root).toAbsolutePath().normalize().resolve("chunk-tmp");
+            if (!Files.exists(tmpDir)) {
+                return;
+            }
+            long cutoff = System.currentTimeMillis() - CHUNK_TEMP_TTL_MS;
+            try (java.util.stream.Stream<Path> users = Files.list(tmpDir)) {
+                users.filter(Files::isDirectory).forEach(userDir -> {
+                    try (java.util.stream.Stream<Path> identifiers = Files.list(userDir)) {
+                        identifiers.filter(Files::isDirectory).forEach(identDir -> {
+                            try {
+                                if (Files.getLastModifiedTime(identDir).toMillis() < cutoff) {
+                                    deleteChunkTempDir(identDir);
+                                }
+                            } catch (IOException ignored) {
+                            }
+                        });
+                    } catch (IOException ignored) {
+                    }
+                    // 用户目录已空则顺带删除；非空时 Files.delete 抛 DirectoryNotEmptyException，忽略
+                    try {
+                        Files.delete(userDir);
+                    } catch (IOException ignored) {
+                    }
+                });
+            }
+        } catch (Exception ex) {
+            log.warn("Sweep stale chunk temp failed: {}", ex.getMessage());
+        }
+    }
+
     private String getExtension(String filename) {
         if (!StringUtils.hasText(filename) || !filename.contains(".")) {
             return null;
@@ -816,6 +860,8 @@ public class FileService {
         if (head == null || head.length == 0) {
             return;
         }
+        // 可执行文件签名黑名单：无论扩展名/MIME 如何声明一律拒绝（exe/elf/脚本/mach-o）
+        rejectExecutableSignature(head);
         String magic = detectMagicType(head);
         if (magic == null) {
             return;
@@ -861,6 +907,24 @@ public class FileService {
             return "zip";
         }
         return null;
+    }
+
+    /**
+     * 可执行文件签名黑名单：MZ(PE/dll)、ELF、Mach-O、shell 脚本 shebang。
+     * 命中即拒绝，防止伪装扩展名上传可执行载荷借已发布笔记分发。
+     */
+    private void rejectExecutableSignature(byte[] head) {
+        int b0 = head[0] & 0xFF;
+        int b1 = head[1] & 0xFF;
+        boolean executable = (b0 == 0x4D && b1 == 0x5A)                      // MZ: PE/EXE/DLL
+                || (b0 == 0x7F && b1 == 0x45 && (head[2] & 0xFF) == 0x4C)    // ELF
+                || (b0 == 0xCA && b1 == 0xFE && (head[2] & 0xFF) == 0xBA)    // Mach-O fat
+                || (b0 == 0xFE && b1 == 0xED && (head[2] & 0xFF) == 0xFA)    // Mach-O 32
+                || (b0 == 0xCF && b1 == 0xFA && (head[2] & 0xFF) == 0xED)    // Mach-O 64
+                || (b0 == 0x23 && b1 == 0x21);                               // #! shebang 脚本
+        if (executable) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "检测到可执行文件内容，已拒绝上传");
+        }
     }
 
     /**

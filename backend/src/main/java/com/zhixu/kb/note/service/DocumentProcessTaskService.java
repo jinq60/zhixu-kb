@@ -238,6 +238,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
 
     /**
      * 定时扫描：推进非终态任务 + 重置卡死明细。
+     * 调度线程只做轻量扫描与投递——advance 内含分钟级解析/AI 调用，
+     * 内联执行会阻塞 Spring 默认单线程调度器上的所有其他定时任务。
      */
     @Scheduled(fixedDelay = 30_000)
     public void scheduledScan() {
@@ -246,7 +248,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                     .in(DocumentProcessTaskEntity::getStatus, "PENDING", "PARSING", "CLEANING", "AI_ANALYZING", "EMBEDDING"));
             for (DocumentProcessTaskEntity task : active) {
                 resetStuckChunks(task.getId());
-                advance(task);
+                asyncAdvance(task.getId());
             }
         } catch (Exception ex) {
             log.warn("Document process scheduled scan failed: {}", ex.getMessage());
@@ -530,6 +532,10 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
             return;
         }
         try {
+            // 本线程（advanceExecutor）无登录上下文：显式设置用户 ThreadLocal，
+            // 否则 AI 整理成功后 recordNoteSnapshot 的所有权校验取不到用户，
+            // 历史快照静默丢失（日志表现为 Record note snapshot failed: Unauthorized）
+            com.zhixu.kb.common.utils.SecurityUtils.setUserId(task.getUserId());
             aiAnalysisExecutorProvider.getObject().execute(task.getUserId(), task.getNoteId());
             updateProgress(task, 85);
             completeTask(task);
@@ -537,6 +543,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         } catch (Exception ex) {
             log.error("AI analysis failed in document task: taskId={} noteId={}", task.getId(), task.getNoteId(), ex);
             markFailed(task, friendlyAiError(ex));
+        } finally {
+            com.zhixu.kb.common.utils.SecurityUtils.clear();
         }
     }
 
@@ -1098,39 +1106,43 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
         long elapsed = task.getCreateTime() == null ? 0
                 : Math.max(0, Duration.between(task.getCreateTime(), endTime).getSeconds());
         v.put("elapsedSeconds", elapsed);
-        // 块级进度统计：清洗明细（上传类任务）与向量化明细（向量化任务）
+        // 块级进度统计：只做 COUNT，不拉取明细行（明细含大 TEXT 列，
+        // 该视图被前端秒级轮询，全量拉取会造成 O(n×size) 读放大）
         if (task.getFileId() != null) {
-            List<CleanChunkTaskEntity> clean = cleanChunkMapper.selectList(new LambdaQueryWrapper<CleanChunkTaskEntity>()
-                    .eq(CleanChunkTaskEntity::getTaskId, task.getId()));
-            v.put("cleanChunks", buildChunkStats(clean.size(),
-                    countCleanStatus(clean, "SUCCESS"), countCleanStatus(clean, "FAILED"),
-                    countCleanStatus(clean, "PROCESSING")));
+            v.put("cleanChunks", buildChunkStats(countClean(task.getId(), null),
+                    countClean(task.getId(), "SUCCESS"), countClean(task.getId(), "FAILED"),
+                    countClean(task.getId(), "PROCESSING")));
         }
-        List<EmbedChunkTaskEntity> embed = embedChunkMapper.selectList(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
-                .eq(EmbedChunkTaskEntity::getTaskId, task.getId()));
-        if (!embed.isEmpty() || task.getFileId() == null) {
-            v.put("embedChunks", buildChunkStats(embed.size(),
-                    countEmbedStatus(embed, "SUCCESS"), countEmbedStatus(embed, "FAILED"),
-                    countEmbedStatus(embed, "PROCESSING")));
+        long embedTotal = countEmbed(task.getId(), null);
+        if (embedTotal > 0 || task.getFileId() == null) {
+            v.put("embedChunks", buildChunkStats(embedTotal,
+                    countEmbed(task.getId(), "SUCCESS"), countEmbed(task.getId(), "FAILED"),
+                    countEmbed(task.getId(), "PROCESSING")));
         }
         return v;
     }
 
-    private Map<String, Object> buildChunkStats(int total, long success, long failed, long processing) {
+    private long countClean(Long taskId, String status) {
+        Long count = cleanChunkMapper.selectCount(new LambdaQueryWrapper<CleanChunkTaskEntity>()
+                .eq(CleanChunkTaskEntity::getTaskId, taskId)
+                .eq(status != null, CleanChunkTaskEntity::getStatus, status));
+        return count == null ? 0 : count;
+    }
+
+    private long countEmbed(Long taskId, String status) {
+        Long count = embedChunkMapper.selectCount(new LambdaQueryWrapper<EmbedChunkTaskEntity>()
+                .eq(EmbedChunkTaskEntity::getTaskId, taskId)
+                .eq(status != null, EmbedChunkTaskEntity::getStatus, status));
+        return count == null ? 0 : count;
+    }
+
+    private Map<String, Object> buildChunkStats(long total, long success, long failed, long processing) {
         Map<String, Object> stats = new HashMap<>();
         stats.put("total", total);
         stats.put("success", success);
         stats.put("failed", failed);
         stats.put("processing", processing);
         return stats;
-    }
-
-    private long countCleanStatus(List<CleanChunkTaskEntity> chunks, String status) {
-        return chunks.stream().filter(c -> status.equals(c.getStatus())).count();
-    }
-
-    private long countEmbedStatus(List<EmbedChunkTaskEntity> chunks, String status) {
-        return chunks.stream().filter(c -> status.equals(c.getStatus())).count();
     }
 
     /**

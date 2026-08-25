@@ -53,18 +53,19 @@ public class OAuthStateStore {
         if (!isValidHex(state)) {
             return false;
         }
-        // Redis 无条件删除（本地命中也不能跳过）：state/code 必须保证全局一次性
-        boolean local = stateCache.getIfPresent(state) != null;
-        stateCache.invalidate(state);
-        boolean remote = false;
+        // Redis 为唯一事实源：原子 DEL 返回值即"是否首次消费"，
+        // 消除多实例部署下本地副本导致的重放窗口
         if (redisTemplate != null) {
             try {
-                remote = Boolean.TRUE.equals(redisTemplate.delete("auth:oauth:state:" + state));
+                boolean consumed = Boolean.TRUE.equals(redisTemplate.delete("auth:oauth:state:" + state));
+                stateCache.invalidate(state);
+                return consumed;
             } catch (Exception ignored) {
-                // fallback to in-memory only
+                // Redis 故障：降级为本地一次性消费
             }
         }
-        return local || remote;
+        // asMap().remove 为原子取删，保证降级模式下同样只能消费一次
+        return stateCache.asMap().remove(state) != null;
     }
 
     public String createToken(String token) {
@@ -78,19 +79,19 @@ public class OAuthStateStore {
         if (!isValidHex(code)) {
             return null;
         }
-        // 本地与 Redis 副本都要删除，防止 code 被二次兑换（双重 JWT 发放）
-        String local = tokenCache.getIfPresent(code);
-        tokenCache.invalidate(code);
-        String remote = null;
+        // 原子取删（GETDEL）：消除 GET 与 DELETE 两条命令之间并发兑换多份 JWT 的窗口；
+        // 本地副本无条件失效，防止跨实例二次兑换
         if (redisTemplate != null) {
             try {
-                remote = redisTemplate.opsForValue().get("auth:oauth:token:" + code);
-                redisTemplate.delete("auth:oauth:token:" + code);
+                String token = redisTemplate.opsForValue().getAndDelete("auth:oauth:token:" + code);
+                tokenCache.invalidate(code);
+                return token;
             } catch (Exception ignored) {
-                // fallback to in-memory only
+                // Redis 故障：降级为本地一次性兑换
             }
         }
-        return local != null ? local : remote;
+        // asMap().remove 为原子取删，保证降级模式下同样只能兑换一次
+        return tokenCache.asMap().remove(code);
     }
 
     private void redisSet(String key, String value, Duration ttl) {

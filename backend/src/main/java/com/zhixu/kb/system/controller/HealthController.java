@@ -14,7 +14,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 健康检查：/api/health 简单探活，/api/v1/health 返回 AI 引擎状态。
+ * 健康检查：/api/health 简单探活，/api/v1/health 对已登录用户返回 AI 引擎状态。
+ * 该端点匿名可达（用于探活），详细信息对匿名调用者收敛，
+ * 防止引擎类型/覆盖开关/告警数等部署细节被外部测绘。
  */
 @RestController
 @RequiredArgsConstructor
@@ -33,6 +35,10 @@ public class HealthController {
     public Result<Map<String, Object>> richHealth() {
         Map<String, Object> data = new HashMap<>();
         data.put("status", "UP");
+        // 匿名调用只返回存活状态；引擎/告警细节仅对已认证用户可见
+        if (com.zhixu.kb.common.utils.SecurityUtils.getUserId() == null) {
+            return Result.success(data);
+        }
         data.put("serverTime", LocalDateTime.now());
         data.put("aiEngineType", adapterRouter.engineType());
         data.put("aiEngineConfiguredType", adapterRouter.configuredEngineType());

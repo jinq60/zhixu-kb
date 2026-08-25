@@ -64,7 +64,9 @@ public class AdminSystemController {
     @PostMapping("/ai-engine")
     public Result<Map<String, Object>> switchAiEngine(@Valid @RequestBody AdminAiEngineSwitchRequest request) {
         String normalized = runtimeSwitchService.setOverrideEngineType(request.getEngineType());
-        return Result.success("AI engine switched to " + normalized, buildAiEngineState());
+        // 当前版本仅实现云端 api 引擎，覆盖值不会改变运行行为——明示以免误导运维
+        return Result.success("AI engine switched to " + normalized + "（当前版本仅支持 api 引擎，切换不改变运行行为）",
+                buildAiEngineState());
     }
 
     @PostMapping("/ai-engine/reset")
@@ -88,6 +90,7 @@ public class AdminSystemController {
         data.put("overrideEngineType", adapterRouter.overrideEngineType());
         data.put("healthy", adapterRouter.current().isHealthy());
         data.put("availableEngineTypes", Collections.singletonList("api"));
+        data.put("switchNote", "当前版本仅支持 api 云端引擎；本地引擎尚未实现，切换操作不会改变运行行为");
         return data;
     }
 }

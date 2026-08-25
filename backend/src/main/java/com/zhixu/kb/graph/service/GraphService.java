@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 
 /**
@@ -176,18 +177,27 @@ public class GraphService {
     }
 
     public GraphBuildResult buildCategory(Long categoryId) {
+        return buildCategory(categoryId, () -> false);
+    }
+
+    /**
+     * 批量构建分类/全局图谱。
+     * @param cancelSignal 取消信号（如任务被用户删除），在每篇笔记处理前检查，
+     *                     触发后返回已完成的部分结果而非抛异常
+     */
+    public GraphBuildResult buildCategory(Long categoryId, BooleanSupplier cancelSignal) {
         Long userId = SecurityUtils.getUserId();
         if (buildingUsers.putIfAbsent(userId, Boolean.TRUE) != null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "已有图谱构建任务进行中，请稍后再试");
         }
         try {
-            return doBuildCategory(userId, categoryId);
+            return doBuildCategory(userId, categoryId, cancelSignal);
         } finally {
             buildingUsers.remove(userId);
         }
     }
 
-    private GraphBuildResult doBuildCategory(Long userId, Long categoryId) {
+    private GraphBuildResult doBuildCategory(Long userId, Long categoryId, BooleanSupplier cancelSignal) {
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getUserId, userId)
                 .eq(categoryId != null, Note::getCategoryId, categoryId)
@@ -206,7 +216,15 @@ public class GraphService {
 
         int totalEntities = 0;
         int totalRelations = 0;
+        int processed = 0;
         for (Note note : notes) {
+            if (cancelSignal.getAsBoolean()) {
+                GraphBuildResult cancelled = new GraphBuildResult();
+                cancelled.setMessage("构建已取消，已完成 " + processed + "/" + notes.size() + " 篇笔记");
+                cancelled.setEntityCount(totalEntities);
+                cancelled.setRelationCount(totalRelations);
+                return cancelled;
+            }
             String content = StringUtils.hasText(note.getContent()) ? note.getContent() : note.getOcrText();
             if (!StringUtils.hasText(content)) {
                 continue;
@@ -217,6 +235,7 @@ public class GraphService {
             persistGraph(note, entities, relations);
             totalEntities += entities.size();
             totalRelations += relations.size();
+            processed++;
         }
 
         GraphBuildResult result = new GraphBuildResult();

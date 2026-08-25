@@ -90,12 +90,20 @@ watch(
       if (!taskTimer) {
         taskTimer = setInterval(loadActiveTasks, 8000)
       }
-    } else if (taskTimer) {
-      clearInterval(taskTimer)
-      taskTimer = null
+    } else {
+      // 未登录（含登出、首页未起轮询的场景）：无条件清理，防止跨账号数据残留
+      if (taskTimer) {
+        clearInterval(taskTimer)
+        taskTimer = null
+      }
+      // 登出必须连同 recent 一起清空：否则换账号登录后，
+      // 红点（hasFailedTasks）会显示上一个账号的失败任务
       activeTasks.value = []
+      recentTasks.value = []
       aiActiveTasks.value = []
+      aiRecentTasks.value = []
       graphActiveTasks.value = []
+      graphRecentTasks.value = []
       taskDialogVisible.value = false
     }
   },

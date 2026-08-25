@@ -3,16 +3,20 @@ package com.zhixu.kb.system.auth;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.ResultCode;
+import com.zhixu.kb.security.TokenRevocationStore;
 import com.zhixu.kb.system.entity.SysUser;
 import com.zhixu.kb.system.entity.SysUserAuth;
 import com.zhixu.kb.system.mapper.SysUserAuthMapper;
 import com.zhixu.kb.system.mapper.SysUserMapper;
+import com.zhixu.kb.system.service.AuditLogService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.security.SecureRandom;
+import java.util.UUID;
 
 /**
  * 用户身份统一解析：按 provider + account 查找，按 email 关联，否则创建新账号。
@@ -27,6 +31,9 @@ public class IdentityService {
     private final SysUserMapper userMapper;
     private final SysUserAuthMapper userAuthMapper;
     private final UserRegistrationHelper registrationHelper;
+    private final TokenRevocationStore tokenRevocationStore;
+    private final AuditLogService auditLogService;
+    private final PasswordEncoder passwordEncoder;
 
     public SysUser findByProvider(String provider, String account) {
         SysUserAuth auth = userAuthMapper.selectOne(new QueryWrapper<SysUserAuth>().lambda()
@@ -98,12 +105,20 @@ public class IdentityService {
     /**
      * 邮箱验证码登录解析：能收到验证码即证明了邮箱所有权。
      * 命中既有账号时同时把该账号标记为"邮箱已验证"——此后该邮箱可作为可信身份锚点。
+     * 安全：若命中的账号邮箱此前未经所有权验证且设有密码（注册通道允许填写任意邮箱），
+     * 视为邮箱主人接管该账号——吊销全部存量会话并作废旧密码，
+     * 防止抢注者凭其已知密码继续登录监控账号内容。被接管者可凭验证码随时登录，
+     * 并可在设置页免旧密码重新设置密码。
      */
     @Transactional
     public SysUser resolveEmailCodeUser(String email) {
         SysUser user = findByEmail(email);
         if (user != null) {
+            boolean wasVerified = isEmailVerified(user);
             markEmailVerified(user);
+            if (!wasVerified) {
+                takeOverUnverifiedAccount(user);
+            }
             return user;
         }
         removeStaleEmailAuth(email);
@@ -112,6 +127,35 @@ public class IdentityService {
         // 验证码登录创建的账号：邮箱所有权已被证明，直接标记可信
         markEmailVerified(created);
         return created;
+    }
+
+    /** 邮箱所有权首次被证明：作废该账号旧密码凭证并吊销全部存量会话 */
+    private void takeOverUnverifiedAccount(SysUser user) {
+        Long userId = user.getId();
+        boolean hadPasswordBinding = hasPasswordBinding(userId);
+        if (hadPasswordBinding) {
+            SysUserAuth binding = userAuthMapper.selectOne(new QueryWrapper<SysUserAuth>().lambda()
+                    .eq(SysUserAuth::getUserId, userId)
+                    .eq(SysUserAuth::getProvider, AuthMethod.PASSWORD)
+                    .eq(SysUserAuth::getIsDeleted, 0));
+            if (binding != null) {
+                userAuthMapper.deleteById(binding.getId());
+            }
+            // 令 sys_user.password 哈希失效（绑定已删，改密接口将免验旧密码，用户可自行重设）
+            user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
+            userMapper.updateById(user);
+        }
+        tokenRevocationStore.revokeUser(userId);
+        auditLogService.record(userId, "EMAIL_IDENTITY_TAKEOVER",
+                "验证码登录证明邮箱所有权，接管未验证邮箱账号：重置密码凭证并吊销全部会话", "/api/auth/login");
+    }
+
+    private boolean hasPasswordBinding(Long userId) {
+        Long count = userAuthMapper.selectCount(new QueryWrapper<SysUserAuth>().lambda()
+                .eq(SysUserAuth::getUserId, userId)
+                .eq(SysUserAuth::getProvider, AuthMethod.PASSWORD)
+                .eq(SysUserAuth::getIsDeleted, 0));
+        return count != null && count > 0;
     }
 
     /** 判断账号邮箱是否已验证（历史数据 null 按 0 处理） */

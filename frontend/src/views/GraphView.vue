@@ -41,7 +41,18 @@ const stopPolling = () => {
   }
 }
 
-const pollGraphTask = (taskId: string, onComplete: () => void) => {
+// 加载代际号：快速切换笔记/分类时丢弃后到的旧响应，防止旧数据覆盖新视图
+let loadSeq = 0
+
+/**
+ * 提交构建并轮询：记录提交时的视角快照，
+ * 构建期间用户切换模式/选择时完成后不再自动灌入过期视角的数据
+ */
+const pollBuildTask = (
+  taskId: string,
+  expectCurrent: () => boolean,
+  reload: () => void | Promise<void>
+) => {
   stopPolling()
   pollTimer = setInterval(async () => {
     try {
@@ -51,9 +62,11 @@ const pollGraphTask = (taskId: string, onComplete: () => void) => {
         building.value = false
         if (status.error) {
           ElMessage.error(status.error)
+        } else if (!expectCurrent()) {
+          ElMessage.success('图谱构建完成（当前视角已切换，可重新加载查看）')
         } else {
           ElMessage.success('图谱构建完成')
-          onComplete()
+          await reload()
         }
       }
     } catch (e: any) {
@@ -89,23 +102,32 @@ const selectNote = async (noteId: string) => {
 }
 
 const loadNoteGraph = async (noteId: string | number) => {
+  const seq = ++loadSeq
   loading.value = true
   try {
-    graphData.value = await getNoteGraph(noteId)
+    const data = await getNoteGraph(noteId)
+    if (seq !== loadSeq) return
+    graphData.value = data
   } catch (e: any) {
+    if (seq !== loadSeq) return
     ElMessage.error(e?.response?.data?.message || '加载图谱失败')
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
 const handleBuildNote = async () => {
   if (!selectedNoteId.value) return
+  const noteId = selectedNoteId.value
   building.value = true
   try {
-    const result = await buildNoteGraph(selectedNoteId.value)
+    const result = await buildNoteGraph(noteId)
+    pollBuildTask(
+      result.taskId,
+      () => mode.value === 'note' && selectedNoteId.value === noteId,
+      () => loadNoteGraph(noteId)
+    )
     ElMessage.success('图谱构建已提交，可在任务中心查看进度')
-    pollGraphTask(result.taskId, () => loadNoteGraph(selectedNoteId.value!))
   } catch (e: any) {
     building.value = false
     ElMessage.error(e?.response?.data?.message || '图谱构建提交失败')
@@ -134,23 +156,32 @@ const handleLoadByMode = async () => {
 }
 
 const loadCategoryGraph = async (categoryId: number) => {
+  const seq = ++loadSeq
   loading.value = true
   try {
-    graphData.value = await getCategoryGraph(categoryId)
+    const data = await getCategoryGraph(categoryId)
+    if (seq !== loadSeq) return
+    graphData.value = data
   } catch (e: any) {
+    if (seq !== loadSeq) return
     ElMessage.error(e?.response?.data?.message || '加载分类图谱失败')
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
 const handleBuildCategory = async () => {
   if (!selectedCategoryId.value) return
+  const categoryId = selectedCategoryId.value
   building.value = true
   try {
-    const result = await buildCategoryGraph(selectedCategoryId.value)
+    const result = await buildCategoryGraph(categoryId)
+    pollBuildTask(
+      result.taskId,
+      () => mode.value === 'category' && selectedCategoryId.value === categoryId,
+      () => loadCategoryGraph(categoryId)
+    )
     ElMessage.success('分类图谱构建已提交，可在任务中心查看进度')
-    pollGraphTask(result.taskId, () => loadCategoryGraph(selectedCategoryId.value!))
   } catch (e: any) {
     building.value = false
     ElMessage.error(e?.response?.data?.message || '分类图谱构建提交失败')
@@ -158,13 +189,17 @@ const handleBuildCategory = async () => {
 }
 
 const loadGlobalGraph = async () => {
+  const seq = ++loadSeq
   loading.value = true
   try {
-    graphData.value = await getGlobalGraph()
+    const data = await getGlobalGraph()
+    if (seq !== loadSeq) return
+    graphData.value = data
   } catch (e: any) {
+    if (seq !== loadSeq) return
     ElMessage.error(e?.response?.data?.message || '加载全局图谱失败')
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -172,8 +207,12 @@ const handleBuildGlobal = async () => {
   building.value = true
   try {
     const result = await buildGlobalGraph()
+    pollBuildTask(
+      result.taskId,
+      () => mode.value === 'global',
+      () => loadGlobalGraph()
+    )
     ElMessage.success('全局图谱构建已提交，可在任务中心查看进度')
-    pollGraphTask(result.taskId, () => loadGlobalGraph())
   } catch (e: any) {
     building.value = false
     ElMessage.error(e?.response?.data?.message || '全局图谱构建提交失败')

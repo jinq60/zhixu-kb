@@ -294,6 +294,8 @@ public class OpenAiAdapter implements AIEngineAdapter {
     }
 
     private static final long HEALTH_PROBE_TTL_MS = 60_000L;
+    /** 单次补全输出 token 上限（调用方可更低，不可更高） */
+    private static final int MAX_OUTPUT_TOKENS = 4096;
 
     private final java.util.concurrent.ConcurrentHashMap<String, HealthEntry> healthCache =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -458,16 +460,19 @@ public class OpenAiAdapter implements AIEngineAdapter {
         payload.put("temperature", temperature);
         payload.put("stream", stream);
 
-        // 允许调用方限制输出长度（加速生成）
+        // 输出长度上限：调用方可显式指定；未指定时施加默认上限，
+        // 防止补全输出不受控导致平台 Key 配额被单类请求打满（费用滥用面）
         if (parameters != null && parameters.get("max_tokens") != null) {
             try {
                 int maxTokens = Integer.parseInt(parameters.get("max_tokens").toString());
                 if (maxTokens > 0) {
-                    payload.put("max_tokens", maxTokens);
+                    payload.put("max_tokens", Math.min(maxTokens, MAX_OUTPUT_TOKENS));
                 }
             } catch (Exception ignored) {
                 // ignore invalid max_tokens
             }
+        } else {
+            payload.put("max_tokens", MAX_OUTPUT_TOKENS);
         }
 
         Map<String, String> system = new HashMap<String, String>();

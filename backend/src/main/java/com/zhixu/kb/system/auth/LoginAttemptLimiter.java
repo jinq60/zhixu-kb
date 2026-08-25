@@ -16,8 +16,11 @@ import java.time.Duration;
  * <p>
  - 双维度设计：仅按 IP 限制可被代理池绕过；仅按用户名锁定会被恶意
  *   第三方利用实施"锁死受害者账号"的 DoS。组合后：
- *   单 IP 对单账号 5 次/15 分钟即拦截（防撞库），
- *   全局对单账号 30 次/15 分钟才拦截（抬高分布式爆破成本，同时降低被恶意锁号的概率）。
+ *   单 IP 对单账号 {@code maxFailuresPerIpUser} 次/窗口即拦截（防撞库），
+ *   全局对单账号 {@code maxFailuresPerUserGlobal} 次才拦截（抬高分布式爆破成本）。
+ * <p>
+ * 注意：全局维度阈值必须显著高于单 IP 维度——该维度无需知道正确密码即可触发，
+ * 过低的阈值等于给攻击者提供免费锁号通道。默认 5 / 100，可按部署环境调整。
  * <p>
  * Redis 优先（多实例共享），故障时降级 Caffeine 本地计数（带 TTL 与容量上限）。
  */
@@ -25,14 +28,18 @@ import java.time.Duration;
 public class LoginAttemptLimiter {
 
     private static final Duration WINDOW = Duration.ofMinutes(15);
-    private static final int MAX_PER_IP_USER = 5;
-    private static final int MAX_PER_USER_GLOBAL = 30;
 
+    private final int maxPerIpUser;
+    private final int maxPerUserGlobal;
     private final Cache<String, int[]> localCounters;
     private final StringRedisTemplate redisTemplate;
 
-    public LoginAttemptLimiter(ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
+    public LoginAttemptLimiter(ObjectProvider<StringRedisTemplate> redisTemplateProvider,
+                               @Value("${app.security.login.max-failures-per-ip-user:5}") int maxPerIpUser,
+                               @Value("${app.security.login.max-failures-per-user-global:100}") int maxPerUserGlobal) {
         this.redisTemplate = redisTemplateProvider.getIfAvailable();
+        this.maxPerIpUser = Math.max(1, maxPerIpUser);
+        this.maxPerUserGlobal = Math.max(this.maxPerIpUser + 1, maxPerUserGlobal);
         this.localCounters = Caffeine.newBuilder()
                 .expireAfterWrite(WINDOW)
                 .maximumSize(100_000)
@@ -41,8 +48,8 @@ public class LoginAttemptLimiter {
 
     /** 登录尝试前检查：超限则拒绝，避免继续执行昂贵的 BCrypt 比对（CPU 放大面） */
     public void check(String ip, String username) {
-        if (exceeded(ip + "|" + username, MAX_PER_IP_USER, "ip-user")
-                || exceeded("u|" + username, MAX_PER_USER_GLOBAL, "user")) {
+        if (exceeded(ip + "|" + username, maxPerIpUser, "ip-user")
+                || exceeded("u|" + username, maxPerUserGlobal, "user")) {
             throw new BusinessException(ResultCode.TOO_MANY_REQUESTS,
                     "失败次数过多，请 15 分钟后再试");
         }

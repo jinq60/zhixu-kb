@@ -53,7 +53,8 @@ public class GraphTaskRunner {
         setupSecurityContext(loginUser);
         try {
             manager.updateStage(taskId, generation, "批量抽取与写入图谱中");
-            GraphBuildResult result = graphService.buildCategory(categoryId);
+            // 传入取消信号：删除任务时可在笔记粒度中断剩余 AI 抽取
+            GraphBuildResult result = graphService.buildCategory(categoryId, () -> manager.isCancelled(taskId));
             manager.complete(taskId, generation, result.getEntityCount() == 0
                     ? (result.getMessage() == null ? "未抽取到实体或关系" : result.getMessage())
                     : null);

@@ -4,7 +4,9 @@ import com.zhixu.kb.ask.model.AskExportPayload;
 import com.zhixu.kb.ask.model.AskRecord;
 import com.zhixu.kb.ask.model.AskRequest;
 import com.zhixu.kb.ask.service.AskService;
+import com.zhixu.kb.common.exception.BusinessException;
 import com.zhixu.kb.common.result.Result;
+import com.zhixu.kb.common.result.ResultCode;
 import com.zhixu.kb.common.utils.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +27,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 知识问答接口：基于个人知识库（笔记）的问答，支持 SSE 流式回答。
@@ -38,9 +42,31 @@ public class AskController {
     private final AskService askService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
+    /**
+     * 同步问答并发护栏：单次 AI 调用含重试最长可挂起数分钟，
+     * 无界并发会占死 Tomcat worker 线程拖垮全站。流式接口走 mvc-async 有界池，不受此限。
+     */
+    private static final int SYNC_ASK_MAX_CONCURRENT = 4;
+    private static final long SYNC_ASK_ACQUIRE_TIMEOUT_SECONDS = 3;
+    private final Semaphore syncAskPermits = new Semaphore(SYNC_ASK_MAX_CONCURRENT);
+
     @PostMapping
     public Result<AskRecord> ask(@Valid @RequestBody AskRequest request) {
-        return Result.success(askService.ask(SecurityUtils.getUserId(), request.getQuestion(), request.getConversationId()));
+        boolean acquired = false;
+        try {
+            acquired = syncAskPermits.tryAcquire(SYNC_ASK_ACQUIRE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "请求被中断，请重试");
+        }
+        if (!acquired) {
+            throw new BusinessException(ResultCode.TOO_MANY_REQUESTS, "当前同步问答并发已满，请使用流式问答或稍后再试");
+        }
+        try {
+            return Result.success(askService.ask(SecurityUtils.getUserId(), request.getQuestion(), request.getConversationId()));
+        } finally {
+            syncAskPermits.release();
+        }
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -48,6 +74,10 @@ public class AskController {
         Long userId = SecurityUtils.getUserId();
         StreamingResponseBody body = outputStream -> {
             try {
+                // 首帧心跳（SSE 注释帧，前端按规范跳过非 data: 行）：
+                // 重置 Nginx 默认 60s proxy_read_timeout，避免上游模型首 token 前连接被掐断
+                outputStream.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
+                outputStream.flush();
                 askService.askStreaming(userId, request.getQuestion(), request.getConversationId(), chunk -> {
                     try {
                         // SSE 帧：chunk 统一 JSON 编码后发送，换行/空白不会被帧分隔符拆散；

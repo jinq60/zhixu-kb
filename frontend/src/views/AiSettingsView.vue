@@ -173,69 +173,87 @@ onMounted(load)
       </el-alert>
 
       <el-form label-width="110px" label-position="left" class="config-form">
-        <el-form-item label="模型厂商">
-          <el-select v-model="form.provider" style="width: 320px" @change="selectProvider">
-            <el-option v-for="p in PROVIDERS" :key="p.key" :label="p.name" :value="p.key" />
-          </el-select>
-          <span class="form-tip">所有厂商均为 OpenAI 兼容接口</span>
-        </el-form-item>
+        <div class="config-grid">
+          <!-- 左栏：对话模型配置 -->
+          <section class="config-col">
+            <h4 class="col-title">对话模型</h4>
+            <el-form-item label="模型厂商">
+              <el-select v-model="form.provider" @change="selectProvider">
+                <el-option v-for="p in PROVIDERS" :key="p.key" :label="p.name" :value="p.key" />
+              </el-select>
+              <span class="form-tip">所有厂商均为 OpenAI 兼容接口</span>
+            </el-form-item>
 
-        <el-form-item label="接口地址">
-          <el-input v-model="form.baseUrl" placeholder="https://api.deepseek.com" style="width: 420px" />
-        </el-form-item>
+            <el-form-item label="接口地址">
+              <el-input v-model="form.baseUrl" placeholder="https://api.deepseek.com" />
+            </el-form-item>
 
-        <el-form-item label="API Key">
-          <el-input
-            v-model="form.apiKey"
-            type="password"
-            show-password
-            :placeholder="apiKeyMasked ? `已保存（${apiKeyMasked}），留空保持不变` : 'sk-...'"
-            style="width: 420px"
-          />
-          <span class="form-tip">Key 加密存储，仅用于调用你选择的模型</span>
-        </el-form-item>
+            <el-form-item label="API Key">
+              <el-input
+                v-model="form.apiKey"
+                type="password"
+                show-password
+                :placeholder="apiKeyMasked ? `已保存（${apiKeyMasked}），留空保持不变` : 'sk-...'"
+              />
+              <span class="form-tip">Key 加密存储，仅用于调用你选择的模型</span>
+            </el-form-item>
 
-        <el-form-item label="模型名称">
-          <el-input v-model="form.model" placeholder="deepseek-chat" style="width: 420px" />
-        </el-form-item>
+            <el-form-item label="模型名称">
+              <el-input v-model="form.model" placeholder="deepseek-chat" />
+            </el-form-item>
 
-        <el-divider content-position="left">向量化配置（可选）</el-divider>
-        <el-form-item label="向量化地址">
-          <el-input v-model="form.embeddingBaseUrl" placeholder="如 https://api.siliconflow.cn/v1，留空使用平台端点" style="width: 420px" />
-          <span class="form-tip">向量化需要 embedding 模型，与对话模型分开配置</span>
-        </el-form-item>
-        <el-form-item label="向量化 Key">
-          <el-input
-            v-model="form.embeddingApiKey"
-            type="password"
-            show-password
-            :placeholder="embeddingApiKeyMasked ? `已保存（${embeddingApiKeyMasked}），留空保持不变` : 'sk-...'"
-            style="width: 420px"
-          />
-        </el-form-item>
-        <el-form-item label="向量化模型">
-          <el-input v-model="form.embeddingModel" placeholder="text-embedding-3-small（如 BAAI/bge-m3）" style="width: 420px" />
-          <span class="form-tip">推荐：硅基流动 BAAI/bge-m3，或 OpenAI text-embedding-3-small</span>
-        </el-form-item>
+            <el-form-item label="启用">
+              <el-switch v-model="form.enabled" />
+            </el-form-item>
 
-        <el-form-item label="启用">
-          <el-switch v-model="form.enabled" />
-        </el-form-item>
+            <el-form-item label=" ">
+              <div class="action-row">
+                <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
+                <el-button :loading="testing" @click="handleTest">测试连接</el-button>
+                <el-button v-if="configured" type="danger" plain :loading="clearing" @click="handleClear">清除配置</el-button>
+              </div>
+              <el-alert
+                v-if="testResult"
+                :type="testResult.success ? 'success' : 'error'"
+                :title="testResult.message"
+                :closable="false"
+                class="test-result"
+              />
+            </el-form-item>
+          </section>
 
-        <el-form-item label=" ">
-          <div class="action-row">
-            <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
-            <el-button :loading="testing" @click="handleTest">测试连接</el-button>
-            <el-button v-if="configured" type="danger" plain :loading="clearing" @click="handleClear">清除配置（改用平台默认模型）</el-button>
-          </div>
-          <el-alert
-            v-if="testResult"
-            :type="testResult.success ? 'success' : 'error'"
-            :title="testResult.message"
-            :closable="false"
-            class="test-result"
-          />
-        </el-form-item>
+          <!-- 右栏：向量化配置（可选） -->
+          <section class="config-col embedding-col">
+            <h4 class="col-title">
+              向量化配置
+              <el-tag size="small" type="info" class="optional-tag">可选</el-tag>
+            </h4>
+            <p class="col-desc">向量化需要 embedding 模型，与对话模型分开配置；留空时使用平台端点。</p>
+
+            <el-form-item label="向量化地址">
+              <el-input v-model="form.embeddingBaseUrl" placeholder="如 https://api.siliconflow.cn/v1" />
+              <span class="form-tip">留空使用平台端点（若平台端点支持 embedding 会自动启用）</span>
+            </el-form-item>
+
+            <el-form-item label="向量化 Key">
+              <el-input
+                v-model="form.embeddingApiKey"
+                type="password"
+                show-password
+                :placeholder="embeddingApiKeyMasked ? `已保存（${embeddingApiKeyMasked}），留空保持不变` : 'sk-...'"
+              />
+            </el-form-item>
+
+            <el-form-item label="向量化模型">
+              <el-input v-model="form.embeddingModel" placeholder="text-embedding-3-small（如 BAAI/bge-m3）" />
+              <span class="form-tip">推荐：硅基流动 BAAI/bge-m3，或 OpenAI text-embedding-3-small</span>
+            </el-form-item>
+
+            <div class="embedding-hint">
+              配置后知识问答将结合向量语义检索，召回更准确；未配置时自动降级为关键词检索。
+            </div>
+          </section>
+        </div>
       </el-form>
     </el-card>
   </div>
@@ -246,7 +264,7 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 720px;
+  max-width: 1080px;
 }
 
 .page-header h2 {
@@ -273,6 +291,64 @@ onMounted(load)
   margin-top: 8px;
 }
 
+/* 双栏布局：左=对话模型，右=向量化配置 */
+.config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.config-col {
+  min-width: 0;
+  padding: 18px 20px 6px;
+  border: 1px solid #f0f2f5;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+
+.embedding-col {
+  background: #f8fbff;
+  border-color: #e6f0fb;
+}
+
+.col-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.optional-tag {
+  font-weight: 400;
+}
+
+.col-desc {
+  margin: 0 0 14px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.embedding-hint {
+  margin: 4px 0 16px 110px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px dashed #d9e6f5;
+  border-radius: 8px;
+  color: #6b7a8d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.config-col :deep(.el-input),
+.config-col :deep(.el-select) {
+  width: 100%;
+}
+
 .form-tip {
   margin-left: 10px;
   color: #b0b8c4;
@@ -288,35 +364,21 @@ onMounted(load)
   margin-top: 12px;
 }
 
-.free-model-box {
-  padding: 14px 16px;
-  background: #f8fbff;
-  border-radius: 10px;
-}
-
-.free-model-box h4 {
-  color: #303133;
-  font-size: 14px;
-}
-
-.free-model-box p {
-  margin-top: 6px;
-  color: #909399;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .ai-settings-page {
     max-width: none;
+  }
+
+  .config-grid {
+    grid-template-columns: 1fr;
   }
 
   .config-form :deep(.el-form-item__content) {
     flex-wrap: wrap;
   }
 
-  .config-form .el-input,
-  .config-form .el-select {
+  .config-col .el-input,
+  .config-col .el-select {
     width: 100% !important;
   }
 
@@ -324,6 +386,10 @@ onMounted(load)
     display: block;
     margin-left: 0;
     margin-top: 6px;
+  }
+
+  .embedding-hint {
+    margin-left: 0;
   }
 
   .action-row {

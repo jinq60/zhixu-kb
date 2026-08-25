@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 知识图谱构建任务管理（内存）：
@@ -19,12 +20,19 @@ public class GraphTaskManager {
     /** 看门狗：任务运行超过该时长视为失联，自动复位 */
     private static final long STALE_RUNNING_MS = 60 * 60 * 1000L;
 
+    /**
+     * 全局单调发放的代数序号：TaskState 被移除重建后 generation 也不会回到旧值，
+     * 避免僵尸 runner（持有旧代数）通过新任务的 generation 校验覆盖其状态。
+     */
+    private static final AtomicLong GENERATION_SEQ = new AtomicLong();
+
     private final Map<String, TaskState> tasks = new ConcurrentHashMap<>();
 
     /**
      * 尝试登记任务。返回 taskId；若同一范围已有任务进行中则返回 null。
      */
     public String tryStart(Long userId, TaskType taskType, String targetId, String targetName) {
+        sweepExpired();
         String taskId = buildTaskId(taskType, targetId);
         TaskState state = tasks.computeIfAbsent(taskId, k -> new TaskState());
         synchronized (state) {
@@ -48,17 +56,71 @@ public class GraphTaskManager {
             state.targetId = targetId;
             state.targetName = targetName;
             state.stage = "排队中";
-            state.generation++;
+            state.cancelRequested = false;
+            state.generation = GENERATION_SEQ.incrementAndGet();
             return taskId;
+        }
+    }
+
+    /**
+     * 请求取消运行中的任务（笔记粒度：当前篇处理完后中断后续抽取）。
+     * 仅任务属主可取消；任务不在运行态返回 false。
+     */
+    public boolean requestCancel(Long userId, String taskId) {
+        TaskState state = tasks.get(taskId);
+        if (state == null || !userId.equals(state.userId)) {
+            return false;
+        }
+        synchronized (state) {
+            if (!state.running) {
+                return false;
+            }
+            state.cancelRequested = true;
+        }
+        return true;
+    }
+
+    /** runner 侧查询取消标志 */
+    public boolean isCancelled(String taskId) {
+        TaskState state = tasks.get(taskId);
+        return state != null && state.cancelRequested;
+    }
+
+    /** 清理过期条目：已完成超保留时长、或失联运行超看门狗时长的任务记录 */
+    private void sweepExpired() {
+        if (tasks.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, TaskState> entry : tasks.entrySet()) {
+            TaskState state = entry.getValue();
+            if (!state.running && state.finishedAt > 0 && now - state.finishedAt > KEEP_MS) {
+                tasks.remove(entry.getKey(), state);
+            } else if (state.running && now - state.startedAt > STALE_RUNNING_MS) {
+                // 失联任务仅复位运行标志并保留记录（供 complete 的代数校验拒绝旧 runner），
+                // 不从 map 移除——移除会导致同 key 重建后 generation 撞上僵尸 runner
+                synchronized (state) {
+                    if (state.running && now - state.startedAt > STALE_RUNNING_MS) {
+                        state.running = false;
+                        state.error = "任务超时失联，已被系统复位";
+                        state.finishedAt = now;
+                    }
+                }
+            }
         }
     }
 
     public void updateStage(String taskId, long generation, String stage) {
         TaskState state = tasks.get(taskId);
-        if (state == null || state.generation != generation) {
+        if (state == null) {
             return;
         }
-        state.stage = stage;
+        synchronized (state) {
+            if (state.generation != generation) {
+                return;
+            }
+            state.stage = stage;
+        }
     }
 
     public boolean remove(Long userId, String taskId) {
@@ -71,6 +133,7 @@ public class GraphTaskManager {
     }
 
     public List<TaskState> listActiveTasks(Long userId) {
+        sweepExpired();
         List<TaskState> result = new ArrayList<>();
         for (TaskState state : tasks.values()) {
             if (state.running && userId.equals(state.userId)) {
@@ -81,6 +144,7 @@ public class GraphTaskManager {
     }
 
     public List<TaskState> listRecentTasks(Long userId) {
+        sweepExpired();
         long now = System.currentTimeMillis();
         List<TaskState> result = new ArrayList<>();
         for (TaskState state : tasks.values()) {
@@ -130,17 +194,14 @@ public class GraphTaskManager {
     }
 
     public TaskState get(String taskId) {
+        sweepExpired();
         TaskState state = tasks.get(taskId);
         if (state == null) {
             return emptyState();
         }
         long now = System.currentTimeMillis();
         if (!state.running && state.finishedAt > 0 && now - state.finishedAt > KEEP_MS) {
-            tasks.remove(taskId);
-            return emptyState();
-        }
-        if (state.running && now - state.startedAt > STALE_RUNNING_MS) {
-            tasks.remove(taskId);
+            tasks.remove(taskId, state);
             return emptyState();
         }
         return state;
@@ -162,6 +223,7 @@ public class GraphTaskManager {
 
     public static class TaskState {
         private volatile boolean running;
+        private volatile boolean cancelRequested;
         private volatile String error;
         private volatile long startedAt;
         private volatile long finishedAt;

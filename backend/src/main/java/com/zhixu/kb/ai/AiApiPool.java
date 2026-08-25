@@ -97,7 +97,11 @@ public class AiApiPool {
      * 提升整体吞吐并降低单个厂家被限流的概率。全部冷却时回退到第一个端点强制重试。
      */
     public Endpoint select() {
-        int size = endpoints.size();
+        // CopyOnWriteArrayList 每次 get 都重读底层数组：size() 与 get(idx) 若非同一快照，
+        // refreshFromDb 清空重建期间可能取到越界索引抛 IOOBE（在适配器重试保护之外）。
+        // 固定使用局部快照引用，保证 size 与 get 遍历同一数组。
+        List<Endpoint> snapshot = this.endpoints;
+        int size = snapshot.size();
         if (size == 0) {
             return null;
         }
@@ -105,14 +109,14 @@ public class AiApiPool {
         int start = Math.floorMod(cursor.getAndIncrement(), size);
         for (int i = 0; i < size; i++) {
             int idx = (start + i) % size;
-            Endpoint endpoint = endpoints.get(idx);
+            Endpoint endpoint = snapshot.get(idx);
             if (!endpoint.isCooldown(now)) {
                 endpoint.touch(now);
                 return endpoint;
             }
         }
         // 全部冷却：回退到第一个端点（强制重试）
-        Endpoint fallback = endpoints.get(0);
+        Endpoint fallback = snapshot.get(0);
         fallback.touch(now);
         return fallback;
     }

@@ -10,7 +10,9 @@ import com.zhixu.kb.graph.model.GraphOverview;
 import com.zhixu.kb.graph.service.GraphService;
 import com.zhixu.kb.graph.service.GraphTaskManager;
 import com.zhixu.kb.graph.service.GraphTaskRunner;
+import com.zhixu.kb.note.entity.Category;
 import com.zhixu.kb.note.entity.Note;
+import com.zhixu.kb.note.mapper.CategoryMapper;
 import com.zhixu.kb.note.mapper.NoteMapper;
 import com.zhixu.kb.system.model.LoginUser;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +43,7 @@ public class GraphController {
     private final GraphTaskManager graphTaskManager;
     private final GraphTaskRunner graphTaskRunner;
     private final NoteMapper noteMapper;
+    private final CategoryMapper categoryMapper;
 
     @PostMapping("/api/notes/{id}/graph/build")
     public Result<Map<String, Object>> build(@PathVariable("id") Long id) {
@@ -79,8 +82,14 @@ public class GraphController {
     @PostMapping("/api/graph/category/{categoryId}/build")
     public Result<Map<String, Object>> buildCategory(@PathVariable("categoryId") Long categoryId) {
         Long userId = SecurityUtils.getUserId();
+        // 归属校验：不校验时任意用户可用随机 categoryId 无限制造任务记录撑爆内存
+        Category category = categoryMapper.selectById(categoryId);
+        if (category == null || !Objects.equals(category.getUserId(), userId)) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "分类不存在");
+        }
+        String targetName = category.getName() == null ? "分类 #" + categoryId : category.getName();
         String taskId = graphTaskManager.tryStart(userId, GraphTaskManager.TaskType.CATEGORY,
-                String.valueOf(categoryId), "分类 #" + categoryId);
+                String.valueOf(categoryId), targetName);
         if (taskId == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "该分类正在构建图谱中，请稍后再试");
         }
@@ -88,7 +97,7 @@ public class GraphController {
         LoginUser loginUser = SecurityUtils.getLoginUser();
         graphTaskRunner.submitSafe(userId, taskId, graphTaskManager, generation, () ->
                 graphTaskRunner.runCategory(userId, categoryId, graphTaskManager, taskId, generation, loginUser));
-        return Result.success("分类图谱构建已提交", buildTaskView(taskId, GraphTaskManager.TaskType.CATEGORY, String.valueOf(categoryId), "分类 #" + categoryId));
+        return Result.success("分类图谱构建已提交", buildTaskView(taskId, GraphTaskManager.TaskType.CATEGORY, String.valueOf(categoryId), targetName));
     }
 
     @GetMapping("/api/graph/category/{categoryId}")
@@ -99,7 +108,10 @@ public class GraphController {
     @PostMapping("/api/graph/global/build")
     public Result<Map<String, Object>> buildGlobal() {
         Long userId = SecurityUtils.getUserId();
-        String taskId = graphTaskManager.tryStart(userId, GraphTaskManager.TaskType.GLOBAL, "global", "全局知识体系");
+        // targetId 按用户命名空间隔离：此前所有用户共享 GLOBAL:global，
+        // 单用户提交后其他用户会被"正在构建中"阻塞且看不到任务状态
+        String targetId = "user-" + userId;
+        String taskId = graphTaskManager.tryStart(userId, GraphTaskManager.TaskType.GLOBAL, targetId, "全局知识体系");
         if (taskId == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "全局图谱正在构建中，请稍后再试");
         }
@@ -107,7 +119,7 @@ public class GraphController {
         LoginUser loginUser = SecurityUtils.getLoginUser();
         graphTaskRunner.submitSafe(userId, taskId, graphTaskManager, generation, () ->
                 graphTaskRunner.runGlobal(userId, graphTaskManager, taskId, generation, loginUser));
-        return Result.success("全局图谱构建已提交", buildTaskView(taskId, GraphTaskManager.TaskType.GLOBAL, "global", "全局知识体系"));
+        return Result.success("全局图谱构建已提交", buildTaskView(taskId, GraphTaskManager.TaskType.GLOBAL, targetId, "全局知识体系"));
     }
 
     @GetMapping("/api/graph/global")
@@ -137,11 +149,13 @@ public class GraphController {
     @DeleteMapping("/api/graph/tasks/{taskId}")
     public Result<Boolean> deleteTask(@PathVariable("taskId") String taskId) {
         Long userId = SecurityUtils.getUserId();
-        boolean ok = graphTaskManager.remove(userId, taskId);
-        if (!ok) {
+        // 运行中的任务先请求取消（在笔记粒度中断后续 AI 抽取），再移除记录
+        boolean cancelRequested = graphTaskManager.requestCancel(userId, taskId);
+        boolean removed = graphTaskManager.remove(userId, taskId);
+        if (!removed && !cancelRequested) {
             return Result.error(404, "任务不存在或无权操作");
         }
-        return Result.success("任务记录已删除", Boolean.TRUE);
+        return Result.success(cancelRequested ? "已取消任务并删除记录" : "任务记录已删除", Boolean.TRUE);
     }
 
     @GetMapping("/api/v1/admin/graph/overview")

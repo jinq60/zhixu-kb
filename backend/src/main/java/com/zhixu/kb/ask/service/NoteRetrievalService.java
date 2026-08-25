@@ -73,10 +73,15 @@ public class NoteRetrievalService {
                         .filter(java.util.Objects::nonNull)
                         .distinct()
                         .collect(Collectors.toList());
+                // 纵深防御：不信任向量库 filter 的隔离效果，MySQL 侧强制按用户过滤，
+                // 防止 Milvus 与库表数据不一致时召回他人笔记
                 java.util.Map<Long, Note> hitNotes = hitIds.isEmpty()
                         ? Collections.emptyMap()
-                        : noteMapper.selectBatchIds(hitIds).stream()
-                                .filter(n -> n.getIsDeleted() == null || n.getIsDeleted() == 0)
+                        : noteMapper.selectList(new QueryWrapper<Note>().lambda()
+                                        .in(Note::getId, hitIds)
+                                        .eq(Note::getUserId, userId)
+                                        .and(w -> w.eq(Note::getIsDeleted, 0).or().isNull(Note::getIsDeleted)))
+                                .stream()
                                 .collect(java.util.stream.Collectors.toMap(Note::getId, n -> n));
                 for (com.zhixu.kb.note.service.NoteEmbeddingService.VectorHit hit : vectorHits) {
                     if (hit.getNoteId() == null || seen.contains(hit.getNoteId())) {
