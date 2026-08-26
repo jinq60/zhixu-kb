@@ -7,13 +7,31 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-const navItems = computed(() => [
+interface NavItem {
+  path: string
+  label: string
+  icon: string
+  /** 外部链接（如 Kibana 日志中心）时直接新窗口打开，不走路由 */
+  external?: string
+}
+
+const navItems = computed<NavItem[]>(() => [
   { path: '/admin/ops', label: '系统总览', icon: 'Odometer' },
+  { path: '/admin/runtime', label: '运行状态', icon: 'Monitor' },
   { path: '/admin/ai/endpoints', label: 'AI 端点管理', icon: 'Connection' },
-  { path: '/admin/users', label: '用户治理', icon: 'UserFilled' }
+  { path: '/admin/users', label: '用户治理', icon: 'UserFilled' },
+  { path: '/admin/logs', label: '系统日志', icon: 'Document' }
 ])
 
 const isActive = (path: string) => route.path === path || route.path.startsWith(`${path}/`)
+
+const handleNav = (item: NavItem) => {
+  if (item.external) {
+    window.open(item.external, '_blank', 'noopener')
+    return
+  }
+  router.push(item.path)
+}
 </script>
 
 <template>
@@ -33,11 +51,12 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
           :key="item.path"
           type="button"
           class="admin-nav-item"
-          :class="{ active: isActive(item.path) }"
-          @click="router.push(item.path)"
+          :class="{ active: !item.external && isActive(item.path) }"
+          @click="handleNav(item)"
         >
           <el-icon class="admin-nav-icon"><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
+          <el-icon v-if="item.external" class="admin-nav-external"><TopRight /></el-icon>
         </button>
       </nav>
 
@@ -160,6 +179,12 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
 .admin-nav-icon {
   font-size: 17px;
   flex-shrink: 0;
+}
+
+.admin-nav-external {
+  margin-left: auto;
+  font-size: 12px;
+  opacity: 0.55;
 }
 
 .admin-footer {

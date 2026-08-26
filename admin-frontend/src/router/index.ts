@@ -8,8 +8,10 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../components/AdminLayout.vue'),
     children: [
       { path: 'ops', component: () => import('../views/AdminOverviewView.vue') },
+      { path: 'runtime', component: () => import('../views/AdminRuntimeView.vue') },
       { path: 'ai/endpoints', component: () => import('../views/AdminAiEndpointsView.vue') },
-      { path: 'users', component: () => import('../views/AdminUsersView.vue') }
+      { path: 'users', component: () => import('../views/AdminUsersView.vue') },
+      { path: 'logs', component: () => import('../views/AdminLogsView.vue') }
     ]
   },
   { path: '/', redirect: '/admin/ops' },

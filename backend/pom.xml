@@ -37,6 +37,32 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- 结构化 JSON 日志输出（ELK/Filebeat 采集）：7.2 为支持 logback 1.2.x（Boot 2.7）的最后版本 -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.2</version>
+        </dependency>
+
+        <!-- Docker 状态采集（管理端「运行状态」页）：zerodep 传输 Java 8 兼容、无额外依赖。
+             必须排除其自带的 guava 19.0——会覆盖 Milvus SDK(gRPC) 所需的新版 Guava 导致启动崩溃 -->
+        <dependency>
+            <groupId>com.github.docker-java</groupId>
+            <artifactId>docker-java-core</artifactId>
+            <version>3.3.6</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.guava</groupId>
+                    <artifactId>guava</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.github.docker-java</groupId>
+            <artifactId>docker-java-transport-zerodep</artifactId>
+            <version>3.3.6</version>
+        </dependency>
+
         <!-- Spring Boot Validation -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

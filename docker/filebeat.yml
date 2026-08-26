@@ -1,0 +1,32 @@
+# =====================================================================
+# Filebeat 采集配置：读取后端 JSON 日志 → Elasticsearch
+# 数据视图（Kibana 中创建）：模式 zhixu-backend-*，时间字段 @timestamp
+# =====================================================================
+filebeat.inputs:
+  - type: filestream
+    id: zhixu-backend-json
+    enabled: true
+    paths:
+      - /logs/zhixu-backend*.log
+    # 后端为逐行 JSON（logstash-logback-encoder），直接解析为字段
+    parsers:
+      - ndjson:
+          overwrite_keys: true
+          add_error_key: true
+          target: ""
+    fields_under_root: true
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  index: "zhixu-backend-%{+yyyy.MM.dd}"
+
+# 索引模板：禁用 ILM（本地单机无需生命周期管理），统一模板名
+setup.template.name: "zhixu-backend"
+setup.template.pattern: "zhixu-backend-*"
+setup.ilm.enabled: false
+
+# 采集位点持久化（filebeat-data 卷），避免容器重启后整份日志重复入库
+filebeat.registry.path: /usr/share/filebeat/data
+
+logging.level: info
+logging.to_stderr: true

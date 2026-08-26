@@ -217,6 +217,10 @@ services:
     restart: unless-stopped
     mem_limit: 2g
     cpus: 1.0
+    # Docker Desktop(WSL2) 中 docker.sock 属主为 root:root(660)，
+    # 非 root 的 app 用户需补充 root 组才能只读访问（仅本机部署场景）
+    group_add:
+      - "0"
     environment:
       <<: *common-env
       DB_URL: jdbc:mysql://mysql:3306/zhixu_kb?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
@@ -267,10 +271,16 @@ services:
       # 198.18.0.0/15 或 IPv6 ULA 段，默认会被 SafeUrlValidator 拒绝。
       # Docker 环境默认放行（与本地启动脚本一致），生产环境请显式设置 SSRF_ALLOW_FAKE_IP=false。
       JAVA_TOOL_OPTIONS: "-Dssrf.allow-fake-ip-ranges=${SSRF_ALLOW_FAKE_IP:-true}"
+      # JSON 日志输出目录（logback-spring.xml 引用，供 Filebeat 采集）
+      LOG_FILE_PATH: /app/logs
     ports:
       - "8080:8080"
     volumes:
       - backend-uploads:/app/uploads
+      - backend-logs:/app/logs
+      # 运行状态页采集容器状态（只读）。注意：docker.sock 等效宿主机 root 权限，
+      # 生产环境请评估风险或改用只读代理（如 socket-proxy）
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health || exit 1"]
@@ -314,6 +324,101 @@ services:
         condition: service_healthy
     logging: *default-logging
 
+  # ---------------- ELK 日志栈（profile: logs，按需启动） ----------------
+  # 启动：docker compose --profile logs up -d
+  # 注意（WSL2/Docker Desktop）：Elasticsearch 需要
+  #   wsl -d docker-desktop -u root sysctl -w vm.max_map_count=262144
+  # Kibana 日志中心：http://localhost:5601 （数据视图模式 zhixu-backend-*）
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    container_name: zhixu-elasticsearch
+    restart: unless-stopped
+    profiles: ["logs"]
+    environment:
+      <<: *common-env
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      # 仅本机可达
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.14.3
+    container_name: zhixu-kibana
+    restart: unless-stopped
+    profiles: ["logs"]
+    environment:
+      <<: *common-env
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      # 本地单机：关闭安全与遥测（生产必须开启 TLS + 鉴权）
+      XPACK_SECURITY_ENABLED: "false"
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: zhixu-kb-local-kibana-key-0123456789
+      TELEMETRY_OPTIN: "false"
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "127.0.0.1:5601:5601"
+    logging: *default-logging
+    mem_limit: 800m
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:5601/api/status || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.14.3
+    container_name: zhixu-filebeat
+    restart: unless-stopped
+    profiles: ["logs"]
+    user: root
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    environment:
+      <<: *common-env
+    volumes:
+      - ./docker/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - backend-logs:/logs:ro
+      - filebeat-data:/usr/share/filebeat/data
+    logging: *default-logging
+    mem_limit: 300m
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # ---------------- Portainer 容器面板（profile: logs） ----------------
+  # 浏览器查看任意容器日志/统计/终端/启停：http://localhost:9000
+  # 首次访问需创建本地管理员账号（几分钟不设置会自动锁定，重启容器可重试）
+  portainer:
+    image: portainer/portainer-ce:2.21.4
+    container_name: zhixu-portainer
+    restart: unless-stopped
+    profiles: ["logs"]
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - portainer-data:/data
+      # 只读挂载：Portainer 仅做状态/日志/终端，不需要改动 Docker 实体的写权限场景
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    logging: *default-logging
+    mem_limit: 256m
+
 volumes:
   mysql-data:
   redis-data:
@@ -324,3 +429,7 @@ volumes:
   ocr-tmp:
   xberg-cache:
   backend-uploads:
+  backend-logs:
+  es-data:
+  filebeat-data:
+  portainer-data:

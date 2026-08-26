@@ -152,7 +152,27 @@ docker compose ps
 - **健康检查**：`docker compose ps` 中 mysql/redis/neo4j 显示 healthy 后
   后端才正式提供服务。
 
-### 5.4 数据备份与恢复
+### 5.4 ELK 日志中心（可选，profile: logs）
+
+后端同时输出控制台日志与结构化 JSON 日志（`/app/logs/zhixu-backend.json.log`，
+内容与控制台同一套脱敏规则），Filebeat 采集进 Elasticsearch，Kibana 查询。
+
+```powershell
+# 1. WSL2/Docker Desktop 必须先调内核参数（重启 Docker Desktop 后需重设）：
+wsl -d docker-desktop -u root sysctl -w vm.max_map_count=262144
+
+# 2. 启动日志栈（ES + Kibana + Filebeat，约 2~2.5GB 内存）：
+docker compose --profile logs up -d
+
+# 3. 打开 Kibana：http://localhost:5601
+#    首次使用：Stack Management → Data Views → 创建 zhixu-backend-*（时间字段 @timestamp）
+#    管理后台侧边栏「系统日志」可直达
+```
+
+资源占用：ES ~1.2GB / Kibana ~800MB / Filebeat ~300MB；不启用 profile 时主栈不受影响。
+生产部署必须开启 ES/Kibana 的 TLS 与鉴权（当前为本地单机配置）。
+
+### 5.5 数据备份与恢复
 
 ```powershell
 # 手动备份（输出到 backups/mysql/，保留最近 14 天）
@@ -165,7 +185,7 @@ schtasks /Create /TN "zhixu-mysql-backup" /SC DAILY /ST 03:00 /TR "powershell -E
 # docker exec -i zhixu-mysql mysql -uroot -proot zhixu_kb < 备份文件.sql
 ```
 
-### 5.5 生产安全清单（上线前必读）
+### 5.6 生产安全清单（上线前必读）
 
 - **HTTPS**：公网部署必须在 nginx 前加 TLS 终止（域名证书 / 云负载均衡），
   否则密码、JWT、AI Key 均明文传输

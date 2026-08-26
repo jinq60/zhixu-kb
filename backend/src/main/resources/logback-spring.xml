@@ -6,6 +6,9 @@
     <property name="LOG_PATTERN"
               value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %maskedMsg%n"/>
 
+    <!-- JSON 日志目录：本地默认 ./logs，Docker 中由 LOG_FILE_PATH=/app/logs 覆盖 -->
+    <property name="JSON_LOG_DIR" value="${LOG_FILE_PATH:-./logs}"/>
+
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>${LOG_PATTERN}</pattern>
@@ -13,7 +16,41 @@
         </encoder>
     </appender>
 
+    <!-- 结构化 JSON 日志（供 Filebeat 采集进 Elasticsearch/Kibana）：
+         message 走 %maskedMsg 与控制台同一套脱敏规则 -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${JSON_LOG_DIR}/zhixu-backend.json.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${JSON_LOG_DIR}/zhixu-backend.json.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp/>
+                <pattern>
+                    <pattern>
+                        {
+                            "level": "%level",
+                            "logger": "%logger{36}",
+                            "thread": "%thread",
+                            "traceId": "%X{traceId:-}",
+                            "message": "%maskedMsg"
+                        }
+                    </pattern>
+                </pattern>
+                <stackTrace/>
+            </providers>
+        </encoder>
+    </appender>
+
+    <!-- 管理端「系统日志」页数据源：写入内存环形缓冲（消息同样脱敏） -->
+    <appender name="ADMIN_RING" class="com.zhixu.kb.admin.log.AdminLogAppender"/>
+
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="JSON_FILE"/>
+        <appender-ref ref="ADMIN_RING"/>
     </root>
 </configuration>
