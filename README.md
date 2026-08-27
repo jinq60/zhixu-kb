@@ -58,7 +58,7 @@ IntelligentKnowledgeBase/
 
 ## 3. 环境要求
 
-- JDK 8、Maven 3.6+（或项目自带 `mvnw.cmd`）
+- JDK 17+、Maven 3.6+（或项目自带 `mvnw.cmd`；Java 17 为桌面版 jpackage 打包前提）
 - Node.js ^20.19.0 或 >=22.12.0、npm 10+
 - Python 3.10+（Windows 建议 3.10）
 - MySQL 8.0（全文检索依赖 ngram 解析器）

@@ -1,8 +1,8 @@
 # =====================================================================
 # 知序智能知识库 - 后端镜像
-# 多阶段构建：Maven 构建 jar → JRE 8 运行
+# 多阶段构建：Maven 构建 jar + JRE 17 运行（Java 17 为 jpackage 桌面版打包前提）
 # =====================================================================
-FROM maven:3.9-eclipse-temurin-8 AS build
+FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /build
 
 COPY pom.xml .
@@ -12,7 +12,7 @@ COPY src ./src
 RUN mvn -q -B -DskipTests package
 
 # ---------- 运行镜像 ----------
-FROM eclipse-temurin:8-jre
+FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 COPY --from=build /build/target/*.jar app.jar
