@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createNote, deleteNote, getMyNoteStats, listNotes, searchNotes, type Note, type NoteStats } from '../api/note'
 import { listCategories, type Category } from '../api/category'
 import { useRouter } from 'vue-router'
+import { runWorkspaceTour, shouldRunTour } from '../utils/onboarding'
 
 const router = useRouter()
 const loading = ref(false)
@@ -187,6 +188,12 @@ onMounted(() => {
   fetchCategories()
   fetchStats()
   fetchData()
+  // 首次进入工作台：自动播放新手引导（网页端与桌面版共用）
+  if (shouldRunTour()) {
+    nextTick(() => {
+      window.setTimeout(() => runWorkspaceTour(), 600)
+    })
+  }
 })
 </script>
 
@@ -202,7 +209,7 @@ onMounted(() => {
       </div>
 
       <div class="hero-actions">
-        <el-button type="primary" size="large" @click="createDialog = true">新建笔记</el-button>
+        <el-button id="tour-create-note" type="primary" size="large" @click="createDialog = true">新建笔记</el-button>
         <el-button size="large" @click="router.push('/categories')">分类管理</el-button>
       </div>
     </section>

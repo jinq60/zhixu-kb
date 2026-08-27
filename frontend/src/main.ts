@@ -28,5 +28,10 @@ authStore
   .initDesktopSession()
   .catch(() => undefined)
   .finally(() => {
+    // 桌面版默认落在工作台（网页版的落地页/marketing 页对桌面无意义）
+    const current = router.currentRoute.value.path
+    if (authStore.appMode === 'desktop' && (current === '/' || current === '/home')) {
+      router.replace('/notes')
+    }
     app.mount('#app')
   })

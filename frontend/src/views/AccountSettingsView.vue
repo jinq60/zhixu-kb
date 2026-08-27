@@ -8,6 +8,17 @@ import {
   bindEmail,
   type UserProfile
 } from '../api/auth'
+import { resetTour, runWorkspaceTour } from '../utils/onboarding'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+/** 重新播放新手引导：跳回工作台首页后启动 */
+const replayOnboarding = () => {
+  resetTour()
+  router.push('/notes')
+  window.setTimeout(() => runWorkspaceTour(), 600)
+}
 
 const profile = ref<UserProfile | null>(null)
 const loading = ref(false)
@@ -161,6 +172,17 @@ onBeforeUnmount(() => {
     <h1 class="page-title">账号设置</h1>
 
     <div v-loading="loading" class="settings-card">
+      <div class="section">
+        <h2 class="section-title">新手引导</h2>
+        <div class="info-list">
+          <div class="info-item">
+            <span class="info-label">产品功能导览</span>
+            <span class="info-value empty">首次使用？花 30 秒了解核心功能</span>
+            <el-button type="primary" link size="small" @click="replayOnboarding">重新查看引导</el-button>
+          </div>
+        </div>
+      </div>
+
       <div class="section">
         <h2 class="section-title">基本信息</h2>
         <div class="info-list">

@@ -27,6 +27,8 @@ interface NavItem {
   path: string
   label: string
   icon: typeof Notebook
+  /** 新手引导锚点 id（可选） */
+  tourId?: string
 }
 
 const navItems = computed<NavItem[]>(() => {
@@ -35,7 +37,7 @@ const navItems = computed<NavItem[]>(() => {
     { path: '/ask', label: '知识问答', icon: ChatDotRound },
     { path: '/graph', label: '知识图谱', icon: Share },
     { path: '/categories', label: '分类管理', icon: FolderOpened },
-    { path: '/settings/ai', label: 'AI 设置', icon: MagicStick }
+    { path: '/settings/ai', label: 'AI 设置', icon: MagicStick, tourId: 'nav-ai-settings' }
   ]
   return items
 })
@@ -66,6 +68,7 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
             type="button"
             class="sidebar-item"
             :class="{ active: isActive(item.path) }"
+            :id="item.tourId"
             @click="router.push(item.path)"
           >
             <el-icon class="sidebar-icon"><component :is="item.icon" /></el-icon>

@@ -254,6 +254,7 @@ const goHomeHash = (hash: string) => {
         <!-- 任务中心角标（登录 + 工作台时始终显示，点击打开任务中心弹窗） -->
         <div
           v-if="isWorkspace && auth.isLoggedIn"
+          id="tour-task-center"
           class="task-badge"
         >
           <button class="task-btn" @click="taskDialogVisible = true">
