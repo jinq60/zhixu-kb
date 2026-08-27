@@ -40,6 +40,10 @@ public class NoteRetrievalService {
     private final NoteMapper noteMapper;
     private final com.zhixu.kb.note.service.NoteEmbeddingService noteEmbeddingService;
 
+    /** 是否启用 MySQL FULLTEXT(ngram)；H2 桌面版为 false，走 LIKE 降级路径 */
+    @org.springframework.beans.factory.annotation.Value("${app.search.fulltext-enabled:true}")
+    private boolean fulltextEnabled;
+
     /**
      * 在指定用户的笔记库中检索，返回 topK 篇笔记及其相关片段。
      * 混合召回：
@@ -103,20 +107,33 @@ public class NoteRetrievalService {
             log.warn("Vector recall failed, skip: {}", e.getMessage());
         }
 
-        // 1) FULLTEXT 全库命中（解决旧笔记检索不到的问题）。
-        //    两路 MATCH OR：ft_content(title, content) + ft_meta(summary, keywords, ocr_text)，
+        // 1) 全库命中：MySQL 走 FULLTEXT(ngram)；H2(桌面版) 走 LIKE 降级路径
+        //    （app.search.fulltext-enabled=false 时，两路 MATCH 换成五列 LIKE OR，
         //    命中仅存在于摘要/关键词/OCR 文本的笔记不再依赖"最近扫描"兜底。
-        //    ft_meta 索引由 SearchIndexMigrator 启动时幂等补建；缺失时本查询抛错，
-        //    由下方 catch 降级为最近笔记扫描，不影响服务可用性。
+        //    FULLTEXT 索引缺失时 MATCH 查询抛错，由下方 catch 降级为最近笔记扫描，不影响可用性）
         try {
-            List<Note> ftHits = noteMapper.selectList(new QueryWrapper<Note>()
+            QueryWrapper<Note> fulltextQuery = new QueryWrapper<Note>()
                     .select("id", "title", "summary", "keywords", "content", "ocr_text")
                     .eq("user_id", userId)
-                    .eq("is_deleted", 0)
-                    .and(w -> w
-                            .apply("MATCH(title, content) AGAINST({0} IN NATURAL LANGUAGE MODE)", trimmedQuery)
-                            .or()
-                            .apply("MATCH(summary, keywords, ocr_text) AGAINST({0} IN NATURAL LANGUAGE MODE)", trimmedQuery))
+                    .eq("is_deleted", 0);
+            if (fulltextEnabled) {
+                fulltextQuery.and(w -> w
+                        .apply("MATCH(title, content) AGAINST({0} IN NATURAL LANGUAGE MODE)", trimmedQuery)
+                        .or()
+                        .apply("MATCH(summary, keywords, ocr_text) AGAINST({0} IN NATURAL LANGUAGE MODE)", trimmedQuery));
+            } else {
+                // H2/桌面版：LIKE 降级（通配符转义防止 %/_ 改变匹配语义）
+                String likeKeyword = trimmedQuery.replaceAll("[\\\\%_]", " ").trim();
+                if (StringUtils.hasText(likeKeyword)) {
+                    fulltextQuery.and(w -> w
+                            .like("title", likeKeyword)
+                            .or().like("summary", likeKeyword)
+                            .or().like("keywords", likeKeyword)
+                            .or().like("ocr_text", likeKeyword)
+                            .or().like("content", likeKeyword));
+                }
+            }
+            List<Note> ftHits = noteMapper.selectList(fulltextQuery
                     .orderByDesc("id")
                     .last("LIMIT " + MAX_FULLTEXT_HITS));
             if (ftHits != null) {

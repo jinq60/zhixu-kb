@@ -4,6 +4,7 @@ import com.zhixu.kb.security.JwtAuthenticationFilter;
 import com.zhixu.kb.security.RateLimitFilter;
 import com.zhixu.kb.security.RequestTraceFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -31,6 +32,7 @@ public class SecurityConfig {
     private final RateLimitFilter rateLimitFilter;
     private final RequestTraceFilter requestTraceFilter;
     private final Environment environment;
+    private final ObjectProvider<com.zhixu.kb.system.auth.DesktopAutoLoginFilter> desktopAutoLoginFilterProvider;
 
     private static final String[] PUBLIC_ENDPOINTS = {
             "/api/auth/login",
@@ -45,6 +47,9 @@ public class SecurityConfig {
             "/api/public/**",
             "/api/health",
             "/api/v1/health",
+            "/api/app-config",
+            // 仅存在于桌面版 jar（服务器版无对应 Controller，配置保留无害）
+            "/api/auth/desktop-token",
             "/v3/api-docs/**",
             "/swagger-ui/**",
             "/swagger-ui.html",
@@ -79,12 +84,29 @@ public class SecurityConfig {
                     .authenticated();
         }
 
+        // 桌面版：后端直接托管前端静态资源与 SPA history 路由——
+        // 非幂等的 API 读接口先锁 authenticated，其余非 API 的 GET（静态资源/前端路由）放行
+        if (isDesktopProfile()) {
+            http.authorizeRequests()
+                    .antMatchers(HttpMethod.GET, "/api/**").authenticated()
+                    .antMatchers("/", "/index.html", "/favicon.ico", "/assets/**", "/logo/**").permitAll()
+                    .antMatchers(HttpMethod.GET,
+                            "/{path:[^\\.]*}", "/{p1}/{path2:[^\\.]*}", "/{p1}/{p2}/{path3:[^\\.]*}")
+                    .permitAll();
+        }
+
         http.authorizeRequests()
                 .anyRequest().authenticated();
 
         http.addFilterBefore(requestTraceFilter, UsernamePasswordAuthenticationFilter.class);
         http.addFilterAfter(jwtAuthenticationFilter, RequestTraceFilter.class);
         http.addFilterAfter(rateLimitFilter, JwtAuthenticationFilter.class);
+        // 桌面版（desktop profile）：JWT 过滤器之后挂自动登录过滤器（服务器版该 Bean 不存在，跳过）
+        com.zhixu.kb.system.auth.DesktopAutoLoginFilter desktopAutoLoginFilter =
+                desktopAutoLoginFilterProvider.getIfAvailable();
+        if (desktopAutoLoginFilter != null) {
+            http.addFilterAfter(desktopAutoLoginFilter, JwtAuthenticationFilter.class);
+        }
         return http.build();
     }
 
@@ -115,6 +137,10 @@ public class SecurityConfig {
 
     private boolean isProdProfile() {
         return environment != null && Arrays.asList(environment.getActiveProfiles()).contains("prod");
+    }
+
+    private boolean isDesktopProfile() {
+        return environment != null && Arrays.asList(environment.getActiveProfiles()).contains("desktop");
     }
 
     @Bean

@@ -3,15 +3,90 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getAiConfig, saveAiConfig, clearAiConfig, testAiConnection, type AiUserConfig } from '../api/ai'
 
-/** 多厂商预设（全部 OpenAI 兼容协议） */
+/** 多厂商预设（全部 OpenAI 兼容协议）：含接口地址/常用模型 ID/取 Key 入口，
+ *  模型均可下拉选择或手动输入自定义 ID */
 const PROVIDERS = [
-  { key: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'] },
-  { key: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-4o-mini', 'gpt-4o'] },
-  { key: 'moonshot', name: 'Kimi（月之暗面）', baseUrl: 'https://api.moonshot.cn/v1', models: ['moonshot-v1-8k', 'moonshot-v1-32k'] },
-  { key: 'zhipu', name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-flash', 'glm-4-air'] },
-  { key: 'qwen', name: '通义千问（阿里云）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-plus', 'qwen-turbo'] },
-  { key: 'siliconflow', name: '硅基流动 SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1'] },
-  { key: 'custom', name: '自定义（OpenAI 兼容）', baseUrl: '', models: [] }
+  {
+    key: 'deepseek',
+    name: 'DeepSeek（深度求索）',
+    baseUrl: 'https://api.deepseek.com',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    embeddingModels: [],
+    keyUrl: 'https://platform.deepseek.com/api_keys',
+    note: '国内直连；deepseek-chat 为主力对话模型，价格低'
+  },
+  {
+    key: 'openai',
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'o4-mini'],
+    embeddingModels: ['text-embedding-3-small', 'text-embedding-3-large'],
+    keyUrl: 'https://platform.openai.com/api-keys',
+    note: '国内需自备网络；text-embedding-3-small 可直接用作向量化'
+  },
+  {
+    key: 'moonshot',
+    name: 'Kimi（月之暗面）',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k', 'kimi-k2-0711-preview'],
+    embeddingModels: [],
+    keyUrl: 'https://platform.moonshot.cn/console/api-keys',
+    note: '国内直连；长文本能力强，按上下文长度选模型（8k/32k/128k）'
+  },
+  {
+    key: 'zhipu',
+    name: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    models: ['glm-4-flash', 'glm-4-air', 'glm-4-plus', 'glm-4-long'],
+    embeddingModels: ['embedding-3'],
+    keyUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+    note: '国内直连；glm-4-flash 免费，适合先体验'
+  },
+  {
+    key: 'qwen',
+    name: '通义千问（阿里云百炼）',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-long'],
+    embeddingModels: ['text-embedding-v3', 'text-embedding-v2'],
+    keyUrl: 'https://bailian.console.aliyun.com/?apiKey=1',
+    note: '国内直连；text-embedding-v3 可用作向量化'
+  },
+  {
+    key: 'siliconflow',
+    name: '硅基流动 SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    models: [
+      'deepseek-ai/DeepSeek-V3',
+      'Qwen/Qwen2.5-72B-Instruct',
+      'THUDM/glm-4-9b-chat',
+      'deepseek-ai/DeepSeek-R1'
+    ],
+    embeddingModels: ['BAAI/bge-m3', 'netease-youdao/bce-embedding-base_v1'],
+    keyUrl: 'https://cloud.siliconflow.cn/account/ak',
+    note: '国内直连；聚合多家开源模型，BAAI/bge-m3 是常用向量化模型，注册送额度'
+  },
+  {
+    key: 'openrouter',
+    name: 'OpenRouter（聚合）',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    models: [
+      'deepseek/deepseek-chat',
+      'google/gemini-2.0-flash-exp:free',
+      'meta-llama/llama-3.3-70b-instruct'
+    ],
+    embeddingModels: [],
+    keyUrl: 'https://openrouter.ai/keys',
+    note: '国际聚合网关，部分模型带 :free 后缀可零成本使用'
+  },
+  {
+    key: 'custom',
+    name: '自定义（OpenAI 兼容）',
+    baseUrl: '',
+    models: [],
+    embeddingModels: [],
+    keyUrl: '',
+    note: '任何兼容 OpenAI /chat/completions 协议的服务均可接入'
+  }
 ]
 
 const loading = ref(false)
@@ -43,6 +118,9 @@ const selectProvider = (key: string) => {
     form.value.model = provider.models[0]
   }
 }
+
+/** 当前厂商的预设信息（模板区展示模型下拉/取 Key 链接/说明用） */
+const activeProvider = () => PROVIDERS.find((p) => p.key === form.value.provider)
 
 const load = async () => {
   loading.value = true
@@ -195,12 +273,31 @@ onMounted(load)
                 show-password
                 :placeholder="apiKeyMasked ? `已保存（${apiKeyMasked}），留空保持不变` : 'sk-...'"
               />
-              <span class="form-tip">Key 加密存储，仅用于调用你选择的模型</span>
+              <span class="form-tip">
+                Key 加密存储，仅用于调用你选择的模型
+                <a
+                  v-if="activeProvider()?.keyUrl"
+                  :href="activeProvider()?.keyUrl"
+                  target="_blank"
+                  rel="noopener"
+                  class="key-link"
+                >获取 {{ activeProvider()?.name.split('（')[0] }} Key →</a>
+              </span>
             </el-form-item>
 
             <el-form-item label="模型名称">
-              <el-input v-model="form.model" placeholder="deepseek-chat" />
+              <el-select
+                v-model="form.model"
+                filterable
+                allow-create
+                default-first-option
+                placeholder="选择预设或输入模型 ID"
+              >
+                <el-option v-for="m in activeProvider()?.models || []" :key="m" :label="m" :value="m" />
+              </el-select>
             </el-form-item>
+
+            <div v-if="activeProvider()?.note" class="provider-note">{{ activeProvider()?.note }}</div>
 
             <el-form-item label="启用">
               <el-switch v-model="form.enabled" />
@@ -245,7 +342,23 @@ onMounted(load)
             </el-form-item>
 
             <el-form-item label="向量化模型">
-              <el-input v-model="form.embeddingModel" placeholder="text-embedding-3-small（如 BAAI/bge-m3）" />
+              <el-select
+                v-model="form.embeddingModel"
+                filterable
+                allow-create
+                default-first-option
+                clearable
+                placeholder="选择预设或输入模型 ID"
+              >
+                <el-option
+                  v-for="m in activeProvider()?.embeddingModels?.length
+                    ? activeProvider()?.embeddingModels
+                    : ['text-embedding-3-small', 'BAAI/bge-m3']"
+                  :key="m"
+                  :label="m"
+                  :value="m"
+                />
+              </el-select>
               <span class="form-tip">推荐：硅基流动 BAAI/bge-m3，或 OpenAI text-embedding-3-small</span>
             </el-form-item>
 
@@ -353,6 +466,23 @@ onMounted(load)
   margin-left: 10px;
   color: #b0b8c4;
   font-size: 12px;
+}
+
+.key-link {
+  margin-left: 8px;
+  color: #409eff;
+  text-decoration: none;
+}
+
+.provider-note {
+  margin: 0 0 14px 110px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px dashed #e6e8eb;
+  border-radius: 8px;
+  color: #8b96a5;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .action-row {

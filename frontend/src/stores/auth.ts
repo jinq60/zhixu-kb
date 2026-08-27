@@ -8,6 +8,8 @@ import {
   smsCodeLogin as apiSmsCodeLogin,
   sendSmsCode as apiSendSmsCode,
   fetchUserInfo,
+  fetchAppConfig,
+  fetchDesktopToken,
   logout as apiLogout
 } from '../api/auth'
 
@@ -23,13 +25,16 @@ interface AuthState {
   token: string | null
   user: UserInfo | null
   showLoginModal: boolean
+  /** 应用形态：desktop=桌面版 exe / server=在线服务 */
+  appMode: 'desktop' | 'server'
 }
 
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
     token: null,
     user: null,
-    showLoginModal: false
+    showLoginModal: false,
+    appMode: 'server'
   }),
   persist: {
     paths: ['token', 'user']
@@ -41,6 +46,25 @@ export const useAuthStore = defineStore('auth', {
   actions: {
     setToken(token: string) {
       this.token = token
+    },
+    /**
+     * 应用启动时调用：探测运行形态；桌面版自动建立本地单用户会话（免登录）。
+     * 服务器版无任何副作用。
+     */
+    async initDesktopSession(): Promise<void> {
+      if (this.appMode === 'desktop') return
+      try {
+        const config = await fetchAppConfig()
+        this.appMode = config.mode === 'desktop' ? 'desktop' : 'server'
+        if (this.appMode === 'desktop' && !this.token) {
+          const { token } = await fetchDesktopToken()
+          this.token = token
+          await this.refreshUser()
+        }
+      } catch {
+        // 探测失败按服务器版处理（不影响在线服务）
+        this.appMode = 'server'
+      }
     },
     setUser(user: UserInfo) {
       this.user = user

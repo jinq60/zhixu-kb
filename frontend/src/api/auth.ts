@@ -60,6 +60,18 @@ export async function fetchUserInfo(): Promise<UserInfo> {
   return data.data
 }
 
+/** 应用形态：desktop=桌面版 exe / server=在线服务（服务器版同样返回，用于功能开关） */
+export async function fetchAppConfig(): Promise<{ mode: 'desktop' | 'server'; appName?: string }> {
+  const { data } = await http.get('/api/app-config')
+  return data.data
+}
+
+/** 桌面版本地单用户会话（该端点仅存在于桌面版后端） */
+export async function fetchDesktopToken(): Promise<{ token: string; username: string }> {
+  const { data } = await http.post('/api/auth/desktop-token')
+  return data.data
+}
+
 /** 调用后端撤销当前 Token */
 export async function logout(): Promise<void> {
   await http.post('/api/auth/logout')

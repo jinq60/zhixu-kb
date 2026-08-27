@@ -7,6 +7,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import pinia from './stores'
+import { useAuthStore } from './stores/auth'
 import './styles/console.css'
 
 const app = createApp(App)
@@ -21,4 +22,11 @@ app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
-app.mount('#app')
+// 应用形态探测：桌面版（exe）自动建立本地单用户会话，免登录直达工作台
+const authStore = useAuthStore()
+authStore
+  .initDesktopSession()
+  .catch(() => undefined)
+  .finally(() => {
+    app.mount('#app')
+  })

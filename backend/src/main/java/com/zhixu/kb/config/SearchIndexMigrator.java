@@ -28,8 +28,16 @@ public class SearchIndexMigrator implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /** H2(桌面版) 无 ngram FULLTEXT：关闭时跳过迁移，避免无意义的失败告警 */
+    @org.springframework.beans.factory.annotation.Value("${app.search.fulltext-enabled:true}")
+    private boolean fulltextEnabled;
+
     @Override
     public void run(ApplicationArguments args) {
+        if (!fulltextEnabled) {
+            log.info("FULLTEXT disabled (app.search.fulltext-enabled=false), skip index migration");
+            return;
+        }
         try {
             Integer exists = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM information_schema.statistics "

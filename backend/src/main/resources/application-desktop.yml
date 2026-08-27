@@ -1,0 +1,66 @@
+# =====================================================================
+# 桌面版 profile（spring.profiles.active=desktop 时生效）
+# 原则：只新增、不覆盖服务器版行为——服务器 Docker 部署不带此 profile，完全不受影响。
+# 组件策略：H2 替代 MySQL；Redis/Neo4j/Milvus/xberg 全部关闭（代码内降级开关现成）。
+# =====================================================================
+
+app:
+  # 桌面版数据根目录（数据库文件/上传文件/日志），可被启动参数覆盖
+  data-dir: ${user.home}/.zhixukb
+  search:
+    # H2 无 ngram FULLTEXT：关闭后检索走 LIKE 降级路径（NoteRetrievalService 已适配）
+    fulltext-enabled: false
+
+server:
+  # 桌面版固定本地端口：前端地址 http://127.0.0.1:18230（仅本机回环）
+  port: 18230
+  address: 127.0.0.1
+
+spring:
+  datasource:
+    url: jdbc:h2:file:${app.data-dir}/data/zhixu;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:sql/h2-schema.sql
+      data-locations: classpath:sql/h2-data.sql
+  autoconfigure:
+    exclude:
+      # 桌面版无 Redis：排除自动配置后 ObjectProvider 注入为空，各组件自动走本地内存降级
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+  # 桌面版文件上传仍走本地磁盘（数据-dir 下）
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 60MB
+
+file:
+  upload:
+    path: ${app.data-dir}/uploads/images/
+
+ocr:
+  service:
+    # 桌面版暂以空值关闭远程 OCR（P1 后续接入内置 RapidOCR Java 本地引擎）
+    url: ""
+
+neo4j:
+  enabled: false
+
+management:
+  health:
+    # neo4j.enabled=false 时不创建 Driver bean，actuator 的 Neo4j 健康指示器必须一并关闭
+    neo4j:
+      enabled: false
+    redis:
+      enabled: false
+
+milvus:
+  enabled: false
+
+logging:
+  file:
+    name: ${app.data-dir}/logs/backend.log

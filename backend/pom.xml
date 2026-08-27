@@ -63,6 +63,13 @@
             <version>3.3.6</version>
         </dependency>
 
+        <!-- 桌面版嵌入式数据库（desktop profile 专用，服务器版仍用 MySQL） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Spring Boot Validation -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -234,5 +241,39 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- 桌面版打包：先在前端目录执行 npm run build，再执行
+             mvn package -Pdesktop-package —— 前端构建产物嵌入 jar，
+             由后端 Tomcat 直接托管（桌面版无需 Nginx） -->
+        <profile>
+            <id>desktop-package</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-frontend-dist</id>
+                                <phase>generate-resources</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.basedir}/../frontend/dist</directory>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>
