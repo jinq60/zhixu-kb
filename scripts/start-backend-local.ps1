@@ -16,18 +16,33 @@ function Get-JavaMajorVersion {
 }
 
 if ((Get-JavaMajorVersion) -lt 17) {
-    $candidates = @(
-        $env:JAVA_HOME,
-        (Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match "jdk-?17" } | Select-Object -ExpandProperty FullName),
-        (Get-ChildItem "D:\HZC\Java" -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match "jdk-?17" } | Select-Object -ExpandProperty FullName)
-    ) | Where-Object { $_ -and (Test-Path (Join-Path $_ "bin\java.exe")) }
-    if ($candidates.Count -eq 0) {
+    $jdk17Home = $null
+    foreach ($dir in @($env:JAVA_HOME, "D:\HZC\Java", "C:\Program Files\Eclipse Adoptium", "C:\Program Files\Java")) {
+        if (-not $dir -or -not (Test-Path $dir)) { continue }
+        if (Test-Path (Join-Path $dir "bin\java.exe")) {
+            $ver = & (Join-Path $dir "bin\java.exe") -version 2>&1 | Select-Object -First 1
+            if ($ver -match '"17\.|"[1-9][89]\.|"[2-9][0-9]\.') {
+                $jdk17Home = $dir
+                break
+            }
+        }
+        Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($null -ne $jdk17Home) { return }
+            $javaExe = Join-Path $_.FullName "bin\java.exe"
+            if ($_.Name -match "jdk-?17" -and (Test-Path $javaExe)) {
+                $ver = & $javaExe -version 2>&1 | Select-Object -First 1
+                if ($ver -match '"17\.') {
+                    $jdk17Home = $_.FullName
+                }
+            }
+        }
+        if ($jdk17Home) { break }
+    }
+    if (-not $jdk17Home) {
         Write-Error "未找到 JDK 17+。请安装 Eclipse Temurin 17 并设置 JAVA_HOME（桌面版打包 jpackage 也依赖 17）"
         exit 1
     }
-    $env:JAVA_HOME = $candidates[0]
+    $env:JAVA_HOME = $jdk17Home
     $env:Path = "$env:JAVA_HOME\bin;$env:Path"
     Write-Host "==> Using JDK 17: $env:JAVA_HOME" -ForegroundColor Yellow
 }
