@@ -70,6 +70,19 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- 桌面版内置 OCR（RapidOCR：PP-OCR 模型 + 各平台原生推理库，进程内运行，无 Python）。
+             服务器版不启用对应 Bean（@Profile desktop），仅 jar 体积略增 -->
+        <dependency>
+            <groupId>io.github.mymonstercat</groupId>
+            <artifactId>rapidocr</artifactId>
+            <version>0.0.7</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.mymonstercat</groupId>
+            <artifactId>rapidocr-onnx-platform</artifactId>
+            <version>0.0.7</version>
+        </dependency>
+
         <!-- Spring Boot Validation -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

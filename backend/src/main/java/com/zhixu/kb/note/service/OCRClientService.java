@@ -36,6 +36,7 @@ public class OCRClientService {
     private static final long CIRCUIT_OPEN_MS = 30_000;
 
     private final OCRClientProperties properties;
+    private final org.springframework.beans.factory.ObjectProvider<LocalOcrEngine> localOcrEngineProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
     private volatile long circuitOpenedAt = 0;
@@ -46,6 +47,23 @@ public class OCRClientService {
     }
 
     public List<String> recognize(byte[] imageBytes, String requestedEngine) {
+        // 桌面版：进程内 RapidOCR 引擎（desktop profile 才有该 Bean），完全不走远程 HTTP
+        LocalOcrEngine localEngine = localOcrEngineProvider.getIfAvailable();
+        if (localEngine != null) {
+            try {
+                List<String> result = localEngine.recognize(imageBytes);
+                if (result == null || result.isEmpty()) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST, "未识别到文本内容");
+                }
+                return result;
+            } catch (BusinessException be) {
+                throw be;
+            } catch (Exception ex) {
+                log.error("Local OCR engine failed: {}", ex.getMessage(), ex);
+                throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "本地 OCR 引擎执行失败：" + ex.getMessage());
+            }
+        }
+
         checkCircuit();
 
         String primaryEngine = normalizeEngine(requestedEngine);
