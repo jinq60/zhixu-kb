@@ -307,6 +307,9 @@ services:
     restart: unless-stopped
     ports:
       - "5173:80"
+    volumes:
+      # 官网下载中心：把桌面版安装包放入宿主机 ./downloads 即可提供下载
+      - ./downloads:/usr/share/nginx/html/downloads:ro
     depends_on:
       backend:
         condition: service_healthy

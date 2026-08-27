@@ -40,3 +40,8 @@ backups/
 
 # ---------- 旧原型代码 ----------
 legacy/
+
+# ---------- 桌面版发布产物（构建后放 downloads/ 供官网下载） ----------
+downloads/
+backend/target/
+backend/packaging/wix314/

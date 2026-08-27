@@ -59,10 +59,19 @@ if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
 $type = "app-image"
 $extraArgs = @()
 if ($Msi) {
-    $wix = Test-Path "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe"
-    if (-not $wix) {
-        Write-Warning "未检测到 WiX Toolset v3.14，退化为 app-image（安装 .exe 需先安装 WiX：https://wixtoolset.org/）"
+    # WiX 查找顺序：系统安装目录 → 仓库便携版（backend/packaging/wix314）
+    $wixBin = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+    if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
+        $portable = Join-Path $root "backend\packaging\wix314"
+        if (Test-Path (Join-Path $portable "candle.exe")) {
+            $wixBin = $portable
+            $env:PATH = "$wixBin;$env:PATH"
+        }
+    }
+    if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
+        Write-Warning "未检测到 WiX Toolset v3.14（系统安装或 backend/packaging/wix314 均无），退化为 app-image"
     } else {
+        Write-Host "==> WiX: $wixBin" -ForegroundColor Cyan
         $type = "exe"
         $extraArgs = @("--win-menu", "--win-shortcut", "--win-dir-chooser")
     }

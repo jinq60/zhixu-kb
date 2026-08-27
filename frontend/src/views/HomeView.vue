@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import {
   ArrowRight,
@@ -136,12 +137,27 @@ const resources = [
   { title: '更新日志', desc: '版本迭代与功能路线图', icon: Star }
 ]
 
+/** 桌面版安装包直链（nginx 挂载 ./downloads 目录；发新版本时替换文件并同步版本号） */
+const DESKTOP_DOWNLOAD_URL = '/downloads/ZhixuKB-1.0.0.exe'
+
 const downloads = [
-  { platform: 'Windows', version: 'v1.0.0', size: '约 180 MB', note: 'exe 安装包' },
-  { platform: 'macOS', version: 'v1.0.0', size: '约 210 MB', note: 'dmg 安装包' },
-  { platform: 'Linux', version: 'v1.0.0', size: '约 170 MB', note: 'AppImage' },
-  { platform: 'Docker', version: 'latest', size: '一键部署', note: 'compose 模板' }
+  { platform: 'Windows', version: 'v1.0.0', size: '约 259 MB', note: 'exe 安装包 · 内置本地 OCR · 数据存本机', url: DESKTOP_DOWNLOAD_URL },
+  { platform: 'macOS', version: '计划中', size: '-', note: 'dmg 安装包', url: '' },
+  { platform: 'Linux', version: '计划中', size: '-', note: 'AppImage', url: '' },
+  { platform: 'Docker 自托管', version: 'latest', size: '一键部署', note: 'compose 模板（见仓库 README）', url: '' }
 ]
+
+const onDownload = (d: { platform: string; url: string }) => {
+  if (d.url) {
+    window.open(d.url, '_blank', 'noopener')
+    return
+  }
+  if (d.platform.startsWith('Docker')) {
+    ElMessage.info('Docker 自托管：克隆仓库后执行 docker compose up -d --build 即可')
+    return
+  }
+  ElMessage.info(`${d.platform} 版本即将上线，敬请期待`)
+}
 
 const faqs = [
   {
@@ -307,9 +323,9 @@ const faqs = [
             <span>{{ d.size }}</span>
             <span class="download-note">{{ d.note }}</span>
           </div>
-          <el-button type="primary" plain class="download-btn" @click="goDownload">
+          <el-button type="primary" plain class="download-btn" @click="onDownload(d)">
             <el-icon><Download /></el-icon>
-            下载
+            {{ d.url ? '立即下载' : d.platform.startsWith('Docker') ? '查看方案' : '敬请期待' }}
           </el-button>
         </div>
       </div>
