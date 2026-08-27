@@ -251,3 +251,14 @@ CREATE TABLE IF NOT EXISTS operation_log (
     ip_address VARCHAR(50),
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ---------- 桌面版设备绑定（浏览器验证授权） ----------
+CREATE TABLE IF NOT EXISTS device_binding (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    device_id VARCHAR(64) NOT NULL UNIQUE,
+    device_name VARCHAR(100),
+    last_seen_at DATETIME,
+    revoked TINYINT DEFAULT 0,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+);

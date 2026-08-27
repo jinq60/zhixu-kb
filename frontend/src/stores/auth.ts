@@ -27,6 +27,8 @@ interface AuthState {
   showLoginModal: boolean
   /** 应用形态：desktop=桌面版 exe / server=在线服务 */
   appMode: 'desktop' | 'server'
+  /** 桌面版是否已完成官网设备验证 */
+  appActivated: boolean
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -34,7 +36,8 @@ export const useAuthStore = defineStore('auth', {
     token: null,
     user: null,
     showLoginModal: false,
-    appMode: 'server'
+    appMode: 'server',
+    appActivated: true
   }),
   persist: {
     paths: ['token', 'user']
@@ -52,11 +55,13 @@ export const useAuthStore = defineStore('auth', {
      * 服务器版无任何副作用。
      */
     async initDesktopSession(): Promise<void> {
-      if (this.appMode === 'desktop') return
+      // 桌面版已有会话则跳过；否则（含首次激活完成后）探测并建立会话
+      if (this.appMode === 'desktop' && this.token) return
       try {
         const config = await fetchAppConfig()
         this.appMode = config.mode === 'desktop' ? 'desktop' : 'server'
-        if (this.appMode === 'desktop' && !this.token) {
+        this.appActivated = config.activated !== false
+        if (this.appMode === 'desktop' && this.appActivated && !this.token) {
           const { token } = await fetchDesktopToken()
           this.token = token
           await this.refreshUser()

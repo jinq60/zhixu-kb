@@ -285,3 +285,15 @@ INSERT INTO sys_role (role_name, role_key, remark) VALUES
 ('管理员', 'admin', '系统管理员'),
 ('普通用户', 'user', '普通用户')
 ON DUPLICATE KEY UPDATE role_name = VALUES(role_name), remark = VALUES(remark);
+
+-- ---------- 桌面版设备绑定（浏览器验证授权） ----------
+CREATE TABLE IF NOT EXISTS device_binding (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '记录ID',
+    user_id BIGINT NOT NULL COMMENT '所属用户ID',
+    device_id VARCHAR(64) NOT NULL UNIQUE COMMENT '设备唯一标识(UUID)',
+    device_name VARCHAR(100) COMMENT '设备名称',
+    last_seen_at DATETIME COMMENT '最后在线校验时间',
+    revoked TINYINT DEFAULT 0 COMMENT '是否吊销(0否 1是)',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '授权时间',
+    INDEX idx_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='桌面版设备绑定表';

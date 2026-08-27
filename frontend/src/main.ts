@@ -28,10 +28,15 @@ authStore
   .initDesktopSession()
   .catch(() => undefined)
   .finally(() => {
-    // 桌面版默认落在工作台（网页版的落地页/marketing 页对桌面无意义）
     const current = router.currentRoute.value.path
-    if (authStore.appMode === 'desktop' && (current === '/' || current === '/home')) {
-      router.replace('/notes')
+    if (authStore.appMode === 'desktop') {
+      if (!authStore.appActivated) {
+        // 未激活：进入激活引导页（浏览器验证）
+        router.replace('/activate')
+      } else if (current === '/' || current === '/home') {
+        // 已激活：直达工作台
+        router.replace('/notes')
+      }
     }
     app.mount('#app')
   })

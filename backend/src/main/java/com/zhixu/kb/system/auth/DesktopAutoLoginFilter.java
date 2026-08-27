@@ -27,12 +27,20 @@ import java.io.IOException;
 public class DesktopAutoLoginFilter extends OncePerRequestFilter {
 
     private final DesktopUserService desktopUserService;
+    private final DesktopActivationService activationService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        if (SecurityContextHolder.getContext().getAuthentication() == null
-                && request.getRequestURI().startsWith("/api/")) {
+        String uri = request.getRequestURI();
+        if (SecurityContextHolder.getContext().getAuthentication() == null && uri.startsWith("/api/")) {
+            // 激活门禁：未完成浏览器验证前，除应用探测外的业务 API 一律拒绝
+            if (!isActivated() && !uri.startsWith("/api/app-config")) {
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"code\":403,\"message\":\"桌面版尚未完成验证，请先激活\",\"data\":{\"needActivation\":true}}");
+                return;
+            }
             try {
                 LoginUser loginUser = desktopUserService.getLoginUser();
                 UsernamePasswordAuthenticationToken authentication =
@@ -43,5 +51,13 @@ public class DesktopAutoLoginFilter extends OncePerRequestFilter {
             }
         }
         chain.doFilter(request, response);
+    }
+
+    private boolean isActivated() {
+        try {
+            return activationService.isActivated();
+        } catch (Exception ex) {
+            return false;
+        }
     }
 }

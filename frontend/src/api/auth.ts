@@ -61,8 +61,14 @@ export async function fetchUserInfo(): Promise<UserInfo> {
 }
 
 /** 应用形态：desktop=桌面版 exe / server=在线服务（服务器版同样返回，用于功能开关） */
-export async function fetchAppConfig(): Promise<{ mode: 'desktop' | 'server'; appName?: string }> {
+export async function fetchAppConfig(): Promise<{ mode: 'desktop' | 'server'; appName?: string; activated?: boolean }> {
   const { data } = await http.get('/api/app-config')
+  return data.data
+}
+
+/** 官网侧：已登录用户为待授权桌面端生成一次性绑定码（60 秒） */
+export async function createDeviceBindCode(): Promise<{ bindCode: string; expiresIn: number }> {
+  const { data } = await http.post('/api/device/bind-code')
   return data.data
 }
 

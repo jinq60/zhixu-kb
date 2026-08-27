@@ -48,6 +48,10 @@ public class SecurityConfig {
             "/api/health",
             "/api/v1/health",
             "/api/app-config",
+            // 设备授权公开端点：exchange 凭一次性码、validate/refresh 凭设备凭证自身鉴权
+            "/api/device/exchange",
+            "/api/device/validate",
+            "/api/device/refresh",
             // 仅存在于桌面版 jar（服务器版无对应 Controller，配置保留无害）
             "/api/auth/desktop-token",
             "/v3/api-docs/**",
@@ -85,9 +89,11 @@ public class SecurityConfig {
         }
 
         // 桌面版：后端直接托管前端静态资源与 SPA history 路由——
-        // 非幂等的 API 读接口先锁 authenticated，其余非 API 的 GET（静态资源/前端路由）放行
+        // 非幂等的 API 读接口先锁 authenticated，其余非 API 的 GET（静态资源/前端路由）放行；
+        // /desktop/** 为本地激活端点（仅 127.0.0.1 可达），GET/POST 均放行
         if (isDesktopProfile()) {
             http.authorizeRequests()
+                    .antMatchers("/desktop/**").permitAll()
                     .antMatchers(HttpMethod.GET, "/api/**").authenticated()
                     .antMatchers("/", "/index.html", "/favicon.ico", "/assets/**", "/logo/**").permitAll()
                     .antMatchers(HttpMethod.GET,

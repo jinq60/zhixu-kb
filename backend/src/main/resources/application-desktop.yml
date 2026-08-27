@@ -10,6 +10,13 @@ app:
   search:
     # H2 无 ngram FULLTEXT：关闭后检索走 LIKE 降级路径（NoteRetrievalService 已适配）
     fulltext-enabled: false
+  desktop:
+    # 官网地址（浏览器验证入口页所在站点；生产改为 https://你的域名）
+    portal-url: ${DESKTOP_PORTAL_URL:http://localhost:5173}
+    # 官网 API 基址（与官网前端同源，经其反代到后端）
+    portal-api-base: ${DESKTOP_PORTAL_API:http://localhost:5173}
+    # 离线宽限天数：上次在线校验成功后，断网仍可使用的时长
+    offline-grace-days: 7
 
 server:
   # 桌面版固定本地端口：前端地址 http://127.0.0.1:18230（仅本机回环）

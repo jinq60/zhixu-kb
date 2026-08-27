@@ -3,7 +3,6 @@ package com.zhixu.kb.common.utils;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -50,6 +49,10 @@ public class JwtUtils {
         return claimsResolver.apply(claims);
     }
 
+    public Claims parseToken(String token) {
+        return extractAllClaims(token);
+    }
+
     public String generateToken(UserDetails userDetails) {
         Map<String, Object> claims = new HashMap<>();
         return createToken(claims, userDetails.getUsername());
@@ -60,13 +63,29 @@ public class JwtUtils {
         return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
+    /**
+     * 签发桌面版设备凭证：长期 JWT，subject 为 "device:{deviceId}"，
+     * 携带 typ=device 与 uid（用户 ID）。仅用于 /api/device/** 端点，
+     * 不能作为普通用户会话（JwtAuthenticationFilter 按用户名加载会失败）。
+     */
+    public String generateDeviceToken(Long userId, String deviceId, long ttlMillis) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("typ", "device");
+        claims.put("uid", userId);
+        return createToken(claims, "device:" + deviceId, ttlMillis);
+    }
+
     private String createToken(Map<String, Object> claims, String subject) {
+        return createToken(claims, subject, expiration);
+    }
+
+    private String createToken(Map<String, Object> claims, String subject, long ttlMillis) {
         Date now = new Date();
         return Jwts.builder()
                 .setClaims(claims)
                 .setSubject(subject)
                 .setIssuedAt(now)
-                .setExpiration(new Date(now.getTime() + expiration))
+                .setExpiration(new Date(now.getTime() + ttlMillis))
                 .signWith(getSignKey(), SignatureAlgorithm.HS256)
                 .compact();
     }

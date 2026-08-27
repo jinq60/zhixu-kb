@@ -5,8 +5,12 @@ const routes: RouteRecordRaw[] = [
   // 公开阅读页（分享链接直达）
   { path: '/notes/view/:id', component: () => import('../views/NoteView.vue'), meta: { public: true, layout: 'blank' } },
 
-  // OAuth 回调页
+  // OAuth 回调
   { path: '/oauth-callback', component: () => import('../views/OAuthCallbackView.vue'), meta: { public: true, layout: 'blank' } },
+
+  // 桌面版：官网设备验证页（桌面 exe 弹浏览器进入）与本地激活页
+  { path: '/verify', component: () => import('../views/VerifyDeviceView.vue'), meta: { public: true, layout: 'blank' } },
+  { path: '/activate', component: () => import('../views/DesktopActivateView.vue'), meta: { public: true, layout: 'blank' } },
 
   // 用户工作台（需要登录）
   { path: '/notes', component: () => import('../views/NoteList.vue'), meta: { requiresAuth: true } },
