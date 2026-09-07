@@ -47,7 +47,8 @@ if ($containers) {
 }
 
 Write-Host ""
-Write-Host "[2/4] Removing zhixu-pdf-service image..." -ForegroundColor Cyan
+Write-Host "[2/4] Removing obsolete pdf-service images..." -ForegroundColor Cyan
+docker rmi -f ghcr.io/xberg-io/xberg:1.0.14 2>$null
 docker rmi -f zhixu-pdf-service:latest 2>$null
 
 Write-Host ""

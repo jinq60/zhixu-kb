@@ -86,8 +86,16 @@ public class AiProperties {
             return timeoutMs;
         }
 
+        /**
+         * 超时钳制 10s~120s：单次 AI 调用含重试最长可挂起数分钟，
+         * 配置过大（或误配）会长期占用问答信号量/线程池，拖垮全站。
+         */
         public void setTimeoutMs(Integer timeoutMs) {
-            this.timeoutMs = timeoutMs;
+            if (timeoutMs == null) {
+                this.timeoutMs = 30000;
+                return;
+            }
+            this.timeoutMs = Math.min(120000, Math.max(10000, timeoutMs));
         }
 
         public Integer getMaxRetries() {
@@ -95,7 +103,11 @@ public class AiProperties {
         }
 
         public void setMaxRetries(Integer maxRetries) {
-            this.maxRetries = maxRetries;
+            if (maxRetries == null) {
+                this.maxRetries = 3;
+                return;
+            }
+            this.maxRetries = Math.min(5, Math.max(1, maxRetries));
         }
     }
 

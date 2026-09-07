@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import DOMPurify from 'dompurify'
 
 const props = defineProps<{
   code?: string
@@ -36,10 +37,12 @@ const renderDiagram = async () => {
 
     const id = `note-mermaid-${renderSeq++}`
     const { svg, bindFunctions } = await mermaid.render(id, code)
-    container.innerHTML = svg
+    // mermaid strict 模式仍可能透出可执行内容，二次消毒后再挂载
+    container.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } })
     bindFunctions?.(container)
   } catch (error) {
-    console.error('Render mermaid failed', error)
+    // 生产日志不打印原始 code（可能含敏感笔记内容），只留错误摘要
+    console.error('Render mermaid failed', error instanceof Error ? error.message : error)
     container.innerHTML = `<pre class="fallback">${escapeHtml(code)}</pre>`
   }
 }

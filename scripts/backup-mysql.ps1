@@ -7,7 +7,8 @@
 param(
     [string]$ContainerName = "zhixu-mysql",
     [string]$Database = "zhixu_kb",
-    [string]$KeepDays = 14
+    # 非法 KeepDays（如负数）会导致误删全部备份，入参即拦截
+    [ValidateRange(1, 90)][int]$KeepDays = 14
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,10 +31,13 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $target = Join-Path $backupDir "$($Database)-$stamp.sql"
 
 Write-Host "==> 备份 $Database -> $target" -ForegroundColor Cyan
-docker exec $ContainerName sh -c "exec mysqldump -uroot -p'$password' --single-transaction --routines --triggers $Database" > $target
+# 密码经 docker exec -e 传递（MYSQL_PWD），不拼进 shell 命令行：
+# 密码含引号/空格/$ 等特殊字符时旧写法会断句或注入
+docker exec -e MYSQL_PWD=$password $ContainerName mysqldump -uroot --single-transaction --routines --triggers $Database > $target
 if ($LASTEXITCODE -ne 0) {
     Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
     Write-Error "mysqldump 失败，请检查容器 $ContainerName 是否在运行"
+    exit 1
 }
 
 # 压缩为 zip 并删除原始 sql

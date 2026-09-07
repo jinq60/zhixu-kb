@@ -59,8 +59,19 @@ const rewriteImageUrls = (html: string, appendToken: boolean) => {
   root.querySelectorAll('img[src]').forEach((img) => {
     const current = img.getAttribute('src')
     const path = getFileContentPath(current)
-    if (!path) return
+    if (!path) {
+      // 非本站附件的外链图片直接移除：防追踪像素与混合内容（此前原样保留可被外带）
+      img.removeAttribute('src')
+      return
+    }
     img.setAttribute('src', path)
+  })
+
+  // 新窗口打开的链接强制 noopener，防 window.opener 劫持
+  root.querySelectorAll('a[target="_blank"]').forEach((a) => {
+    const rel = (a.getAttribute('rel') || '').split(/\s+/).filter(Boolean)
+    if (!rel.includes('noopener')) rel.push('noopener')
+    a.setAttribute('rel', rel.join(' '))
   })
 
   return root.innerHTML

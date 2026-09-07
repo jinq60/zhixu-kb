@@ -318,16 +318,14 @@ public class FileService {
         }
 
         FileInfo info = fileInfoMapper.selectById(fileId);
-        if (info == null) {
+        // 与 findReadableFile 同策略：对外统一 NOT_FOUND，避免自增 ID 被存在性枚举
+        if (info == null || info.getNoteId() == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
-        }
-        if (info.getNoteId() == null) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "文件未绑定笔记，禁止访问");
         }
 
         Note note = noteMapper.selectById(info.getNoteId());
         if (note == null || !userId.equals(note.getUserId())) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该文件");
+            throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
         }
         return info;
     }

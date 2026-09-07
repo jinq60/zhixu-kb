@@ -69,7 +69,8 @@ public class PublicNoteService {
     public PublicNoteDetailResponse detail(Long noteId) {
         Note note = noteMapper.selectById(noteId);
         if (note == null || (note.getIsDeleted() != null && note.getIsDeleted() == 1)) {
-            throw new BusinessException(ResultCode.NOT_FOUND, "笔记不存在");
+            // 与未发布分支同文案，避免区分"不存在"与"私有"形成枚举 oracle
+            throw new BusinessException(ResultCode.NOT_FOUND, "笔记不存在或未发布");
         }
 
         Long currentUserId = SecurityUtils.getUserId();
