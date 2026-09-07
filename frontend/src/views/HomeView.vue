@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import {
@@ -24,7 +25,8 @@ import {
   Phone,
   Message,
   Location,
-  QuestionFilled
+  QuestionFilled,
+  Upload
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -46,43 +48,73 @@ const goDownload = () => {
   }
 }
 
+/** 产品矩阵：color 为该产品的主题色（导航 mega 菜单与 Tab 共用同一套） */
 const products = [
   {
     name: '知序智能知识库',
+    en: 'KNOWLEDGE BASE',
     desc: 'OCR 识别、AI 整理、知识图谱、RAG 问答一站式个人知识管理平台。',
     icon: Notebook,
+    color: '#f2641e',
+    soft: '#fef0e9',
     tags: ['已上线', '免费版可用'],
     action: 'Web 体验',
     path: '/notes',
-    primary: true
+    primary: true,
+    mock: 'kb' as const,
+    points: ['拍照即识别：RapidOCR / PaddleOCR 双引擎', 'AI 摘要、大纲、思维导图一键生成', 'Neo4j 知识图谱 + 个人库 RAG 问答']
   },
   {
     name: '知序 AI 工作台',
+    en: 'TEAM SPACE',
     desc: '面向团队的多人协作知识空间，权限管理、版本控制、AI 助手全集成。',
     icon: Monitor,
+    color: '#7a5af8',
+    soft: '#f1edfe',
     tags: ['即将上线'],
     action: '预约体验',
     path: '/home',
-    coming: true
+    coming: true,
+    mock: 'board' as const,
+    points: ['多人协作空间与细粒度权限', '文档版本历史与一键回滚', '团队 AI 助手接入知识库']
   },
   {
     name: '知序 OCR 工具箱',
+    en: 'OCR TOOLKIT',
     desc: '本地离线 OCR 识别套件，支持批量图片、PDF 与截图文字提取。',
     icon: SetUp,
+    color: '#0ca789',
+    soft: '#e6f7f4',
     tags: ['客户端', 'Windows'],
     action: '预约下载',
     path: '/home',
-    coming: true
+    coming: true,
+    mock: 'scan' as const,
+    points: ['纯本地运行，图片不出设备', '批量图片 / PDF / 截图一键提取', '透视矫正 + 版面还原']
   },
   {
     name: '知序数据同步助手',
+    en: 'SYNC HELPER',
     desc: '多端知识库同步工具，本地文件、云端与 NAS 一键同步备份。',
     icon: DataLine,
+    color: '#d9930d',
+    soft: '#fdf6e3',
     tags: ['即将上线'],
     action: '预约体验',
     path: '/home',
-    coming: true
+    coming: true,
+    mock: 'sync' as const,
+    points: ['本地 / 云端 / NAS 三端同步', '增量备份与版本快照', '断点续传，大文件无忧']
   }
+]
+
+/** 知识流水线：内容本身就是顺序，每一步都可点进对应能力 */
+const pipeline = [
+  { icon: Upload, label: '采集', en: 'CAPTURE', desc: '拍照、截图、文档一键入库' },
+  { icon: Search, label: '识别', en: 'RECOGNIZE', desc: 'OCR 与版面解析' },
+  { icon: MagicStick, label: '整理', en: 'ORGANIZE', desc: '摘要、大纲、思维导图' },
+  { icon: Share, label: '图谱', en: 'CONNECT', desc: '实体关系自动成网' },
+  { icon: ChatDotRound, label: '问答', en: 'ASK', desc: '基于个人库的 RAG' }
 ]
 
 const solutions = [
@@ -161,30 +193,81 @@ const faqs = [
     a: '免费版已包含 OCR 识别、AI 整理、知识图谱与 RAG 问答等核心能力，适合个人学习。专业版与团队版提供更高并发、导出能力与协作空间。'
   }
 ]
+
+/* ---------- Hero 产品 Tab：自动轮播，悬停/聚焦暂停，减弱动效时不自动播 ---------- */
+const activeTab = ref(0)
+const tabPaused = ref(false)
+let tabTimer: ReturnType<typeof setInterval> | null = null
+const reduceMotion =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+const selectTab = (idx: number) => {
+  activeTab.value = idx
+}
+
+const startTabTimer = () => {
+  if (reduceMotion || tabTimer) return
+  tabTimer = setInterval(() => {
+    if (!tabPaused.value) {
+      activeTab.value = (activeTab.value + 1) % products.length
+    }
+  }, 5500)
+}
+
+const stopTabTimer = () => {
+  if (tabTimer) {
+    clearInterval(tabTimer)
+    tabTimer = null
+  }
+}
+
+onMounted(startTabTimer)
+onBeforeUnmount(stopTabTimer)
+
+/* ---------- 滚动显现：一次性，减弱动效时直接呈现 ---------- */
+const vReveal = {
+  mounted(el: HTMLElement) {
+    if (reduceMotion || typeof IntersectionObserver === 'undefined') {
+      el.classList.add('revealed')
+      return
+    }
+    el.classList.add('reveal')
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('revealed')
+            observer.unobserve(entry.target)
+          }
+        })
+      },
+      { threshold: 0.12 }
+    )
+    observer.observe(el)
+  }
+}
 </script>
 
 <template>
   <div class="landing-page">
     <!-- Hero -->
     <section class="hero">
-      <div class="hero-bg" />
       <div class="hero-inner">
         <div class="hero-content">
-          <div class="hero-badge">
-            <el-icon><Star /></el-icon>
-            <span>知序 · ZhiXu Tech</span>
-          </div>
-          <h1>让知识创造价值</h1>
+          <div class="hero-eyebrow">ZHI XU · KNOWLEDGE OS</div>
+          <h1>让知识<span class="h1-accent">创造价值</span></h1>
           <p class="hero-desc">
             知序专注于知识管理与 AI 赋能，提供从个人笔记整理到企业知识中枢的完整产品矩阵。
             用 OCR、大模型与知识图谱，把散落的信息变成可检索、可问答、可传承的组织资产。
           </p>
           <div class="hero-actions">
-            <el-button type="primary" size="large" @click="enterWeb">
+            <el-button type="primary" size="large" class="hero-primary" @click="enterWeb">
               Web 体验
               <el-icon class="btn-icon"><ArrowRight /></el-icon>
             </el-button>
-            <el-button size="large" plain @click="goDownload">
+            <el-button size="large" class="hero-ghost" @click="goDownload">
               <el-icon class="btn-icon"><Download /></el-icon>
               下载客户端
             </el-button>
@@ -196,36 +279,117 @@ const faqs = [
             <span><el-icon><Check /></el-icon> 持续迭代</span>
           </div>
         </div>
-        <div class="hero-showcase">
-          <div class="showcase-card main">
-            <div class="card-bar">
-              <span /><span /><span />
-              <div class="card-title">知序智能知识库</div>
-            </div>
-            <div class="card-body">
-              <div class="mock-sidebar">
-                <div class="mock-nav active" /><div class="mock-nav" /><div class="mock-nav" />
-                <div class="mock-nav" /><div class="mock-nav" />
+
+        <!-- 招牌：产品主题 Tab（自动轮播 + 按产品换肤） -->
+        <div
+          class="showcase"
+          role="tablist"
+          aria-label="产品预览"
+          @mouseenter="tabPaused = true"
+          @mouseleave="tabPaused = false"
+          @focusin="tabPaused = true"
+          @focusout="tabPaused = false"
+        >
+          <div class="showcase-tabs">
+            <button
+              v-for="(p, idx) in products"
+              :key="p.name"
+              type="button"
+              role="tab"
+              :aria-selected="activeTab === idx"
+              :class="['showcase-tab', { active: activeTab === idx }]"
+              :style="{ '--p': p.color, '--ps': p.soft }"
+              @click="selectTab(idx)"
+            >
+              <span class="tab-dot" />
+              {{ p.name.replace('知序 ', '') }}
+            </button>
+          </div>
+
+          <div
+            class="showcase-stage"
+            :style="{ '--p': products[activeTab].color, '--ps': products[activeTab].soft }"
+          >
+            <div class="stage-head">
+              <div class="stage-traffic"><span /><span /><span /></div>
+              <div class="stage-title">
+                {{ products[activeTab].name }}
+                <span class="stage-en">{{ products[activeTab].en }}</span>
               </div>
-              <div class="mock-main">
-                <div class="mock-toolbar"><div /><div /></div>
-                <div class="mock-grid">
-                  <div v-for="n in 6" :key="n" class="mock-note" />
+              <div
+                class="stage-icon"
+                :style="{ background: products[activeTab].color }"
+              >
+                <el-icon><component :is="products[activeTab].icon" /></el-icon>
+              </div>
+            </div>
+
+            <div class="stage-body">
+              <!-- 知识库：笔记网格 -->
+              <div v-if="products[activeTab].mock === 'kb'" class="mock-grid">
+                <div v-for="n in 6" :key="n" class="mock-note">
+                  <div class="mock-line w80" />
+                  <div class="mock-line w60" />
+                  <div class="mock-line w70" />
                 </div>
               </div>
+              <!-- 工作台：看板列 -->
+              <div v-else-if="products[activeTab].mock === 'board'" class="mock-board">
+                <div v-for="c in 3" :key="c" class="mock-col">
+                  <div class="mock-line w70" />
+                  <div class="mock-card" />
+                  <div class="mock-card short" />
+                </div>
+              </div>
+              <!-- OCR：扫描框 -->
+              <div v-else-if="products[activeTab].mock === 'scan'" class="mock-scan">
+                <div class="mock-doc">
+                  <div v-for="n in 5" :key="n" class="mock-line" :class="`w${[90, 70, 80, 60, 75][n - 1]}`" />
+                  <div class="scanline" />
+                </div>
+              </div>
+              <!-- 同步：双端对传 -->
+              <div v-else class="mock-sync">
+                <div class="mock-device" />
+                <div class="mock-arrows"><span /><span /></div>
+                <div class="mock-device" />
+              </div>
+            </div>
+
+            <ul class="stage-points">
+              <li v-for="pt in products[activeTab].points" :key="pt">
+                <el-icon><Check /></el-icon>{{ pt }}
+              </li>
+            </ul>
+
+            <div class="stage-foot">
+              <el-button
+                :type="products[activeTab].primary ? 'primary' : 'default'"
+                class="stage-cta"
+                @click="products[activeTab].primary ? enterWeb() : auth.openLoginModal()"
+              >
+                {{ products[activeTab].action }}
+                <el-icon v-if="!products[activeTab].coming" class="btn-icon"><ArrowRight /></el-icon>
+              </el-button>
+              <span v-if="products[activeTab].coming" class="stage-coming">COMING SOON</span>
             </div>
           </div>
-          <div class="showcase-card float top">
-            <div class="float-icon"><el-icon><ChatDotRound /></el-icon></div>
-            <div class="float-text">AI 问答</div>
-          </div>
-          <div class="showcase-card float right">
-            <div class="float-icon"><el-icon><Share /></el-icon></div>
-            <div class="float-text">知识图谱</div>
-          </div>
-          <div class="showcase-card float bottom">
-            <div class="float-icon"><el-icon><MagicStick /></el-icon></div>
-            <div class="float-text">智能整理</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 知识流水线：内容本身就是顺序 -->
+    <section class="pipeline">
+      <div class="pipeline-inner" v-reveal>
+        <div class="pipeline-track">
+          <div v-for="(s, idx) in pipeline" :key="s.label" class="pipeline-node">
+            <div class="pipeline-icon">
+              <el-icon><component :is="s.icon" /></el-icon>
+            </div>
+            <div class="pipeline-label">{{ s.label }}</div>
+            <div class="pipeline-en">{{ s.en }}</div>
+            <div class="pipeline-desc">{{ s.desc }}</div>
+            <div v-if="idx < pipeline.length - 1" class="pipeline-link" aria-hidden="true" />
           </div>
         </div>
       </div>
@@ -233,18 +397,18 @@ const faqs = [
 
     <!-- Stats -->
     <section class="stats">
-      <div class="stats-inner">
-        <div class="stat-item"><strong>10,000+</strong><span>知识库笔记</span></div>
-        <div class="stat-item"><strong>99.2%</strong><span>OCR 识别准确率</span></div>
-        <div class="stat-item"><strong>500ms</strong><span>AI 平均响应</span></div>
-        <div class="stat-item"><strong>4</strong><span>产品矩阵</span></div>
+      <div class="stats-inner" v-reveal>
+        <div class="stat-item"><strong>10,000+</strong><span>知识库笔记</span><em>NOTES</em></div>
+        <div class="stat-item"><strong>99.2%</strong><span>OCR 识别准确率</span><em>ACCURACY</em></div>
+        <div class="stat-item"><strong>500ms</strong><span>AI 平均响应</span><em>RESPONSE</em></div>
+        <div class="stat-item"><strong>4</strong><span>产品矩阵</span><em>PRODUCTS</em></div>
       </div>
     </section>
 
     <!-- Products -->
     <section id="products" class="products">
-      <div class="section-head">
-        <span class="section-label">产品矩阵</span>
+      <div class="section-head" v-reveal>
+        <span class="section-eyebrow">PRODUCTS · 产品矩阵</span>
         <h2>覆盖知识管理全场景</h2>
         <p>从个人学习到企业协作，知序提供端到端的知识管理工具链</p>
       </div>
@@ -252,11 +416,14 @@ const faqs = [
         <div
           v-for="p in products"
           :key="p.name"
+          v-reveal
           :class="['product-card', { primary: p.primary, coming: p.coming }]"
+          :style="{ '--p': p.color, '--ps': p.soft }"
         >
           <div class="product-icon">
             <el-icon><component :is="p.icon" /></el-icon>
           </div>
+          <div class="product-en">{{ p.en }}</div>
           <h3>{{ p.name }}</h3>
           <p>{{ p.desc }}</p>
           <div class="product-tags">
@@ -276,13 +443,13 @@ const faqs = [
 
     <!-- Solutions -->
     <section id="solutions" class="solutions">
-      <div class="section-head light">
-        <span class="section-label">解决方案</span>
+      <div class="section-head light" v-reveal>
+        <span class="section-eyebrow">SCENARIOS · 解决方案</span>
         <h2>为不同场景量身打造</h2>
         <p>无论你是学生、教师、创作者还是企业技术团队，都能找到合适的落地方式</p>
       </div>
       <div class="solution-grid">
-        <div v-for="s in solutions" :key="s.title" class="solution-card">
+        <div v-for="s in solutions" :key="s.title" v-reveal class="solution-card">
           <div class="solution-icon">
             <el-icon><component :is="s.icon" /></el-icon>
           </div>
@@ -294,14 +461,14 @@ const faqs = [
 
     <!-- Download -->
     <section id="download" class="download">
-      <div class="section-head">
-        <span class="section-label">下载中心</span>
+      <div class="section-head" v-reveal>
+        <span class="section-eyebrow">DOWNLOAD · 下载中心</span>
         <h2>多平台客户端与部署方案</h2>
         <p>Windows / macOS / Linux 客户端与 Docker 一键部署，满足不同环境需求</p>
       </div>
       <div class="download-grid">
-        <div v-for="d in downloads" :key="d.platform" class="download-card">
-          <div class="download-platform">{{ d.platform }}</div>
+        <div v-for="d in downloads" :key="d.platform" v-reveal class="download-card">
+          <div class="download-os">{{ d.platform }}</div>
           <div class="download-version">{{ d.version }}</div>
           <div class="download-meta">
             <span>{{ d.size }}</span>
@@ -313,7 +480,7 @@ const faqs = [
           </el-button>
         </div>
       </div>
-      <div class="download-enterprise">
+      <div class="download-enterprise" v-reveal>
         <div>
           <strong>需要企业私有化部署或 OEM 定制？</strong>
           <p>我们提供企业版源码授权、私有云部署与二次开发支持。</p>
@@ -327,16 +494,22 @@ const faqs = [
 
     <!-- Cases -->
     <section id="cases" class="cases">
-      <div class="section-head light">
-        <span class="section-label">客户案例</span>
+      <div class="section-head light" v-reveal>
+        <span class="section-eyebrow">REVIEWS · 客户案例</span>
         <h2>已经被不同场景验证</h2>
-        <p>看看知序如何帮助用户沉淀与复用知识资产</p>
+        <div class="case-rating">
+          <span class="case-score">4.9</span>
+          <span class="case-stars">
+            <el-icon v-for="n in 5" :key="n"><Star /></el-icon>
+          </span>
+          <span class="case-rating-note">来自早期用户评价</span>
+        </div>
       </div>
       <div class="case-grid">
-        <div v-for="c in cases" :key="c.org" class="case-card">
+        <div v-for="c in cases" :key="c.org" v-reveal class="case-card">
           <div class="case-org">{{ c.org }}</div>
           <div class="case-role">{{ c.role }}</div>
-          <p class="case-result">{{ c.result }}</p>
+          <p class="case-result">“{{ c.result }}”</p>
           <div class="case-tags">
             <el-tag v-for="tag in c.tags" :key="tag" size="small" type="primary" effect="light">{{ tag }}</el-tag>
           </div>
@@ -346,13 +519,13 @@ const faqs = [
 
     <!-- Resources / Docs -->
     <section id="docs" class="resources">
-      <div class="section-head">
-        <span class="section-label">开发者与文档</span>
+      <div class="section-head" v-reveal>
+        <span class="section-eyebrow">DOCS · 开发者与文档</span>
         <h2>快速接入与二次开发</h2>
         <p>完善的文档、API 与部署模板，降低使用与集成门槛</p>
       </div>
       <div class="resource-grid">
-        <div v-for="r in resources" :key="r.title" class="resource-card">
+        <div v-for="r in resources" :key="r.title" v-reveal class="resource-card">
           <div class="resource-icon">
             <el-icon><component :is="r.icon" /></el-icon>
           </div>
@@ -367,9 +540,9 @@ const faqs = [
 
     <!-- About -->
     <section id="about" class="about">
-      <div class="about-inner">
+      <div class="about-inner" v-reveal>
         <div class="about-text">
-          <span class="section-label">关于知序</span>
+          <span class="section-eyebrow">ABOUT · 关于知序</span>
           <h2>专注于知识管理的长期价值</h2>
           <p>
             知序（ZhiXu Tech）致力于用 AI 与图谱技术，帮助个人和组织把零散信息转化为结构化、可复用的知识资产。
@@ -386,11 +559,11 @@ const faqs = [
         </div>
         <div class="about-visual">
           <div class="about-card">
-            <div class="about-card-title">使命</div>
+            <div class="about-card-title">使命 · MISSION</div>
             <p>让每个人都能拥有属于自己的智能知识库。</p>
           </div>
           <div class="about-card">
-            <div class="about-card-title">愿景</div>
+            <div class="about-card-title">愿景 · VISION</div>
             <p>成为个人与组织最信赖的知识管理基础设施。</p>
           </div>
         </div>
@@ -399,11 +572,11 @@ const faqs = [
 
     <!-- FAQ -->
     <section class="faq">
-      <div class="section-head light">
-        <span class="section-label">常见问题</span>
+      <div class="section-head light" v-reveal>
+        <span class="section-eyebrow">FAQ · 常见问题</span>
         <h2>你可能想了解的</h2>
       </div>
-      <div class="faq-list">
+      <div class="faq-list" v-reveal>
         <el-collapse>
           <el-collapse-item v-for="(item, idx) in faqs" :key="idx">
             <template #title>
@@ -420,15 +593,16 @@ const faqs = [
 
     <!-- CTA -->
     <section class="cta">
-      <div class="cta-inner">
+      <div class="cta-inner" v-reveal>
+        <div class="cta-eyebrow">GET STARTED · 现在开始</div>
         <h2>开启你的知识管理升级</h2>
         <p>注册账号后即可免费体验知序智能知识库 Web 版。</p>
         <div class="cta-actions">
-          <el-button type="primary" size="large" @click="enterWeb">
+          <el-button size="large" class="cta-primary" @click="enterWeb">
             Web 体验
             <el-icon class="btn-icon"><ArrowRight /></el-icon>
           </el-button>
-          <el-button size="large" plain @click="router.push('/home#contact')">
+          <el-button size="large" class="cta-ghost" @click="router.push('/home#contact')">
             联系我们
           </el-button>
         </div>
@@ -441,7 +615,7 @@ const faqs = [
         <div class="footer-brand">
           <div class="brand-logo">知序</div>
           <div>
-            <div class="footer-brand-name">知序 ZhiXu Tech</div>
+            <div class="footer-brand-name">知序 <span>ZhiXu Tech</span></div>
             <div class="footer-brand-desc">让知识创造价值</div>
           </div>
         </div>
@@ -487,9 +661,10 @@ const faqs = [
 
 <style scoped>
 .landing-page {
+  --p: var(--zx-brand);
   min-height: 100vh;
-  background: #ffffff;
-  color: #1f2937;
+  background: var(--zx-paper);
+  color: var(--zx-ink);
   font-family:
     'Helvetica Neue',
     Helvetica,
@@ -498,64 +673,98 @@ const faqs = [
     'Microsoft YaHei',
     Arial,
     sans-serif;
+  overflow-x: clip;
+}
+
+.landing-page button:focus-visible,
+.landing-page a:focus-visible {
+  outline: 2px solid var(--zx-brand);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 section {
-  padding: 100px 48px;
+  padding: 96px 48px;
 }
 
+/* ---------- 滚动显现 ---------- */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.6s ease,
+    transform 0.6s ease;
+}
+
+.reveal.revealed {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- 通用眉题/标题 ---------- */
 .section-head {
   text-align: center;
-  margin-bottom: 64px;
+  margin-bottom: 56px;
 }
 
 .section-head h2 {
+  font-family: var(--zx-display);
   font-size: 36px;
   font-weight: 800;
-  color: #111827;
+  letter-spacing: 1px;
+  color: var(--zx-ink);
   margin-bottom: 12px;
 }
 
 .section-head p {
-  font-size: 17px;
+  font-size: 16px;
   color: #6b7280;
   max-width: 640px;
   margin: 0 auto;
   line-height: 1.7;
 }
 
-.section-label {
+.section-eyebrow {
   display: inline-block;
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.08);
-  color: #2563eb;
-  font-size: 13px;
+  font-family: var(--zx-mono);
+  font-size: 12px;
   font-weight: 700;
-  margin-bottom: 16px;
+  letter-spacing: 2.5px;
+  color: var(--zx-brand-ink);
+  background: var(--zx-brand-soft);
+  border: 1px solid #f5d9c6;
+  padding: 7px 16px;
+  border-radius: 999px;
+  margin-bottom: 18px;
+}
+
+.section-head.light h2 {
+  color: #ffffff;
+}
+
+.section-head.light p {
+  color: #a3adc2;
+}
+
+.section-head.light .section-eyebrow {
+  color: #ffb48a;
+  background: rgba(242, 100, 30, 0.12);
+  border-color: rgba(242, 100, 30, 0.35);
 }
 
 .btn-icon {
   margin-left: 6px;
 }
 
-/* Hero */
+/* ---------- Hero ---------- */
 .hero {
   position: relative;
-  padding: 120px 48px 80px;
+  padding: 72px 48px 64px;
   overflow: hidden;
-  background: linear-gradient(135deg, #f5f9ff 0%, #ffffff 50%, #f8fafc 100%);
-}
-
-.hero-bg {
-  position: absolute;
-  top: -20%;
-  right: -10%;
-  width: 700px;
-  height: 700px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(37, 99, 235, 0.08) 0%, transparent 70%);
-  pointer-events: none;
+  background:
+    radial-gradient(720px 420px at 88% -8%, rgba(242, 100, 30, 0.1), transparent 65%),
+    radial-gradient(560px 380px at 4% 12%, rgba(122, 90, 248, 0.08), transparent 60%),
+    var(--zx-paper);
 }
 
 .hero-inner {
@@ -564,222 +773,526 @@ section {
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 64px;
+  gap: 56px;
 }
 
 .hero-content {
   flex: 1;
-  max-width: 560px;
+  max-width: 540px;
 }
 
-.hero-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  color: #2563eb;
-  font-size: 13px;
+.hero-eyebrow {
+  font-family: var(--zx-mono);
+  font-size: 12px;
   font-weight: 700;
-  margin-bottom: 24px;
+  letter-spacing: 3px;
+  color: var(--zx-brand-ink);
+  margin-bottom: 20px;
 }
 
 .hero h1 {
-  font-size: 56px;
+  font-family: var(--zx-display);
+  font-size: 58px;
   font-weight: 800;
-  color: #111827;
-  line-height: 1.1;
-  margin-bottom: 24px;
-  letter-spacing: -1.5px;
+  line-height: 1.12;
+  letter-spacing: 1px;
+  color: var(--zx-ink);
+  margin-bottom: 22px;
+}
+
+.h1-accent {
+  position: relative;
+  color: var(--zx-brand);
+  white-space: nowrap;
+}
+
+.h1-accent::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--zx-brand-soft);
+  border: 1px solid #f5d9c6;
+  z-index: -1;
+}
+
+.hero h1 {
+  position: relative;
+  z-index: 0;
 }
 
 .hero-desc {
-  font-size: 17px;
-  line-height: 1.8;
+  font-size: 16px;
+  line-height: 1.85;
   color: #4b5563;
-  margin-bottom: 32px;
+  margin-bottom: 30px;
 }
 
 .hero-actions {
   display: flex;
-  gap: 16px;
-  margin-bottom: 28px;
+  gap: 14px;
+  margin-bottom: 26px;
+}
+
+.hero-primary {
+  font-weight: 700;
+  border-radius: 14px;
+  padding: 12px 26px;
+  height: auto;
+  box-shadow: 0 12px 28px var(--zx-brand-ring);
+}
+
+.hero-actions .hero-ghost {
+  font-weight: 600;
+  border-radius: 14px;
+  padding: 12px 26px;
+  height: auto;
+  background: #fff;
+  border-color: #e8ddc9;
+  color: var(--zx-ink);
+}
+
+.hero-actions .hero-ghost:hover {
+  border-color: var(--zx-brand);
+  color: var(--zx-brand-ink);
+  background: #fff;
 }
 
 .hero-trust {
   display: flex;
   flex-wrap: wrap;
-  gap: 20px;
+  gap: 18px;
 }
 
 .hero-trust span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
-  color: #374151;
+  font-size: 13px;
+  color: #4b5563;
 }
 
 .hero-trust .el-icon {
-  color: #2563eb;
-  font-size: 16px;
+  color: var(--zx-teal);
+  font-size: 15px;
 }
 
-.hero-showcase {
-  position: relative;
-  width: 520px;
+/* ---------- 招牌：产品主题 Tab ---------- */
+.showcase {
+  width: 540px;
   flex-shrink: 0;
 }
 
-.showcase-card.main {
-  background: #ffffff;
-  border-radius: 20px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e5e7eb;
-  overflow: hidden;
+.showcase-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
 }
 
-.card-bar {
-  display: flex;
+.showcase-tab {
+  --p: var(--zx-brand);
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 18px;
-  background: #f3f4f6;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 1px solid #ece5d8;
+  background: rgba(255, 255, 255, 0.75);
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
 }
 
-.card-bar span {
+.showcase-tab:hover {
+  transform: translateY(-1px);
+  border-color: var(--p);
+  color: var(--zx-ink);
+}
+
+.showcase-tab.active {
+  background: var(--zx-ink);
+  border-color: var(--zx-ink);
+  color: #fff;
+}
+
+.showcase-tab.active .tab-dot {
+  background: var(--p);
+}
+
+.tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--p);
+  flex-shrink: 0;
+}
+
+.showcase-stage {
+  --p: var(--zx-brand);
+  --ps: var(--zx-brand-soft);
+  background: #ffffff;
+  border-radius: 22px;
+  border: 1px solid #f0e7d8;
+  border-top: 4px solid var(--p);
+  box-shadow: 0 28px 70px rgba(23, 32, 47, 0.1);
+  overflow: hidden;
+  transition: border-color 0.3s ease;
+}
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--ps);
+  border-bottom: 1px solid #f3ece0;
+  transition: background 0.3s ease;
+}
+
+.stage-traffic {
+  display: flex;
+  gap: 7px;
+}
+
+.stage-traffic span {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #d1d5db;
+  background: #e3d9c8;
 }
 
-.card-title {
+.stage-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--zx-ink);
+}
+
+.stage-en {
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: #a8a29e;
+  margin-left: 8px;
+  font-weight: 400;
+}
+
+.stage-icon {
   margin-left: auto;
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.card-body {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   display: flex;
-  height: 340px;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 18px;
 }
 
-.mock-sidebar {
-  width: 72px;
-  background: #f9fafb;
-  border-right: 1px solid #e5e7eb;
-  padding: 16px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.mock-nav {
-  height: 22px;
-  border-radius: 6px;
-  background: #e5e7eb;
-}
-
-.mock-nav.active {
-  background: #2563eb;
-}
-
-.mock-main {
-  flex: 1;
-  padding: 16px;
-}
-
-.mock-toolbar {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.mock-toolbar div:first-child {
-  width: 140px;
-  height: 28px;
-  border-radius: 6px;
-  background: #e5e7eb;
-}
-
-.mock-toolbar div:last-child {
-  width: 80px;
-  height: 28px;
-  border-radius: 6px;
-  background: #2563eb;
+.stage-body {
+  padding: 20px;
+  min-height: 208px;
 }
 
 .mock-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
 }
 
 .mock-note {
-  height: 100px;
-  border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-}
-
-.showcase-card.float {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 18px;
-  background: #ffffff;
   border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-  border: 1px solid #eef2f7;
+  border: 1px solid #f0e7d8;
+  background: #fffdf8;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.showcase-card.float.top {
-  top: -20px;
-  left: -30px;
+.mock-line {
+  height: 8px;
+  border-radius: 999px;
+  background: #ece4d3;
 }
 
-.showcase-card.float.right {
-  top: 80px;
-  right: -30px;
+.mock-line.w60 { width: 60%; }
+.mock-line.w70 { width: 70%; }
+.mock-line.w75 { width: 75%; }
+.mock-line.w80 { width: 80%; }
+.mock-line.w90 { width: 90%; }
+
+.mock-note:first-child {
+  border-color: var(--p);
+  box-shadow: 0 8px 20px var(--zx-brand-ring);
 }
 
-.showcase-card.float.bottom {
-  bottom: 40px;
-  left: -20px;
+.mock-note:first-child .mock-line:first-child {
+  background: var(--p);
 }
 
-.float-icon {
-  width: 34px;
-  height: 34px;
+.mock-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.mock-col {
+  border-radius: 12px;
+  background: #faf7f0;
+  border: 1px solid #f0e7d8;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mock-card {
+  height: 44px;
   border-radius: 8px;
+  background: #fff;
+  border: 1px solid #eee4d2;
+  border-left: 3px solid var(--p);
+}
+
+.mock-card.short {
+  height: 30px;
+}
+
+.mock-scan {
+  display: flex;
+  justify-content: center;
+}
+
+.mock-doc {
+  position: relative;
+  width: 78%;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #f0e7d8;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.scanline {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--p);
+  box-shadow: 0 0 12px var(--p);
+  animation: scan 2.6s ease-in-out infinite alternate;
+}
+
+@keyframes scan {
+  from { top: 12px; }
+  to { top: calc(100% - 14px); }
+}
+
+.mock-sync {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
-  font-size: 18px;
+  gap: 22px;
+  padding: 30px 0;
 }
 
-.float-text {
-  font-size: 14px;
+.mock-device {
+  width: 92px;
+  height: 120px;
+  border-radius: 14px;
+  background: #fff;
+  border: 2px solid #eee4d2;
+  position: relative;
+}
+
+.mock-device::after {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border-radius: 8px;
+  background: var(--ps);
+  border: 1px dashed var(--p);
+}
+
+.mock-device:first-child {
+  border-color: var(--p);
+}
+
+.mock-arrows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mock-arrows span {
+  display: block;
+  width: 34px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--p);
+  animation: arrowsync 1.6s ease-in-out infinite;
+}
+
+.mock-arrows span:last-child {
+  animation-delay: 0.25s;
+  opacity: 0.55;
+}
+
+@keyframes arrowsync {
+  0%, 100% { transform: translateX(0); opacity: 1; }
+  50% { transform: translateX(7px); opacity: 0.5; }
+}
+
+.stage-points {
+  list-style: none;
+  padding: 0 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 18px;
+}
+
+.stage-points li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13.5px;
+  color: #374151;
+}
+
+.stage-points .el-icon {
+  color: var(--p);
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.stage-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 22px 22px;
+}
+
+.stage-cta {
   font-weight: 700;
-  color: #111827;
+  border-radius: 12px;
 }
 
-/* Stats */
+.stage-coming {
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #a8a29e;
+}
+
+/* ---------- 流水线 ---------- */
+.pipeline {
+  padding: 56px 48px;
+  background: #fff;
+  border-top: 1px solid #f3ece0;
+  border-bottom: 1px solid #f3ece0;
+}
+
+.pipeline-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.pipeline-track {
+  display: flex;
+  align-items: stretch;
+}
+
+.pipeline-node {
+  position: relative;
+  flex: 1;
+  text-align: center;
+  padding: 0 8px;
+}
+
+.pipeline-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--zx-ink);
+  color: #fff;
+  font-size: 24px;
+  box-shadow: 0 10px 24px rgba(23, 32, 47, 0.18);
+}
+
+.pipeline-node:first-child .pipeline-icon {
+  background: var(--zx-brand);
+  box-shadow: 0 10px 24px var(--zx-brand-ring);
+}
+
+.pipeline-label {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--zx-ink);
+}
+
+.pipeline-en {
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #a8a29e;
+  margin: 3px 0 6px;
+}
+
+.pipeline-desc {
+  font-size: 12.5px;
+  color: #6b7280;
+  line-height: 1.6;
+}
+
+.pipeline-link {
+  position: absolute;
+  top: 28px;
+  left: calc(50% + 44px);
+  width: calc(100% - 88px);
+  height: 2px;
+  border-radius: 999px;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--zx-brand) 0 8px,
+    transparent 8px 16px
+  );
+  opacity: 0.55;
+  animation: flow 1.2s linear infinite;
+}
+
+@keyframes flow {
+  to { background-position: 16px 0; }
+}
+
+/* ---------- Stats ---------- */
 .stats {
-  padding: 48px;
-  background: #111827;
+  padding: 52px 48px;
+  background: var(--zx-night);
   color: #ffffff;
 }
 
 .stats-inner {
-  max-width: 1000px;
+  max-width: 1020px;
   margin: 0 auto;
   display: flex;
   justify-content: space-around;
@@ -788,81 +1301,107 @@ section {
 
 .stat-item {
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .stat-item strong {
-  display: block;
-  font-size: 40px;
+  font-family: var(--zx-display);
+  font-size: 42px;
   font-weight: 800;
-  color: #60a5fa;
-  margin-bottom: 6px;
+  color: #ffb48a;
+  line-height: 1.1;
 }
 
 .stat-item span {
   font-size: 14px;
-  color: #9ca3af;
+  color: #e6e1d5;
 }
 
-/* Products */
+.stat-item em {
+  font-family: var(--zx-mono);
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  color: #7c8aa5;
+}
+
+/* ---------- Products ---------- */
 .products {
-  background: #f8fafc;
+  background: var(--zx-paper);
 }
 
 .product-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
-  max-width: 1200px;
+  gap: 20px;
+  max-width: 1220px;
   margin: 0 auto;
 }
 
 .product-card {
+  --p: var(--zx-brand);
+  --ps: var(--zx-brand-soft);
   display: flex;
   flex-direction: column;
-  padding: 32px;
+  padding: 30px 28px;
   background: #ffffff;
-  border-radius: 18px;
-  border: 1px solid #eef2f7;
-  transition: all 0.2s ease;
+  border-radius: 20px;
+  border: 1px solid #f0e7d8;
+  border-top: 4px solid var(--p);
+  transition:
+    transform 0.22s ease,
+    box-shadow 0.22s ease;
 }
 
 .product-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.06);
+  transform: translateY(-5px);
+  box-shadow: 0 20px 44px rgba(23, 32, 47, 0.1);
 }
 
 .product-card.primary {
-  border-color: #2563eb;
+  box-shadow: 0 16px 40px rgba(23, 32, 47, 0.08);
 }
 
 .product-card.coming {
-  opacity: 0.85;
+  background: #fffdf8;
 }
 
 .product-icon {
   width: 52px;
   height: 52px;
-  border-radius: 14px;
+  border-radius: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
+  background: var(--ps);
+  color: var(--p);
   font-size: 24px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+}
+
+.product-en {
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #a8a29e;
+  margin-bottom: 6px;
 }
 
 .product-card h3 {
-  font-size: 18px;
+  font-family: var(--zx-display);
+  font-size: 19px;
   font-weight: 800;
-  color: #111827;
+  letter-spacing: 0.5px;
+  color: var(--zx-ink);
   margin-bottom: 10px;
 }
 
 .product-card > p {
   flex: 1;
   font-size: 14px;
-  line-height: 1.7;
+  line-height: 1.75;
   color: #4b5563;
   margin-bottom: 16px;
 }
@@ -876,107 +1415,112 @@ section {
 
 .product-action {
   width: 100%;
+  border-radius: 12px;
+  font-weight: 700;
 }
 
-/* Solutions */
+/* ---------- Solutions ---------- */
 .solutions {
-  background: #111827;
+  background: var(--zx-night);
   color: #ffffff;
-}
-
-.section-head.light h2 {
-  color: #ffffff;
-}
-
-.section-head.light p {
-  color: #9ca3af;
-}
-
-.section-head.light .section-label {
-  background: rgba(96, 165, 250, 0.15);
-  color: #60a5fa;
 }
 
 .solution-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
-  max-width: 1100px;
+  gap: 20px;
+  max-width: 1120px;
   margin: 0 auto;
 }
 
 .solution-card {
-  padding: 32px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  transition: all 0.2s ease;
+  padding: 30px 28px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  transition:
+    background 0.22s ease,
+    transform 0.22s ease;
 }
 
 .solution-card:hover {
   background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-4px);
 }
 
 .solution-icon {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(96, 165, 250, 0.15);
-  color: #60a5fa;
+  background: rgba(242, 100, 30, 0.16);
+  color: #ffb48a;
   font-size: 22px;
   margin-bottom: 18px;
 }
 
 .solution-card h3 {
-  font-size: 18px;
-  font-weight: 700;
+  font-family: var(--zx-display);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
   color: #ffffff;
   margin-bottom: 10px;
 }
 
 .solution-card p {
   font-size: 14px;
-  line-height: 1.7;
-  color: #9ca3af;
+  line-height: 1.75;
+  color: #a3adc2;
 }
 
-/* Download */
+/* ---------- Download ---------- */
 .download-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
+  gap: 20px;
   max-width: 1100px;
-  margin: 0 auto 32px;
+  margin: 0 auto 30px;
 }
 
 .download-card {
   text-align: center;
-  padding: 32px;
+  padding: 30px 26px;
   background: #ffffff;
-  border: 1px solid #eef2f7;
-  border-radius: 16px;
-  transition: all 0.2s ease;
+  border: 1px solid #f0e7d8;
+  border-radius: 18px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .download-card:hover {
-  border-color: #2563eb;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.06);
+  border-color: var(--zx-brand);
+  box-shadow: 0 14px 32px rgba(23, 32, 47, 0.08);
+  transform: translateY(-4px);
 }
 
-.download-platform {
-  font-size: 20px;
+.download-os {
+  font-family: var(--zx-display);
+  font-size: 21px;
   font-weight: 800;
-  color: #111827;
+  letter-spacing: 0.5px;
+  color: var(--zx-ink);
   margin-bottom: 8px;
 }
 
 .download-version {
-  font-size: 14px;
-  color: #2563eb;
-  font-weight: 700;
+  display: inline-block;
+  font-family: var(--zx-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--zx-brand-ink);
+  background: var(--zx-brand-soft);
+  border-radius: 999px;
+  padding: 4px 12px;
   margin-bottom: 12px;
 }
 
@@ -990,80 +1534,113 @@ section {
 }
 
 .download-note {
-  color: #9ca3af;
+  color: #a8a29e;
 }
 
 .download-btn {
   width: 100%;
+  border-radius: 12px;
+  font-weight: 700;
 }
 
 .download-enterprise {
-  max-width: 900px;
+  max-width: 920px;
   margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
   padding: 28px 32px;
-  background: #f8fafc;
-  border-radius: 16px;
-  border: 1px solid #eef2f7;
+  background: var(--zx-ink);
+  border-radius: 20px;
+  color: #fff;
 }
 
 .download-enterprise strong {
   font-size: 18px;
-  color: #111827;
 }
 
 .download-enterprise p {
   font-size: 14px;
-  color: #6b7280;
+  color: #a3adc2;
   margin-top: 4px;
 }
 
-/* Cases */
+/* ---------- Cases ---------- */
 .cases {
-  background: #f8fafc;
+  background: #faf6ee;
+}
+
+.case-rating {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.case-score {
+  font-family: var(--zx-display);
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--zx-ink);
+}
+
+.case-stars {
+  display: inline-flex;
+  gap: 3px;
+  color: var(--zx-amber, #d9930d);
+  font-size: 17px;
+}
+
+.case-rating-note {
+  font-size: 13px;
+  color: #6b7280;
 }
 
 .case-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
+  gap: 20px;
   max-width: 1100px;
   margin: 0 auto;
 }
 
 .case-card {
-  padding: 32px;
+  padding: 30px 28px;
   background: #ffffff;
-  border-radius: 16px;
-  border: 1px solid #eef2f7;
-  transition: all 0.2s ease;
+  border-radius: 18px;
+  border: 1px solid #f0e7d8;
+  transition:
+    box-shadow 0.22s ease,
+    transform 0.22s ease;
 }
 
 .case-card:hover {
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 14px 34px rgba(23, 32, 47, 0.08);
+  transform: translateY(-4px);
 }
 
 .case-org {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 800;
-  color: #111827;
+  color: var(--zx-ink);
   margin-bottom: 4px;
 }
 
 .case-role {
-  font-size: 13px;
-  color: #6b7280;
-  margin-bottom: 16px;
+  font-family: var(--zx-mono);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--zx-brand-ink);
+  margin-bottom: 14px;
 }
 
 .case-result {
   font-size: 15px;
-  line-height: 1.7;
-  color: #4b5563;
-  margin-bottom: 20px;
+  line-height: 1.8;
+  color: #374151;
+  margin-bottom: 18px;
 }
 
 .case-tags {
@@ -1072,41 +1649,44 @@ section {
   gap: 8px;
 }
 
-/* Resources */
+/* ---------- Resources ---------- */
 .resources {
-  background: #ffffff;
+  background: var(--zx-paper);
 }
 
 .resource-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
+  gap: 20px;
   max-width: 1100px;
   margin: 0 auto;
 }
 
 .resource-card {
-  padding: 28px;
-  background: #f8fafc;
-  border-radius: 16px;
-  border: 1px solid #eef2f7;
-  transition: all 0.2s ease;
+  padding: 28px 26px;
+  background: #ffffff;
+  border-radius: 18px;
+  border: 1px solid #f0e7d8;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .resource-card:hover {
-  background: #ffffff;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 14px 32px rgba(23, 32, 47, 0.08);
+  transform: translateY(-4px);
 }
 
 .resource-icon {
   width: 44px;
   height: 44px;
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
+  background: var(--zx-ink);
+  color: #fff;
   font-size: 20px;
   margin-bottom: 16px;
 }
@@ -1114,7 +1694,7 @@ section {
 .resource-card h3 {
   font-size: 17px;
   font-weight: 700;
-  color: #111827;
+  color: var(--zx-ink);
   margin-bottom: 8px;
 }
 
@@ -1122,6 +1702,7 @@ section {
   font-size: 14px;
   color: #6b7280;
   margin-bottom: 16px;
+  line-height: 1.7;
 }
 
 .resource-link {
@@ -1129,14 +1710,23 @@ section {
   align-items: center;
   gap: 4px;
   font-size: 14px;
-  font-weight: 600;
-  color: #2563eb;
+  font-weight: 700;
+  color: var(--zx-brand-ink);
   cursor: pointer;
 }
 
-/* About */
+.resource-link:hover {
+  gap: 8px;
+}
+
+.resource-link .el-icon {
+  transition: none;
+}
+
+/* ---------- About ---------- */
 .about {
-  background: #f8fafc;
+  background: #fff;
+  border-top: 1px solid #f3ece0;
 }
 
 .about-inner {
@@ -1144,7 +1734,7 @@ section {
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 64px;
+  gap: 60px;
 }
 
 .about-text {
@@ -1152,15 +1742,17 @@ section {
 }
 
 .about-text h2 {
+  font-family: var(--zx-display);
   font-size: 34px;
   font-weight: 800;
-  color: #111827;
+  letter-spacing: 1px;
+  color: var(--zx-ink);
   margin-bottom: 20px;
 }
 
 .about-text > p {
   font-size: 16px;
-  line-height: 1.8;
+  line-height: 1.85;
   color: #4b5563;
   margin-bottom: 16px;
 }
@@ -1178,8 +1770,9 @@ section {
 }
 
 .about-values strong {
-  font-size: 18px;
-  color: #111827;
+  font-family: var(--zx-display);
+  font-size: 19px;
+  color: var(--zx-ink);
 }
 
 .about-values span {
@@ -1191,33 +1784,40 @@ section {
   width: 360px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
 }
 
 .about-card {
   padding: 28px;
-  background: #ffffff;
-  border-radius: 16px;
-  border: 1px solid #eef2f7;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.04);
+  background: var(--zx-paper);
+  border-radius: 18px;
+  border: 1px solid #f0e7d8;
+  border-left: 4px solid var(--zx-brand);
+  box-shadow: 0 10px 24px rgba(23, 32, 47, 0.05);
+}
+
+.about-card:last-child {
+  border-left-color: var(--zx-iris);
 }
 
 .about-card-title {
-  font-size: 14px;
+  font-family: var(--zx-mono);
+  font-size: 11px;
   font-weight: 700;
-  color: #2563eb;
+  letter-spacing: 2px;
+  color: var(--zx-brand-ink);
   margin-bottom: 8px;
 }
 
 .about-card p {
   font-size: 15px;
-  line-height: 1.7;
+  line-height: 1.75;
   color: #374151;
 }
 
-/* FAQ */
+/* ---------- FAQ ---------- */
 .faq {
-  background: #111827;
+  background: var(--zx-night);
   color: #ffffff;
 }
 
@@ -1236,19 +1836,14 @@ section {
 }
 
 .faq-icon {
-  color: #2563eb;
+  color: var(--zx-brand);
 }
 
 .faq-answer {
   font-size: 14px;
-  line-height: 1.8;
-  color: #ffffff;
+  line-height: 1.85;
+  color: #e6e1d5;
   padding-left: 28px;
-}
-
-:deep(.el-collapse-item__header) {
-  font-size: 15px;
-  font-weight: 600;
 }
 
 :deep(.el-collapse) {
@@ -1257,49 +1852,98 @@ section {
 
 :deep(.el-collapse-item__header) {
   background: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   color: #ffffff;
   padding: 16px 0;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 :deep(.el-collapse-item__wrap) {
   background: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 :deep(.el-collapse-item__content) {
-  color: #9ca3af;
+  color: #a3adc2;
   padding-bottom: 20px;
 }
 
-/* CTA */
+/* ---------- CTA ---------- */
 .cta {
+  padding: 88px 48px;
+  background:
+    radial-gradient(600px 300px at 50% 120%, rgba(242, 100, 30, 0.16), transparent 70%),
+    var(--zx-night);
   text-align: center;
-  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.cta-eyebrow {
+  font-family: var(--zx-mono);
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: #ffb48a;
+  margin-bottom: 16px;
 }
 
 .cta h2 {
-  font-size: 36px;
+  font-family: var(--zx-display);
+  font-size: 38px;
   font-weight: 800;
-  color: #111827;
+  letter-spacing: 1px;
+  color: #fff;
   margin-bottom: 12px;
 }
 
-.cta > p {
-  font-size: 17px;
-  color: #4b5563;
+.cta p {
+  font-size: 16px;
+  color: #a3adc2;
   margin-bottom: 28px;
 }
 
 .cta-actions {
   display: flex;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
 }
 
-/* Footer */
+.cta-primary {
+  font-weight: 800;
+  border-radius: 14px;
+  padding: 12px 30px;
+  height: auto;
+  background: var(--zx-brand);
+  border-color: var(--zx-brand);
+  color: #fff;
+  box-shadow: 0 14px 34px rgba(242, 100, 30, 0.35);
+}
+
+.cta-primary:hover {
+  background: var(--zx-brand-ink);
+  border-color: var(--zx-brand-ink);
+  color: #fff;
+}
+
+.cta-actions .cta-ghost {
+  font-weight: 700;
+  border-radius: 14px;
+  padding: 12px 30px;
+  height: auto;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.cta-actions .cta-ghost:hover,
+.cta-actions .cta-ghost:focus-visible {
+  border-color: #fff;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---------- Footer ---------- */
 .landing-footer {
-  background: #0b0f19;
+  background: #0c1222;
   color: #d1d5db;
   padding: 64px 48px 24px;
 }
@@ -1322,47 +1966,58 @@ section {
 .footer-brand .brand-logo {
   width: 42px;
   height: 42px;
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2563eb;
+  background: linear-gradient(135deg, #f2641e 0%, #d94f0e 100%);
   color: #fff;
   font-size: 15px;
   font-weight: 800;
 }
 
 .footer-brand-name {
+  font-family: var(--zx-display);
   font-size: 18px;
   font-weight: 800;
   color: #ffffff;
   margin-bottom: 4px;
 }
 
+.footer-brand-name span {
+  font-family: var(--zx-mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 1.5px;
+  color: #7c8aa5;
+}
+
 .footer-brand-desc {
   font-size: 13px;
-  color: #9ca3af;
+  color: #7c8aa5;
 }
 
 .footer-col h4 {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: #ffffff;
   margin-bottom: 16px;
+  font-family: var(--zx-mono);
+  letter-spacing: 2px;
 }
 
 .footer-col a,
 .footer-col span {
   display: block;
   font-size: 14px;
-  color: #9ca3af;
+  color: #7c8aa5;
   margin-bottom: 10px;
   cursor: pointer;
   transition: color 0.2s ease;
 }
 
 .footer-col a:hover {
-  color: #ffffff;
+  color: #ffb48a;
 }
 
 .footer-col.contact span {
@@ -1379,9 +2034,9 @@ section {
   align-items: center;
   justify-content: space-between;
   padding-top: 24px;
-  border-top: 1px solid #1f2937;
+  border-top: 1px solid #1c2740;
   font-size: 13px;
-  color: #6b7280;
+  color: #5b6b8c;
 }
 
 .footer-bottom-links {
@@ -1390,13 +2045,37 @@ section {
 }
 
 .footer-bottom-links a {
-  color: #6b7280;
+  color: #5b6b8c;
   cursor: pointer;
   transition: color 0.2s ease;
 }
 
 .footer-bottom-links a:hover {
-  color: #ffffff;
+  color: #ffb48a;
+}
+
+/* ---------- 减弱动效 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .scanline,
+  .mock-arrows span,
+  .pipeline-link {
+    animation: none;
+  }
+
+  .showcase-tab:hover,
+  .product-card:hover,
+  .solution-card:hover,
+  .download-card:hover,
+  .case-card:hover,
+  .resource-card:hover {
+    transform: none;
+  }
 }
 
 @media (max-width: 1024px) {
@@ -1404,16 +2083,23 @@ section {
     flex-direction: column;
   }
 
-  .hero-showcase {
+  .hero-content {
+    max-width: 100%;
+  }
+
+  .showcase {
     width: 100%;
-    max-width: 520px;
+    max-width: 560px;
   }
 
   .product-grid,
   .solution-grid,
   .download-grid,
-  .case-grid,
   .resource-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .case-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -1432,11 +2118,11 @@ section {
 
 @media (max-width: 768px) {
   section {
-    padding: 64px 24px;
+    padding: 60px 22px;
   }
 
   .hero {
-    padding-top: 88px;
+    padding: 40px 22px 48px;
   }
 
   .hero h1 {
@@ -1448,19 +2134,24 @@ section {
     flex-direction: column;
   }
 
-  .showcase-card.float {
-    display: none;
+  .pipeline-track {
+    overflow-x: auto;
+    padding-bottom: 8px;
   }
 
-  .stats-inner {
-    flex-wrap: wrap;
+  .pipeline-node {
+    min-width: 148px;
+  }
+
+  .pipeline-link {
+    display: none;
   }
 
   .product-grid,
   .solution-grid,
   .download-grid,
-  .case-grid,
-  .resource-grid {
+  .resource-grid,
+  .case-grid {
     grid-template-columns: 1fr;
   }
 

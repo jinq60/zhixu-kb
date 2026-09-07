@@ -100,6 +100,32 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
 </template>
 
 <style>
+/* ---------- 知序设计 token（落地页 + 控制台共享） ---------- */
+:root {
+  --zx-paper: #fffefa;
+  --zx-ink: #17202f;
+  --zx-brand: #f2641e;
+  --zx-brand-ink: #c25018;
+  --zx-brand-soft: #fef0e9;
+  --zx-brand-ring: rgba(242, 100, 30, 0.16);
+  --zx-iris: #7a5af8;
+  --zx-teal: #0ca789;
+  --zx-amber: #d9930d;
+  --zx-night: #111a2e;
+  --zx-display:
+    'Baloo 2', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --zx-mono:
+    ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  /* Element Plus 主色同步（控制台协调换肤的关键一行） */
+  --el-color-primary: var(--zx-brand);
+  --el-color-primary-light-3: #f69361;
+  --el-color-primary-light-5: #f9b18f;
+  --el-color-primary-light-7: #fbd1bc;
+  --el-color-primary-light-8: #fce0d2;
+  --el-color-primary-light-9: #fef0e9;
+  --el-color-primary-dark-2: #c25018;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -190,13 +216,13 @@ body {
 }
 
 .sidebar-item:hover {
-  background: #f4f7fd;
-  color: #2563eb;
+  background: var(--zx-brand-soft);
+  color: var(--zx-brand-ink);
 }
 
 .sidebar-item.active {
-  background: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
+  background: var(--zx-brand-soft);
+  color: var(--zx-brand-ink);
   font-weight: 600;
 }
 
@@ -221,7 +247,7 @@ body {
 }
 
 .user-block:hover {
-  background: #f4f7fd;
+  background: var(--zx-brand-soft);
 }
 
 .user-avatar {
@@ -231,7 +257,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2563eb;
+  background: var(--zx-brand);
   color: #fff;
   font-size: 15px;
   font-weight: 700;
@@ -296,11 +322,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2563eb;
+  background: var(--zx-brand);
   color: #fff;
   font-size: 18px;
   font-weight: 800;
-  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 12px 28px var(--zx-brand-ring);
 }
 
 .booting-text {

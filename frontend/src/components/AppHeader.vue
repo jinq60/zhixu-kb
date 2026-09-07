@@ -143,10 +143,10 @@ const goDownload = () => {
 }
 
 const products = [
-  { path: '/notes', label: '知序智能知识库', desc: 'OCR + AI 整理 + 知识图谱', icon: Notebook },
-  { path: '/home', label: '知序 AI 工作台', desc: '面向团队的智能协作平台', icon: Monitor, coming: true },
-  { path: '/home', label: '知序 OCR 工具箱', desc: '本地离线 OCR 识别套件', icon: SetUp, coming: true },
-  { path: '/home', label: '知序数据同步助手', desc: '多端知识库同步工具', icon: DataLine, coming: true }
+  { path: '/notes', label: '知序智能知识库', desc: 'OCR + AI 整理 + 知识图谱', icon: Notebook, color: '#f2641e' },
+  { path: '/home', label: '知序 AI 工作台', desc: '面向团队的智能协作平台', icon: Monitor, coming: true, color: '#7a5af8' },
+  { path: '/home', label: '知序 OCR 工具箱', desc: '本地离线 OCR 识别套件', icon: SetUp, coming: true, color: '#0ca789' },
+  { path: '/home', label: '知序数据同步助手', desc: '多端知识库同步工具', icon: DataLine, coming: true, color: '#d9930d' }
 ]
 
 const navLinks = [
@@ -216,7 +216,11 @@ const goHomeHash = (hash: string) => {
                 @click="p.coming ? router.push('/home') : router.push(p.path)"
               >
                 <div class="product-item">
-                  <div class="product-icon" :class="{ coming: p.coming }">
+                  <div
+                    class="product-icon"
+                    :class="{ coming: p.coming }"
+                    :style="{ '--p': p.color }"
+                  >
                     <el-icon><component :is="p.icon" /></el-icon>
                   </div>
                   <div class="product-info">
@@ -308,9 +312,18 @@ const goHomeHash = (hash: string) => {
   right: 0;
   z-index: 100;
   height: 68px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid #eef2f7;
+  background: rgba(255, 254, 250, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid #f3e9dc;
+}
+
+.app-header button:focus-visible,
+.app-header a:focus-visible,
+.app-header .nav-item:focus-visible {
+  outline: 2px solid var(--zx-brand);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .header-inner {
@@ -333,14 +346,15 @@ const goHomeHash = (hash: string) => {
 .brand-logo {
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #2563eb;
+  background: linear-gradient(135deg, #f2641e 0%, #d94f0e 100%);
   color: #fff;
   font-size: 15px;
   font-weight: 800;
+  box-shadow: 0 6px 16px var(--zx-brand-ring);
 }
 
 .brand-text {
@@ -350,16 +364,20 @@ const goHomeHash = (hash: string) => {
 }
 
 .brand-name {
-  font-size: 18px;
+  font-family: var(--zx-display);
+  font-size: 19px;
   font-weight: 800;
-  color: #111827;
+  color: var(--zx-ink);
   line-height: 1.1;
+  letter-spacing: 0.5px;
 }
 
 .brand-slogan {
-  font-size: 11px;
-  color: #9ca3af;
-  letter-spacing: 0.5px;
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  color: #a8a29e;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
   line-height: 1.2;
 }
 
@@ -383,8 +401,8 @@ const goHomeHash = (hash: string) => {
 }
 
 .nav-item:hover {
-  color: #2563eb;
-  background: #f4f7fd;
+  color: var(--zx-brand-ink);
+  background: var(--zx-brand-soft);
 }
 
 .nav-arrow {
@@ -392,33 +410,37 @@ const goHomeHash = (hash: string) => {
 }
 
 .product-menu {
-  width: 300px;
+  width: 320px;
   padding: 8px;
+  border-radius: 16px;
 }
 
 .product-item {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 6px 0;
+  padding: 8px 6px;
+  border-radius: 12px;
 }
 
 .product-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  --p: var(--zx-brand);
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
-  font-size: 18px;
+  background: #fef0e9;
+  background: color-mix(in srgb, var(--p) 12%, white);
+  color: var(--p);
+  font-size: 19px;
   flex-shrink: 0;
 }
 
 .product-icon.coming {
-  background: #f3f4f6;
-  color: #9ca3af;
+  background: #f5f3ef;
+  color: #a8a29e;
 }
 
 .product-info {
@@ -526,21 +548,21 @@ const goHomeHash = (hash: string) => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid #dbe3f0;
+  border: 1px solid #f0ddd0;
   border-radius: 8px;
   padding: 6px 12px;
-  background: #f8fafc;
-  color: #2563eb;
+  background: var(--zx-brand-soft);
+  color: var(--zx-brand-ink);
   font-size: 13px;
   cursor: pointer;
 }
 
 .task-btn:hover {
-  border-color: #2563eb;
+  border-color: var(--zx-brand);
 }
 
 .task-btn-count {
-  background: #2563eb;
+  background: var(--zx-brand);
   color: #fff;
   border-radius: 10px;
   font-size: 11px;
@@ -559,8 +581,8 @@ const goHomeHash = (hash: string) => {
 .task-btn-spinner {
   width: 10px;
   height: 10px;
-  border: 2px solid #c0c4cc;
-  border-top-color: #2563eb;
+  border: 2px solid #e8c9b8;
+  border-top-color: var(--zx-brand);
   border-radius: 50%;
   animation: task-spin 0.8s linear infinite;
 }
