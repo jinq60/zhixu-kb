@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>2.7.18</version>
+        <version>3.2.5</version>
         <relativePath/>
     </parent>
     <groupId>com.zhixu</groupId>
@@ -16,18 +16,20 @@
 
     <properties>
         <java.version>17</java.version>
-        <mybatis-plus.version>3.5.5</mybatis-plus.version>
-        <jjwt.version>0.11.5</jjwt.version>
+        <!-- Boot 3 全家桶版本对齐：MP 3.5.7+ / jjwt 0.12.x / springdoc 2.x 均为 Boot3 首选；
+             Boot 2 时代的 Spring/Tomcat/SnakeYAML/Security 手动覆盖已删除（3.2.5 自带已修复版本） -->
+        <!-- MP 3.5.9 移除了 PaginationInnerInterceptor（分页重构），本项目分页配置依赖它，
+             故定在 3.5.7；3.5.7 传递的 mybatis-spring 2.1.2 在 Spring 6.1 下报
+             factoryBeanObjectType 类型错，另用直引 3.0.3 覆盖（见下） -->
+        <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <jjwt.version>0.12.6</jjwt.version>
+        <springdoc.version>2.5.0</springdoc.version>
+        <logstash-encoder.version>7.4</logstash-encoder.version>
         <hutool.version>5.8.25</hutool.version>
         <jqwik.version>1.7.4</jqwik.version>
         <poi.version>5.2.5</poi.version>
-        <neo4j-driver.version>4.4.15</neo4j-driver.version>
-        <!-- 依赖加固：覆盖 Boot 2.7.18（EOL）管理的版本，修复已知 CVE
-             （Spring 5.3.31→5.3.39、Tomcat 9.0.83→9.0.98、SnakeYAML 1.30→1.33、Spring Security 5.7.11→5.7.12） -->
-        <spring-framework.version>5.3.39</spring-framework.version>
-        <tomcat.version>9.0.98</tomcat.version>
-        <snakeyaml.version>1.33</snakeyaml.version>
-        <spring-security.version>5.7.12</spring-security.version>
+        <!-- neo4j 驱动改由 Boot 3.2 统一管理（5.x）：4.4 版缺 AuthTokenManager，
+             Boot 3.2 的 Neo4jAutoConfiguration 直接启动失败；5.x 驱动兼容 4.4 服务端 -->
     </properties>
 
     <dependencies>
@@ -37,11 +39,11 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- 结构化 JSON 日志输出（ELK/Filebeat 采集）：7.2 为支持 logback 1.2.x（Boot 2.7）的最后版本 -->
+        <!-- 结构化 JSON 日志输出（ELK/Filebeat 采集）：7.4 对应 logback 1.4.x（Boot 3.2） -->
         <dependency>
             <groupId>net.logstash.logback</groupId>
             <artifactId>logstash-logback-encoder</artifactId>
-            <version>7.2</version>
+            <version>${logstash-encoder.version}</version>
         </dependency>
 
         <!-- Docker 状态采集（管理端「运行状态」页）：zerodep 传输 Java 8 兼容、无额外依赖。
@@ -95,6 +97,14 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- mybatis-spring 直引 3.0.x：MP 传递的 2.1.2 在 Spring 6.1 下因
+             factoryBeanObjectType 类型检查导致容器启动失败（Boot 3 必备覆盖） -->
+        <dependency>
+            <groupId>org.mybatis</groupId>
+            <artifactId>mybatis-spring</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+
         <!-- Flyway 版本化迁移：V1 基线（新库）+ Java 增量（老库补列/补表，元数据幂等）。
              Flyway 8.1+ 起数据库支持拆分为独立构件，MySQL 必须加 flyway-mysql，
              否则启动报 Unsupported Database: MySQL（版本由 Boot 统一管理）。 -->
@@ -113,11 +123,10 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Neo4j 知识图谱驱动 -->
+        <!-- Neo4j 知识图谱驱动：版本由 Boot 3.2 统一管理（5.x，兼容 4.4 服务端） -->
         <dependency>
             <groupId>org.neo4j.driver</groupId>
             <artifactId>neo4j-java-driver</artifactId>
-            <version>${neo4j-driver.version}</version>
         </dependency>
 
         <!-- Milvus 向量数据库 SDK（RAG 语义检索） -->
@@ -167,11 +176,11 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- OpenAPI / Swagger UI -->
+        <!-- OpenAPI / Swagger UI（2.x 为 Boot 3 / jakarta 专线，1.x 只到 javax） -->
         <dependency>
             <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-ui</artifactId>
-            <version>1.7.0</version>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
 
         <!-- Spring Boot AOP -->

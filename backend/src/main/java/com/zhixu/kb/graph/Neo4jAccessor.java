@@ -4,7 +4,7 @@ import com.zhixu.kb.config.Neo4jProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
-import org.neo4j.driver.Transaction;
+import org.neo4j.driver.TransactionContext;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -36,7 +36,8 @@ public class Neo4jAccessor {
             return null;
         }
         try (Session session = driver.session()) {
-            return session.writeTransaction(tx -> mapper.map(tx, cypher, params));
+            // 驱动 5.x 移除了 writeTransaction，语义等价替换为 executeWrite
+            return session.executeWrite(tx -> mapper.map(tx, cypher, params));
         } catch (Exception ex) {
             // 保留堆栈：Neo4j 宕机/超时与"真的没有图谱数据"必须可区分，否则排障困难
             log.warn("Neo4j write failed: {}", ex.getMessage(), ex);
@@ -50,7 +51,8 @@ public class Neo4jAccessor {
             return null;
         }
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> mapper.map(tx, cypher, params));
+            // 驱动 5.x 移除了 readTransaction，语义等价替换为 executeRead
+            return session.executeRead(tx -> mapper.map(tx, cypher, params));
         } catch (Exception ex) {
             log.warn("Neo4j read failed: {}", ex.getMessage(), ex);
             return null;
@@ -59,6 +61,8 @@ public class Neo4jAccessor {
 
     @FunctionalInterface
     public interface ResultMapper<T> {
-        T map(Transaction tx, String cypher, java.util.Map<String, Object> params);
+        // 驱动 5.x 的 executeWrite/executeRead 回调入参为 TransactionContext（仅暴露 run，
+        // 调用方本就只用 tx.run，签名随之收窄；需手动 commit 的场景本项目不存在）
+        T map(TransactionContext tx, String cypher, java.util.Map<String, Object> params);
     }
 }

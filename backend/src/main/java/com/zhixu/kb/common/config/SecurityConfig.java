@@ -7,30 +7,28 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
-import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-import javax.servlet.http.HttpServletResponse;
-import java.util.Arrays;
+import jakarta.servlet.http.HttpServletResponse;
 
 @Configuration
 @RequiredArgsConstructor
-@EnableGlobalMethodSecurity(prePostEnabled = true)
+@EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final RateLimitFilter rateLimitFilter;
     private final RequestTraceFilter requestTraceFilter;
-    private final Environment environment;
 
     private static final String[] PUBLIC_ENDPOINTS = {
             "/api/auth/login",
@@ -53,31 +51,25 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                .csrf().disable()
-                .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-                .and()
-                .exceptionHandling()
-                .authenticationEntryPoint((request, response, authException) -> {
-                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                    response.setContentType("application/json;charset=UTF-8");
-                    response.getWriter().write("{\"code\":401,\"message\":\"未登录或token已过期\"}");
-                })
-                .and()
-                .authorizeRequests()
-                .antMatchers(PUBLIC_ENDPOINTS).permitAll()
-                .antMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                // 文件内容接口匿名放行，Service 层（findReadableFile）仍强制：
-                // 仅自己笔记或已发布笔记的附件可读，禁止匿名遍历自增文件 ID。
-                .antMatchers(HttpMethod.GET, "/api/files/*/content").permitAll()
-                .antMatchers(HttpMethod.GET, "/api/categories/**").authenticated();
-
-        // P0-4 修复：Swagger/Actuator 默认需认证（不限 profile，原先 permitAll 首匹配导致 prod 分支死代码）
-        http.authorizeRequests()
-                .antMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/**")
-                .authenticated();
-
-        http.authorizeRequests()
-                .anyRequest().authenticated();
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                            response.setContentType("application/json;charset=UTF-8");
+                            response.getWriter().write("{\"code\":401,\"message\":\"未登录或token已过期\"}");
+                        }))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // 文件内容接口匿名放行，Service 层（findReadableFile）仍强制：
+                        // 仅自己笔记或已发布笔记的附件可读，禁止匿名遍历自增文件 ID。
+                        .requestMatchers(HttpMethod.GET, "/api/files/*/content").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/categories/**").authenticated()
+                        // P0-4 修复：Swagger/Actuator 默认需认证（不限 profile，原先 permitAll 首匹配导致 prod 分支死代码）
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/**")
+                        .authenticated()
+                        .anyRequest().authenticated());
 
         http.addFilterBefore(requestTraceFilter, UsernamePasswordAuthenticationFilter.class);
         http.addFilterAfter(jwtAuthenticationFilter, RequestTraceFilter.class);
@@ -104,14 +96,10 @@ public class SecurityConfig {
         return disabledRegistration(filter);
     }
 
-    private <T extends javax.servlet.Filter> FilterRegistrationBean<T> disabledRegistration(T filter) {
+    private <T extends jakarta.servlet.Filter> FilterRegistrationBean<T> disabledRegistration(T filter) {
         FilterRegistrationBean<T> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
-    }
-
-    private boolean isProdProfile() {
-        return environment != null && Arrays.asList(environment.getActiveProfiles()).contains("prod");
     }
 
     @Bean

@@ -85,7 +85,7 @@ public class OAuthService {
      * 回调地址不再携带任何 code——JWT 不再经过 URL/浏览器历史/日志。
      */
     public String callback(String provider, String code, String state,
-                           javax.servlet.http.HttpServletResponse response) {
+                           jakarta.servlet.http.HttpServletResponse response) {
         if (!StringUtils.hasText(code)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "授权码为空");
         }

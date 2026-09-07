@@ -738,7 +738,7 @@ public class FileService {
     /**
      * 启动清理：删除遗留的临时分片目录（上次异常中断残留）。
      */
-    @javax.annotation.PostConstruct
+    @jakarta.annotation.PostConstruct
     public void cleanupTempChunks() {
         try {
             String root = StringUtils.hasText(storageProperties.getPath())
