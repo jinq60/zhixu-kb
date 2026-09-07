@@ -129,10 +129,11 @@ onUnmounted(()=>{
       <div class="hero-inner">
         <div class="hero-left" data-reveal>
           <div class="eyebrow"><span class="eyebrow-dot" /> ZhiXu Tech · AI Knowledge Family · 4 Products</div>
+          <button class="hero-badge" @click="goDownload"><span class="badge-spark">✦</span> 知序 V1.0 正式发布 · Web 版免费体验 <el-icon><ArrowRight /></el-icon></button>
           <h1 class="hero-title">
             <span class="t-serif">让知识</span>
             <span class="t-break">从堆积</span>
-            <span class="t-serif accent">变成秩序</span>
+            <span class="t-serif grad">变成秩序</span>
           </h1>
           <p class="hero-sub">
             知序是一套可组合的 <b>AI 知识基建</b>：从 <b>知识库 · OCR 工具箱 · AI 工作台 · 同步助手</b>
@@ -152,10 +153,17 @@ onUnmounted(()=>{
             </button>
           </div>
           <div class="hero-actions">
-            <button class="btn-primary" @click="goProduct(activeConfig!)">
-              {{ activeConfig?.status==='live' ? '立即体验' : '查看详情' }} <el-icon><ArrowRight /></el-icon>
+            <button class="btn-primary btn-shine" @click="goProduct(activeConfig!)">
+              {{ activeConfig?.status==='live' ? '免费体验' : '查看详情' }} <el-icon><ArrowRight /></el-icon>
             </button>
             <button class="btn-ghost" @click="goDownload"><el-icon><Download /></el-icon> 下载客户端</button>
+          </div>
+          <div class="hero-proof">
+            <div class="avatar-stack"><span class="av a1">研</span><span class="av a2">企</span><span class="av a3">创</span><span class="av a4">学</span></div>
+            <div class="proof-text">
+              <div class="proof-stars"><el-icon><StarFilled /></el-icon><el-icon><StarFilled /></el-icon><el-icon><StarFilled /></el-icon><el-icon><StarFilled /></el-icon><el-icon><StarFilled /></el-icon><span>4.9</span></div>
+              <div class="proof-sub">深受学生 · 研究者 · 团队喜爱</div>
+            </div>
           </div>
           <div class="hero-meta">
             <span><i class="dot" /> 私有化部署</span>
@@ -166,7 +174,8 @@ onUnmounted(()=>{
 
         <!-- 真实产品界面 -->
         <div class="hero-visual" data-reveal>
-          <div class="product-window" :key="activeProduct">
+          <div class="shot-glow" :style="{ background: activeConfig?.gradient }" />
+          <div class="product-window shot" :key="activeProduct">
             <div class="win-bar">
               <div class="traffic"><i/><i/><i/></div>
               <div class="win-title">
@@ -282,51 +291,97 @@ onUnmounted(()=>{
       </div>
     </section>
 
-    <!-- TRUST -->
-    <section class="trust" data-reveal>
-      <div class="trust-inner">
-        <div class="trust-item"><strong>Private</strong><span>数据存本机 · 可离线</span></div>
-        <div class="trust-sep" />
-        <div class="trust-item"><strong>AI Native</strong><span>OCR · RAG · 图谱原生</span></div>
-        <div class="trust-sep" />
-        <div class="trust-item"><strong>Secure</strong><span>私有化部署 · 权限可控</span></div>
+    <!-- 能力跑马灯 -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track">
+        <span v-for="n in 6" :key="n" class="marquee-set">
+          <span>OCR 识别</span><i>✦</i><span>AI 自动整理</span><i>✦</i><span>知识图谱</span><i>✦</i><span>RAG 问答</span><i>✦</i><span>多格式解析</span><i>✦</i><span>引用溯源</span><i>✦</i><span>私有化部署</span><i>✦</i><span>流式回答</span><i>✦</i>
+        </span>
+      </div>
+    </div>
+
+    <!-- METRICS 深色数据带 -->
+    <section class="metrics" data-reveal>
+      <div class="metrics-inner">
+        <div class="metric"><strong class="grad-num">10,000+</strong><span>知识笔记已沉淀</span></div>
+        <div class="metric-sep" />
+        <div class="metric"><strong class="grad-num">99.2%</strong><span>OCR 识别准确率</span></div>
+        <div class="metric-sep" />
+        <div class="metric"><strong class="grad-num">500ms</strong><span>AI 平均响应</span></div>
+        <div class="metric-sep" />
+        <div class="metric"><strong class="grad-num">100%</strong><span>数据自主可控</span></div>
       </div>
     </section>
 
-    <!-- PRODUCTS -->
-    <section id="products" class="products" data-reveal>
+    <!-- PRODUCTS 交错式产品 showcase -->
+    <section id="products" class="showcase" data-reveal>
       <div class="section-head">
         <span class="section-label">产品矩阵</span>
-        <h2>覆盖知识管理全场景</h2>
-        <p>从个人学习到企业协作，知序提供端到端的工具链</p>
+        <h2>一个家族，<span class="t-serif grad">覆盖知识全链路</span></h2>
+        <p>从个人学习到企业协作，按需切入、自由组合</p>
       </div>
-      <div class="product-grid">
-        <div v-for="p in products" :key="p.id" :class="['product-card', {live: p.status==='live'}]" @click="goProduct(p)">
-          <div class="product-icon" :style="{ background: p.gradient, color:'#fff' }"><el-icon><component :is="resolveIcon(p.icon)" /></el-icon></div>
-          <div class="product-top">
-            <h3>{{p.name}}</h3>
-            <span class="product-status" :style="{ background: p.status==='live' ? '#DCFCE7' : '#FEF3C7', color: p.status==='live' ? '#166534' : '#92400E' }">{{ p.status==='live' ? '已上线' : '即将' }}</span>
+      <div
+        v-for="(p, i) in products"
+        :key="p.id"
+        :class="['show-row', { reverse: i % 2 === 1 }]"
+        :data-reveal="''"
+      >
+        <div class="show-copy">
+          <div class="show-brand">
+            <span class="show-logo" :style="{ background: p.gradient }"><el-icon><component :is="resolveIcon(p.icon)" /></el-icon></span>
+            <span class="show-short">{{ p.shortName }}</span>
+            <span :class="['show-status', p.status]">{{ p.status==='live' ? '已上线' : '即将上线' }}</span>
           </div>
-          <p class="product-desc">{{p.description}}</p>
-          <div class="product-tags"><el-tag v-for="tag in p.tags" :key="tag" size="small" type="info" effect="plain">{{tag}}</el-tag></div>
-          <div class="product-foot">
-            <span class="product-cta" :style="{ color: p.color }">{{ p.status==='live' ? '立即体验' : '查看详情' }} <el-icon><ArrowRight /></el-icon></span>
+          <h3>{{ p.name }}</h3>
+          <p class="show-tagline t-serif">{{ p.tagline }}</p>
+          <p class="show-desc">{{ p.longDesc }}</p>
+          <ul class="show-checks">
+            <li v-for="b in (p.features[0]?.bullets ?? []).slice(0, 3)" :key="b">
+              <span class="check" :style="{ background: p.color }"><el-icon><Check /></el-icon></span>{{ b }}
+            </li>
+          </ul>
+          <div class="show-cta-row">
+            <button class="btn-primary btn-shine" :style="{ background: p.gradient }" @click="goProduct(p)">
+              {{ p.status==='live' ? '免费体验' : p.ctaLabel }} <el-icon><ArrowRight /></el-icon>
+            </button>
+            <a class="show-link" :style="{ color: p.color }" @click="router.push(`/products/${p.slug}`)">了解更多 <el-icon><ArrowRight /></el-icon></a>
           </div>
+        </div>
+        <div class="show-visual" @click="goProduct(p)">
+          <div class="show-blob" :style="{ background: p.gradient }" />
+          <div class="show-mock">
+            <div class="show-mock-bar"><span class="traffic"><i/><i/><i/></span><span class="show-mock-title">{{ p.shortName }}</span></div>
+            <div class="show-mock-body">
+              <div class="show-mock-icon" :style="{ background: p.gradient }"><el-icon><component :is="resolveIcon(p.icon)" /></el-icon></div>
+              <div class="show-mock-name">{{ p.name }}</div>
+              <div class="show-mock-tag">{{ p.tagline }}</div>
+              <div class="show-mock-chips">
+                <span v-for="f in p.features.slice(0, 3)" :key="f.num">{{ f.eyebrow.split('·')[0].trim() }}</span>
+              </div>
+              <div v-if="p.stats?.length" class="show-mock-stats">
+                <div v-for="s in p.stats" :key="s.label"><strong>{{ s.value }}</strong><span>{{ s.label }}</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="show-float-chip" :style="{ borderColor: p.color }"><span class="live-dot" /> {{ p.status==='live' ? '开箱即用' : '敬请期待' }}</div>
         </div>
       </div>
     </section>
 
-    <!-- SOLUTIONS -->
-    <section id="solutions" class="solutions" data-reveal>
-      <div class="section-head light">
+    <!-- SOLUTIONS 场景图卡 -->
+    <section id="solutions" class="scenarios" data-reveal>
+      <div class="section-head">
         <span class="section-label">解决方案</span>
-        <h2>为不同场景量身打造</h2>
+        <h2>为每一种<span class="t-serif grad">热爱</span>而造</h2>
+        <p>无论你是学生、教师、创作者还是企业团队，都能找到落地方式</p>
       </div>
-      <div class="solution-grid">
-        <div v-for="s in solutions" :key="s.title" class="solution-card">
-          <div class="solution-icon"><el-icon><component :is="s.icon" /></el-icon></div>
-          <h3>{{s.title}}</h3>
-          <p>{{s.desc}}</p>
+      <div class="scenario-grid">
+        <div v-for="(s, i) in solutions" :key="s.title" :class="['scenario-card', `g${i % 4}`]">
+          <div class="scenario-art"><el-icon><component :is="s.icon" /></el-icon><span class="scenario-num">0{{ i + 1 }}</span></div>
+          <div class="scenario-body">
+            <h3>{{s.title}}</h3>
+            <p>{{s.desc}}</p>
+          </div>
         </div>
       </div>
     </section>
@@ -335,58 +390,94 @@ onUnmounted(()=>{
     <section id="download" class="download" data-reveal>
       <div class="section-head">
         <span class="section-label">下载中心</span>
-        <h2>多平台客户端与部署方案</h2>
-        <p>Windows / macOS / Linux 客户端与 Docker 一键部署</p>
+        <h2>一次下载，<span class="t-serif grad">全端可用</span></h2>
+        <p>Windows / macOS / Linux 客户端与 Docker 一键部署，数据永远在你手中</p>
       </div>
       <div class="download-grid">
-        <div v-for="d in downloads" :key="d.platform" class="download-card">
+        <div v-for="d in downloads" :key="d.platform" :class="['download-card', { hot: !!d.url }]">
+          <div v-if="d.url" class="dl-ribbon">推荐</div>
+          <div class="dl-icon"><el-icon><Monitor v-if="d.platform==='Windows'" /><Connection v-else-if="d.platform.startsWith('Docker')" /><Download v-else /></el-icon></div>
           <div class="download-platform">{{d.platform}}</div>
           <div class="download-version">{{d.version}}</div>
           <div class="download-meta"><span>{{d.size}}</span><span class="download-note">{{d.note}}</span></div>
-          <el-button type="primary" plain class="download-btn" @click="onDownload(d)"><el-icon><Download /></el-icon>{{d.url?'立即下载':d.platform.startsWith('Docker')?'查看方案':'敬请期待'}}</el-button>
+          <el-button type="primary" :plain="!d.url" class="download-btn" @click="onDownload(d)"><el-icon><Download /></el-icon>{{d.url?'立即下载':d.platform.startsWith('Docker')?'查看方案':'敬请期待'}}</el-button>
         </div>
       </div>
     </section>
 
-    <!-- CASES & RESOURCES (compact) -->
-    <section id="cases" class="cases" data-reveal>
-      <div class="section-head"><span class="section-label">客户案例</span><h2>已经被不同场景验证</h2></div>
-      <div class="case-grid">
-        <div v-for="c in cases" :key="c.org" class="case-card">
-          <div class="case-org">{{c.org}}</div><div class="case-role">{{c.role}}</div>
-          <p class="case-result">{{c.result}}</p>
-          <div class="case-tags"><el-tag v-for="tag in c.tags" :key="tag" size="small" type="primary" effect="light">{{tag}}</el-tag></div>
+    <!-- TESTIMONIALS 用户评价 -->
+    <section id="cases" class="testimonials" data-reveal>
+      <div class="section-head">
+        <span class="section-label">用户评价</span>
+        <h2>他们已经<span class="t-serif grad">爱上知序</span></h2>
+        <p>看看知序如何帮助用户沉淀与复用知识资产</p>
+      </div>
+      <div class="testi-grid">
+        <div v-for="(c, i) in cases" :key="c.org" class="testi-card">
+          <div class="testi-quote">“</div>
+          <div class="testi-stars"><el-icon v-for="n in 5" :key="n"><StarFilled /></el-icon></div>
+          <p class="testi-text">{{c.result}}</p>
+          <div class="testi-tags"><el-tag v-for="tag in c.tags" :key="tag" size="small" type="primary" effect="light">{{tag}}</el-tag></div>
+          <div class="testi-user"><span :class="['testi-av', `a${i % 4}`]">{{ c.org.slice(1, 2) }}</span><div><div class="testi-org">{{c.org}}</div><div class="testi-role">{{c.role}}</div></div></div>
         </div>
       </div>
     </section>
     <section id="docs" class="resources" data-reveal>
-      <div class="section-head"><span class="section-label">开发者与文档</span><h2>快速接入与二次开发</h2></div>
+      <div class="section-head"><span class="section-label">开发者与文档</span><h2>快速接入与<span class="t-serif grad">二次开发</span></h2><p>完善的文档、开放 API 与 Docker 模板，降低使用与集成门槛</p></div>
       <div class="resource-grid">
         <div v-for="r in resources" :key="r.title" class="resource-card">
           <div class="resource-icon"><el-icon><component :is="r.icon" /></el-icon></div>
           <h3>{{r.title}}</h3><p>{{r.desc}}</p>
-          <a class="resource-link" @click="router.push('/home')">查看文档 <el-icon><ArrowRight /></el-icon></a>
+          <a class="resource-link" @click="router.push('/home#docs')">查看文档 <el-icon><ArrowRight /></el-icon></a>
         </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="faq" data-reveal>
+      <div class="section-head"><span class="section-label">常见问题</span><h2>你想知道的<span class="t-serif grad">都在这里</span></h2></div>
+      <div class="faq-list">
+        <el-collapse accordion>
+          <el-collapse-item v-for="(f, i) in faqs" :key="i" :name="i">
+            <template #title><span class="faq-q">{{ f.q }}</span></template>
+            <div class="faq-a">{{ f.a }}</div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+    </section>
+
+    <!-- ABOUT 理念带 -->
+    <section id="about" class="about-strip" data-reveal>
+      <div class="about-inner">
+        <div class="about-item"><strong>本地优先</strong><span>数据自主可控，可离线运行</span></div>
+        <div class="about-sep" />
+        <div class="about-item"><strong>开放集成</strong><span>RESTful API 与插件扩展</span></div>
+        <div class="about-sep" />
+        <div class="about-item"><strong>持续进化</strong><span>紧跟大模型能力迭代</span></div>
       </div>
     </section>
 
     <!-- CTA -->
     <section class="cta" data-reveal>
+      <div class="cta-pattern" />
       <div class="cta-inner">
-        <h2>开启你的知识管理升级</h2>
-        <p>注册账号后即可免费体验知序智能知识库 Web 版。</p>
+        <div class="cta-badge">✦ 现在加入 · 完全免费起步</div>
+        <h2>让知识从今天开始<br />为你工作</h2>
+        <p>注册账号后即可免费体验知序智能知识库 Web 版，支持私有化部署。</p>
         <div class="cta-actions">
-          <button class="btn-primary" @click="enterWeb">Web 体验 <el-icon><ArrowRight /></el-icon></button>
-          <button class="btn-ghost" @click="router.push('/home#contact')">联系我们</button>
+          <button class="btn-white" @click="enterWeb">免费体验 <el-icon><ArrowRight /></el-icon></button>
+          <button class="btn-outline" @click="router.push('/home#contact')">联系我们</button>
         </div>
       </div>
     </section>
 
     <footer id="contact" class="landing-footer">
       <div class="footer-inner">
-        <div class="footer-brand"><div class="brand-logo">知序</div><div><div class="footer-brand-name">知序 ZhiXu Tech</div><div class="footer-brand-desc">让知识从堆积，变成秩序。</div></div></div>
-        <div class="footer-col"><h4>产品</h4><a @click="router.push('/notes')">智能知识库</a><a @click="router.push('/home#products')">AI 工作台</a></div>
-        <div class="footer-col"><h4>资源</h4><a @click="router.push('/home#docs')">快速开始</a><a @click="router.push('/home#docs')">API 文档</a></div>
+        <div class="footer-brand"><div class="brand-logo">知序</div><div><div class="footer-brand-name">知序 ZhiXu Tech</div><div class="footer-brand-desc">让知识从堆积，变成秩序。</div></div>
+          <div class="footer-proof"><span class="proof-stars sm"><el-icon v-for="n in 5" :key="n"><StarFilled /></el-icon></span><span>4.9 · 用户喜爱</span></div>
+        </div>
+        <div class="footer-col"><h4>产品家族</h4><a v-for="p in products" :key="p.id" @click="goProduct(p)">{{ p.name }}</a></div>
+        <div class="footer-col"><h4>资源</h4><a @click="router.push('/home#docs')">快速开始</a><a @click="router.push('/home#docs')">API 文档</a><a @click="router.push('/home#download')">下载中心</a></div>
         <div class="footer-col contact"><h4>联系我们</h4><span><el-icon><Message /></el-icon> contact@zhixu.tech</span><span><el-icon><Location /></el-icon> 中国 · 杭州</span></div>
       </div>
       <div class="footer-bottom"><span>© 2026 知序 ZhiXu Tech. All rights reserved.</span><div class="footer-bottom-links"><a>隐私政策</a><a>服务条款</a></div></div>
@@ -396,38 +487,54 @@ onUnmounted(()=>{
 
 <style scoped>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@500;700;800&family=Noto+Serif+SC:wght@800&family=JetBrains+Mono:wght@500&display=swap');
-.zx-landing{--ink:#0B1220;--graphite:#475569;--paper:#fff;--cloud:#F8FAFC;--hair:#E2E8F0;--brand:#2563EB;--brand-deep:#1D4ED8;--glow:#60A5FA;--radius:18px;background:var(--paper);color:var(--ink);font-family:'Inter','Helvetica Neue',Helvetica,'PingFang SC','Microsoft YaHei',sans-serif}
+.zx-landing{--ink:#0B1220;--graphite:#475569;--muted:#94A3B8;--paper:#fff;--cloud:#F6F8FC;--hair:#E2E8F0;--brand:#2563EB;--brand-deep:#1E40AF;--violet:#7C3AED;--cyan:#06B6D4;--green:#059669;--amber:#F59E0B;--radius:20px;--shadow-lg:0 24px 60px rgba(15,23,42,.12);--shadow-md:0 12px 32px rgba(15,23,42,.08);background:var(--paper);color:var(--ink);font-family:'Inter','Helvetica Neue',Helvetica,'PingFang SC','Microsoft YaHei',sans-serif;-webkit-font-smoothing:antialiased}
+.grad{background:linear-gradient(92deg,var(--brand) 10%,var(--violet) 55%,var(--cyan) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.grad-num{background:linear-gradient(92deg,#93C5FD,#C4B5FD);-webkit-background-clip:text;background-clip:text;color:transparent}
 .eyebrow{font:500 12px/1 'JetBrains Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--brand);display:inline-flex;gap:8px;align-items:center}
 .eyebrow-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 6px rgba(37,99,235,.12)}
 .t-serif{font-family:'Noto Serif SC',serif;font-weight:800;letter-spacing:-.02em}
-.section-head{text-align:center;margin-bottom:56px}
-.section-head h2{font-size:44px;font-weight:800;letter-spacing:-.03em;line-height:1.1}
+.section-head{text-align:center;margin-bottom:60px;max-width:720px;margin-left:auto;margin-right:auto}
+.section-head h2{font-size:46px;font-weight:800;letter-spacing:-.03em;line-height:1.12}
 .section-head p{color:var(--graphite);margin-top:12px}
 .section-label{display:inline-block;padding:6px 14px;border-radius:999px;background:rgba(37,99,235,.08);color:var(--brand);font:700 13px/1 Inter}
 
 /* hero */
-.hero{position:relative;overflow:hidden;padding:120px 48px 60px;background:linear-gradient(180deg,#F8FAFC 0%,#fff 55%,#fff 100%)}
-.hero-grid{position:absolute;inset:0;background-image:linear-gradient(to right, rgba(15,23,42,.04) 1px, transparent 1px),linear-gradient(to bottom, rgba(15,23,42,.04) 1px, transparent 1px);background-size:32px 32px;mask-image:radial-gradient(60% 50% at 50% 0%, #000 60%, transparent 100%)}
-.grid-fade{position:absolute;inset:0;background:radial-gradient(600px 400px at 75% 10%, rgba(37,99,235,.10), transparent 70%)}
-.hero-halo{position:absolute;top:-120px;right:-120px;width:720px;height:720px;border-radius:50%;background:radial-gradient(circle, rgba(37,99,235,.10) 0%, transparent 70%);pointer-events:none}
-.hero-inner{position:relative;max-width:1280px;margin:0 auto;display:flex;gap:48px;align-items:center}
-.hero-left{flex:1;max-width:560px}
-.hero-title{font-size:76px;line-height:.95;letter-spacing:-.04em;margin:18px 0 16px}
+.hero{position:relative;overflow:hidden;padding:132px 48px 72px;background:linear-gradient(180deg,#F4F7FE 0%,#fff 60%,#fff 100%)}
+.hero-grid{position:absolute;inset:0;background-image:linear-gradient(to right, rgba(15,23,42,.05) 1px, transparent 1px),linear-gradient(to bottom, rgba(15,23,42,.05) 1px, transparent 1px);background-size:34px 34px;mask-image:radial-gradient(65% 55% at 50% 0%, #000 55%, transparent 100%)}
+.grid-fade{position:absolute;inset:0;background:radial-gradient(640px 420px at 78% 8%, rgba(37,99,235,.12), transparent 70%),radial-gradient(520px 360px at 8% 20%, rgba(124,58,237,.08), transparent 70%)}
+.hero-halo{position:absolute;top:-160px;right:-140px;width:760px;height:760px;border-radius:50%;background:radial-gradient(circle, rgba(37,99,235,.12) 0%, transparent 70%);pointer-events:none;filter:blur(10px)}
+.hero-inner{position:relative;max-width:1280px;margin:0 auto;display:flex;gap:56px;align-items:center}
+.hero-left{flex:1;max-width:580px}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;margin:14px 0 4px;padding:9px 16px;border-radius:999px;border:1px solid rgba(37,99,235,.25);background:rgba(255,255,255,.8);backdrop-filter:blur(6px);color:var(--brand-deep);font:700 13px/1 Inter;cursor:pointer;box-shadow:0 4px 14px rgba(37,99,235,.10);transition:all .2s}
+.hero-badge:hover{box-shadow:0 8px 22px rgba(37,99,235,.18);transform:translateY(-1px)}
+.badge-spark{color:var(--amber);font-size:15px}
+.hero-title{font-size:78px;line-height:.96;letter-spacing:-.045em;margin:14px 0 18px;font-weight:800}
 .hero-title .t-break{display:block;font-weight:800}
-.hero-title .accent{color:var(--brand)}
-.hero-sub{font-size:17px;line-height:1.8;color:var(--graphite)}
+.hero-sub{font-size:17px;line-height:1.85;color:var(--graphite)}
 .hero-sub b{color:var(--ink);font-weight:700}
-.hero-actions{margin-top:28px;display:flex;gap:14px}
-.btn-primary{background:var(--brand);color:#fff;border:none;padding:14px 22px;border-radius:999px;font-weight:700;display:inline-flex;gap:8px;align-items:center;cursor:pointer;box-shadow:0 10px 24px rgba(37,99,235,.18);transition:transform .15s, background .15s}
-.btn-primary:hover{background:var(--brand-deep);transform:translateY(-1px)}
-.btn-ghost{background:#fff;border:1px solid var(--hair);padding:14px 22px;border-radius:999px;font-weight:700;display:inline-flex;gap:8px;align-items:center;cursor:pointer}
-.btn-ghost:hover{border-color:var(--brand);color:var(--brand)}
-.hero-meta{margin-top:18px;display:flex;gap:18px;font:500 13px/1 Inter;color:var(--graphite)}
+.hero-actions{margin-top:30px;display:flex;gap:14px;flex-wrap:wrap}
+.btn-primary{position:relative;overflow:hidden;background:linear-gradient(135deg,var(--brand),var(--brand-deep));color:#fff;border:none;padding:15px 28px;border-radius:999px;font-size:15px;font-weight:700;display:inline-flex;gap:8px;align-items:center;cursor:pointer;box-shadow:0 12px 28px rgba(37,99,235,.28);transition:transform .18s, box-shadow .18s}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 18px 36px rgba(37,99,235,.34)}
+.btn-shine::after{content:'';position:absolute;top:0;left:-80%;width:50%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.45),transparent);transform:skewX(-20deg);transition:left .5s}
+.btn-shine:hover::after{left:130%}
+.btn-ghost{background:rgba(255,255,255,.9);border:1px solid var(--hair);padding:15px 26px;border-radius:999px;font-size:15px;font-weight:700;display:inline-flex;gap:8px;align-items:center;cursor:pointer;transition:all .18s;box-shadow:0 4px 12px rgba(15,23,42,.05)}
+.btn-ghost:hover{border-color:var(--brand);color:var(--brand);transform:translateY(-2px);box-shadow:0 10px 22px rgba(15,23,42,.10)}
+.hero-proof{margin-top:26px;display:flex;align-items:center;gap:14px}
+.avatar-stack{display:flex}
+.avatar-stack .av{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:800;border:2.5px solid #fff;box-shadow:0 4px 10px rgba(15,23,42,.15);margin-left:-10px}
+.avatar-stack .av:first-child{margin-left:0}
+.av.a1{background:linear-gradient(135deg,#2563EB,#60A5FA)}.av.a2{background:linear-gradient(135deg,#7C3AED,#A78BFA)}.av.a3{background:linear-gradient(135deg,#059669,#34D399)}.av.a4{background:linear-gradient(135deg,#EA580C,#FBBF24)}
+.proof-stars{display:flex;gap:2px;color:var(--amber);font-size:15px;align-items:center}
+.proof-stars span{color:var(--ink);font-weight:800;margin-left:6px;font-size:14px}
+.proof-sub{font:500 13px/1.5 Inter;color:var(--graphite);margin-top:2px}
+.hero-meta{margin-top:16px;display:flex;gap:18px;flex-wrap:wrap;font:500 13px/1 Inter;color:var(--graphite)}
 .hero-meta .dot{width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;margin-right:6px}
 
 /* product window */
 .hero-visual{position:relative;width:620px;flex-shrink:0}
-.product-window{background:#fff;border-radius:20px;overflow:hidden;border:1px solid var(--hair);box-shadow:0 24px 60px rgba(15,23,42,.12), 0 2px 0 rgba(15,23,42,.04)}
+.shot-glow{position:absolute;inset:8% -6% -8% -6%;border-radius:32px;opacity:.28;filter:blur(46px);pointer-events:none;transition:background .4s}
+.product-window{position:relative;background:#fff;border-radius:20px;overflow:hidden;border:1px solid var(--hair);box-shadow:0 24px 60px rgba(15,23,42,.12), 0 2px 0 rgba(15,23,42,.04)}
+.product-window.shot{border-color:rgba(37,99,235,.18);box-shadow:0 32px 80px rgba(37,99,235,.16), 0 4px 16px rgba(15,23,42,.08)}
 .win-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#F8FAFC;border-bottom:1px solid var(--hair)}
 .traffic{display:flex;gap:6px}
 .traffic i{width:10px;height:10px;border-radius:50%;background:#E2E8F0;display:block}
@@ -486,80 +593,138 @@ onUnmounted(()=>{
 .mini-graph circle{fill:#EEF2FF;stroke:var(--brand);stroke-width:1.2}
 .mini-graph path{stroke:var(--brand);stroke-width:1;fill:none;stroke-dasharray:40;animation:dash 2s linear infinite}
 
-/* trust */
-.trust{padding:22px 48px;background:#0B1220;color:#fff}
-.trust-inner{max-width:980px;margin:0 auto;display:flex;justify-content:space-between;align-items:center}
-.trust-item{display:flex;flex-direction:column;gap:4px;text-align:center;flex:1}
-.trust-item strong{font:800 14px/1 Inter;letter-spacing:.08em}
-.trust-item span{font:500 12px/1 Inter;color:#94A3B8}
-.trust-sep{width:1px;height:36px;background:rgba(255,255,255,.10)}
+/* marquee */
+.marquee{overflow:hidden;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);background:#fff;padding:16px 0}
+.marquee-track{display:flex;width:max-content;animation:marquee 38s linear infinite}
+.marquee:hover .marquee-track{animation-play-state:paused}
+.marquee-set{display:flex;align-items:center;gap:28px;padding-right:28px;font:700 14px/1 Inter;letter-spacing:.06em;color:#334155;white-space:nowrap}
+.marquee-set i{color:var(--brand);font-style:normal;font-size:12px}
 
-/* feature */
-.feature{padding:96px 48px;background:#fff}
-.feature.alt{background:var(--cloud)}
-.feature-inner{max-width:1180px;margin:0 auto;display:flex;gap:56px;align-items:center}
-.feature-inner.reverse{flex-direction:row-reverse}
-.feature-text{flex:1;min-width:0}
-.feature-num{font:800 72px/1 'Noto Serif SC',serif;color:#EEF2FF;letter-spacing:-.04em;margin-bottom:-8px}
-.eyebrow{margin-bottom:10px}
-.feature-text h2{font-size:48px;line-height:1.05;letter-spacing:-.03em;font-weight:800}
-.feature-text h2 .t-serif{color:var(--brand)}
-.feature-text p{margin-top:14px;font-size:17px;line-height:1.8;color:var(--graphite)}
-.feature-list{margin-top:18px;display:grid;gap:10px}
-.feature-list li{list-style:none;display:flex;gap:10px;align-items:center;font:600 14px/1 Inter;color:var(--ink)}
-.feature-list li .el-icon{color:var(--brand)}
-.feature-visual{flex:1;display:flex;flex-direction:column;gap:16px}
-.doc-stack{position:relative;background:#fff;border:1px solid var(--hair);border-radius:16px;padding:16px;overflow:hidden}
-.doc{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:#F8FAFC;border:1px solid var(--hair);font:600 13px/1 Inter;animation:slideIn .5s both}
-.doc.d2{animation-delay:.12s}.doc.d3{animation-delay:.24s}
-.doc .status{margin-left:auto;font:700 11px/1 Inter;padding:5px 8px;border-radius:999px;background:#FEF3C7;color:#92400E}
-.doc .status.done{background:#DCFCE7;color:#166534}
-.doc-beam{position:absolute;right:22px;top:16px;bottom:16px;width:2px;background:linear-gradient(180deg, var(--brand), transparent);opacity:.5}
-.doc-result{background:#0B1220;color:#E2E8F0;border-radius:14px;padding:16px}
-.r-head{font:700 11px/1 'JetBrains Mono',monospace;letter-spacing:.08em;color:#94A3B8;margin-bottom:10px}
-.r-item{font:500 13px/1.6 Inter;display:flex;gap:8px}
-.r-dot{width:6px;height:6px;border-radius:50%;background:var(--brand);margin-top:7px}
-.r-item.muted{color:#94A3B8}
-.graph-stage{background:#fff;border:1px solid var(--hair);border-radius:16px;padding:14px}
-.graph-svg{width:100%;height:220px}
-.graph-svg .node circle{fill:#fff;stroke:var(--hair);stroke-width:1.2}
-.graph-svg .node text{font:700 11px/1 Inter;fill:var(--ink);text-anchor:middle}
-.graph-svg .node.small circle{fill:#EEF2FF}
-.graph-svg .edges path{stroke:#CBD5E1;stroke-width:1.2;fill:none}
-.graph-caption{text-align:center;font:600 12px/1 Inter;color:var(--graphite);margin-top:8px}
-.ask-window{background:#0B1220;border-radius:16px;padding:16px;color:#E2E8F0}
-.ask-head{font:700 11px/1 'JetBrains Mono',monospace;color:#94A3B8;display:flex;gap:6px;align-items:center}
-.ask-qa{margin-top:12px;background:#111B2E;border-radius:12px;padding:14px}
-.qa-q{font:600 13px/1.5 Inter;color:#E2E8F0}
-.qa-a{margin-top:8px;font:500 13px/1.7 Inter;color:#CBD5E1}
-.typewriter{border-right:2px solid var(--brand);animation:typing 3.2s steps(32,end) infinite, blink .9s step-end infinite}
-.ask-sources{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
-.ask-sources span{font:700 10px/1 Inter;letter-spacing:.08em;color:#64748B}
-.ask-sources span:not(:first-child){background:#1E293B;padding:5px 8px;border-radius:999px;color:#CBD5E1}
+/* metrics */
+.metrics{padding:64px 48px;background:radial-gradient(120% 160% at 50% 0%,#16213B 0%,#0B1220 55%) no-repeat,#0B1220;color:#fff;position:relative;overflow:hidden}
+.metrics::before{content:'';position:absolute;inset:0;background-image:linear-gradient(to right, rgba(255,255,255,.045) 1px, transparent 1px),linear-gradient(to bottom, rgba(255,255,255,.045) 1px, transparent 1px);background-size:36px 36px;mask-image:radial-gradient(60% 100% at 50% 0%, #000 40%, transparent 100%)}
+.metrics-inner{position:relative;max-width:1080px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:24px}
+.metric{display:flex;flex-direction:column;gap:8px;text-align:center;flex:1}
+.metric strong{font-size:46px;font-weight:800;letter-spacing:-.03em;line-height:1}
+.metric span{font:500 13px/1.5 Inter;color:#94A3B8}
+.metric-sep{width:1px;height:56px;background:rgba(255,255,255,.12)}
 
-/* products etc keep previous but tighter */
-.products{background:var(--cloud);padding:80px 48px}
-.product-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;max-width:1180px;margin:0 auto}
-.product-card{background:#fff;border:1px solid var(--hair);border-radius:16px;padding:24px;display:flex;flex-direction:column}
-.product-card.primary{border-color:var(--brand);box-shadow:0 12px 30px rgba(37,99,235,.12)}
-.product-icon{width:44px;height:44px;border-radius:12px;background:#EEF2FF;color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:16px}
-.cases,.solutions,.resources,.download{padding:80px 48px}
-.solution-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;max-width:1100px;margin:0 auto}
-.solution-card{background:#0B1220;color:#fff;border-radius:16px;padding:24px;border:1px solid rgba(255,255,255,.08)}
+/* showcase 交错式产品陈列 */
+.showcase{background:var(--cloud);padding:96px 48px;position:relative;overflow:hidden}
+.show-row{max-width:1180px;margin:0 auto 72px;display:flex;gap:64px;align-items:center}
+.show-row:last-child{margin-bottom:0}
+.show-row.reverse{flex-direction:row-reverse}
+.show-copy{flex:1;min-width:0}
+.show-brand{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.show-logo{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;box-shadow:0 10px 22px rgba(15,23,42,.18)}
+.show-short{font:700 13px/1 'JetBrains Mono',monospace;letter-spacing:.1em;color:var(--graphite)}
+.show-status{font:700 11px/1 Inter;padding:5px 10px;border-radius:999px}
+.show-status.live{background:#DCFCE7;color:#166534}
+.show-status.coming{background:#FEF3C7;color:#92400E}
+.show-copy h3{font-size:42px;font-weight:800;letter-spacing:-.03em;line-height:1.08}
+.show-tagline{font-size:22px;margin-top:8px;color:var(--brand-deep)}
+.show-desc{margin-top:14px;font-size:16px;line-height:1.8;color:var(--graphite)}
+.show-checks{margin-top:20px;display:grid;gap:12px;list-style:none}
+.show-checks li{display:flex;gap:12px;align-items:center;font:600 14px/1.5 Inter;color:var(--ink)}
+.show-checks .check{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;flex-shrink:0}
+.show-cta-row{margin-top:26px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.show-link{display:inline-flex;gap:6px;align-items:center;font:700 14px/1 Inter;cursor:pointer}
+.show-link:hover{text-decoration:underline}
+.show-visual{flex:1;position:relative;cursor:pointer;min-width:0}
+.show-blob{position:absolute;inset:12% 6%;border-radius:36px;opacity:.22;filter:blur(52px);transition:opacity .3s}
+.show-visual:hover .show-blob{opacity:.34}
+.show-mock{position:relative;background:#fff;border:1px solid var(--hair);border-radius:22px;overflow:hidden;box-shadow:var(--shadow-lg);transition:transform .25s}
+.show-visual:hover .show-mock{transform:translateY(-4px) rotate(-.3deg)}
+.show-mock-bar{display:flex;align-items:center;gap:10px;padding:13px 18px;background:#F8FAFC;border-bottom:1px solid var(--hair);font:600 12px/1 Inter;color:var(--graphite)}
+.show-mock-title{margin-left:6px}
+.show-mock-body{padding:30px 26px;text-align:center}
+.show-mock-icon{width:72px;height:72px;border-radius:22px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:34px;margin:0 auto 16px;box-shadow:0 14px 30px rgba(15,23,42,.20)}
+.show-mock-name{font-size:20px;font-weight:800}
+.show-mock-tag{font-size:14px;color:var(--graphite);margin-top:6px}
+.show-mock-chips{margin-top:18px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.show-mock-chips span{font:600 12px/1 Inter;padding:8px 14px;border-radius:999px;background:#F1F5F9;color:#334155;border:1px solid var(--hair)}
+.show-mock-stats{margin-top:20px;display:flex;gap:20px;justify-content:center}
+.show-mock-stats div{display:flex;flex-direction:column;gap:4px}
+.show-mock-stats strong{font-size:22px;font-weight:800}
+.show-mock-stats span{font:500 11px/1 Inter;color:var(--muted)}
+.show-float-chip{position:absolute;right:18px;bottom:-14px;display:flex;gap:8px;align-items:center;background:#fff;border:1.5px solid var(--brand);border-radius:999px;padding:9px 16px;font:700 12px/1 Inter;box-shadow:var(--shadow-md);animation:floatY 4s ease-in-out infinite}
+.cases,.solutions,.resources,.download{padding:88px 48px}
+.scenarios{background:#fff;padding:96px 48px}
+.scenario-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;max-width:1180px;margin:0 auto}
+.scenario-card{border-radius:22px;overflow:hidden;border:1px solid var(--hair);background:#fff;box-shadow:0 6px 18px rgba(15,23,42,.05);transition:transform .25s, box-shadow .25s;cursor:default}
+.scenario-card:hover{transform:translateY(-6px);box-shadow:var(--shadow-lg)}
+.scenario-art{position:relative;height:170px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.scenario-art .el-icon{font-size:64px;color:rgba(255,255,255,.92);filter:drop-shadow(0 8px 18px rgba(0,0,0,.25));transition:transform .3s}
+.scenario-card:hover .scenario-art .el-icon{transform:scale(1.12) rotate(-3deg)}
+.scenario-art::after{content:'';position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.22) 1.2px, transparent 1.2px);background-size:18px 18px}
+.scenario-num{position:absolute;right:16px;bottom:10px;font:800 44px/1 Inter;color:rgba(255,255,255,.35);letter-spacing:-.02em}
+.scenario-card.g0 .scenario-art{background:linear-gradient(135deg,#2563EB,#60A5FA)}
+.scenario-card.g1 .scenario-art{background:linear-gradient(135deg,#7C3AED,#A78BFA)}
+.scenario-card.g2 .scenario-art{background:linear-gradient(135deg,#059669,#34D399)}
+.scenario-card.g3 .scenario-art{background:linear-gradient(135deg,#EA580C,#FBBF24)}
+.scenario-body{padding:22px}
+.scenario-body h3{font-size:18px;font-weight:800;margin-bottom:8px}
+.scenario-body p{font-size:14px;line-height:1.75;color:var(--graphite)}
 .download-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;max-width:1100px;margin:0 auto 24px;align-items:stretch}.download-card{display:flex;flex-direction:column;background:#fff;border:1px solid var(--hair);border-radius:16px;padding:24px;text-align:center;height:100%;transition:all .2s ease}.download-card:hover{border-color:var(--brand);box-shadow:0 12px 30px rgba(15,23,42,.06)}.download-platform{font-size:16px;font-weight:800;color:var(--ink)}.download-version{font-size:13px;color:var(--brand);font-weight:700;margin-top:4px}.download-meta{flex:1;display:flex;flex-direction:column;gap:4px;font-size:13px;color:#6b7280;margin:12px 0 16px;min-height:48px}.download-meta .download-note{color:#9ca3af;font-size:12px;line-height:1.5;word-break:break-word}.download-btn{margin-top:auto;width:100%}
-.case-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;max-width:1100px;margin:0 auto}
+.testimonials{background:var(--cloud);padding:96px 48px}
+.testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:1180px;margin:0 auto}
+.testi-card{position:relative;background:#fff;border:1px solid var(--hair);border-radius:22px;padding:28px;display:flex;flex-direction:column;box-shadow:0 6px 18px rgba(15,23,42,.05);transition:transform .25s, box-shadow .25s}
+.testi-card:hover{transform:translateY(-5px);box-shadow:var(--shadow-lg)}
+.testi-quote{font:800 56px/0.6 'Noto Serif SC',serif;color:#DBEAFE;height:26px}
+.testi-stars{display:flex;gap:2px;color:var(--amber);font-size:14px;margin:6px 0 12px}
+.testi-text{flex:1;font-size:14.5px;line-height:1.8;color:#334155}
+.testi-tags{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+.testi-user{display:flex;gap:12px;align-items:center;padding-top:16px;border-top:1px solid #F1F5F9}
+.testi-av{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;font-weight:800;flex-shrink:0}
+.testi-av.a0{background:linear-gradient(135deg,#2563EB,#60A5FA)}.testi-av.a1{background:linear-gradient(135deg,#059669,#34D399)}.testi-av.a2{background:linear-gradient(135deg,#7C3AED,#A78BFA)}
+.testi-org{font-size:14px;font-weight:800}
+.testi-role{font-size:12px;color:var(--muted);margin-top:2px}
 .resource-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;max-width:1100px;margin:0 auto}
-.cta{padding:72px 48px;background:linear-gradient(135deg,#EFF6FF 0%,#fff 100%);text-align:center}
-.cta-inner h2{font-size:36px;font-weight:800}
-.cta-actions{margin-top:18px;display:flex;gap:12px;justify-content:center}
-.landing-footer{background:#0B0F19;color:#9CA3AF;padding:48px 48px 24px}
+/* faq */
+.faq{padding:88px 48px;background:#fff}
+.faq-list{max-width:780px;margin:0 auto}
+.faq-list :deep(.el-collapse){border:none;display:grid;gap:12px}
+.faq-list :deep(.el-collapse-item){border:1px solid var(--hair);border-radius:16px;overflow:hidden;background:#fff;transition:border-color .2s, box-shadow .2s}
+.faq-list :deep(.el-collapse-item.is-active){border-color:rgba(37,99,235,.4);box-shadow:0 10px 26px rgba(37,99,235,.10)}
+.faq-list :deep(.el-collapse-item__header){padding:18px 22px;font-size:15px;font-weight:700;border:none;height:auto;line-height:1.5}
+.faq-list :deep(.el-collapse-item__wrap){border:none}
+.faq-list :deep(.el-collapse-item__content){padding:0 22px 20px;font-size:14px;line-height:1.8;color:var(--graphite)}
+.faq-q{font-weight:700}
+.faq-a{line-height:1.8}
+/* about */
+.about-strip{padding:26px 48px;background:#fff;border-top:1px solid var(--hair)}
+.about-inner{max-width:1080px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:24px}
+.about-item{display:flex;flex-direction:column;gap:6px;text-align:center;flex:1}
+.about-item strong{font-size:16px;font-weight:800}
+.about-item span{font-size:13px;color:var(--graphite)}
+.about-sep{width:1px;height:40px;background:var(--hair)}
+/* cta */
+.cta{position:relative;overflow:hidden;padding:96px 48px;background:linear-gradient(120deg,#1D4ED8 0%,#2563EB 45%,#7C3AED 100%);text-align:center;color:#fff}
+.cta-pattern{position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.16) 1.4px, transparent 1.4px);background-size:22px 22px;mask-image:radial-gradient(60% 90% at 50% 50%, #000 30%, transparent 100%)}
+.cta-inner{position:relative;max-width:720px;margin:0 auto}
+.cta-badge{display:inline-block;padding:8px 18px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);font:700 13px/1 Inter;margin-bottom:20px}
+.cta-inner h2{font-size:46px;font-weight:800;letter-spacing:-.03em;line-height:1.15}
+.cta-inner p{margin-top:14px;font-size:16px;color:rgba(255,255,255,.82)}
+.cta-actions{margin-top:28px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn-white{background:#fff;color:var(--brand-deep);border:none;padding:15px 30px;border-radius:999px;font-size:15px;font-weight:800;display:inline-flex;gap:8px;align-items:center;cursor:pointer;box-shadow:0 14px 30px rgba(0,0,0,.22);transition:transform .18s}
+.btn-white:hover{transform:translateY(-2px)}
+.btn-outline{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.55);padding:14px 28px;border-radius:999px;font-size:15px;font-weight:700;cursor:pointer;transition:all .18s}
+.btn-outline:hover{background:rgba(255,255,255,.12);border-color:#fff}
+.landing-footer{background:#0B0F19;color:#9CA3AF;padding:56px 48px 24px}
 .footer-inner{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr 1.5fr;gap:32px}
 .footer-bottom{max-width:1180px;margin:24px auto 0;padding-top:18px;border-top:1px solid #1F2937;display:flex;justify-content:space-between}
+.footer-proof{margin-top:14px;display:flex;gap:8px;align-items:center;font-size:12px;color:#9CA3AF}
+.proof-stars.sm{font-size:12px}
 
 /* reveal */
 [data-reveal]{opacity:0;transform:translateY(14px);transition:opacity .6s ease, transform .6s ease}
 [data-reveal].is-in{opacity:1;transform:none}
 @media (prefers-reduced-motion:reduce){[data-reveal]{opacity:1;transform:none}.float-card,.flow-item,.doc,.typewriter{animation:none}}
+
+.download-card{position:relative}
+.download-card.hot{border-color:rgba(37,99,235,.45);box-shadow:0 14px 34px rgba(37,99,235,.12)}
+.dl-ribbon{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,var(--brand),var(--violet));color:#fff;font:800 11px/1 Inter;padding:6px 14px;border-radius:999px;box-shadow:0 6px 14px rgba(37,99,235,.3);white-space:nowrap}
+.dl-icon{width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#EEF2FF,#DBEAFE);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:24px;margin:6px auto 14px}
 
 /* keyframes */
 @keyframes flowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -568,6 +733,7 @@ onUnmounted(()=>{
 @keyframes dash{to{stroke-dashoffset:-80}}
 @keyframes typing{from{width:0}to{width:100%}}
 @keyframes blink{50%{border-color:transparent}}
+@keyframes marquee{to{transform:translateX(-50%)}}
 
  .hero-family{display:flex;gap:8px;margin:18px 0 8px;flex-wrap:wrap}
 .family-tab{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:999px;border:1px solid var(--hair);background:#fff;font:600 13px/1 Inter;cursor:pointer;transition:all .2s}
@@ -593,6 +759,7 @@ onUnmounted(()=>{
 .product-cta{font:700 13px/1 Inter;display:inline-flex;gap:4px;align-items:center}
 .product-card{cursor:pointer}
 .product-card.live{border-color:var(--brand)}
-@media (max-width:1100px){.hero-inner{flex-direction:column}.hero-visual{width:100%;max-width:620px}.feature-inner,.feature-inner.reverse{flex-direction:column}.product-grid,.solution-grid,.download-grid,.resource-grid{grid-template-columns:repeat(2,1fr)}.case-grid{grid-template-columns:1fr}}
-@media (max-width:720px){.hero{padding:96px 20px 40px}.hero-title{font-size:44px}.products,.cases,.solutions,.resources,.download{padding:56px 20px}.product-grid,.solution-grid,.download-grid,.case-grid,.resource-grid{grid-template-columns:1fr}.float-card{display:none}.trust-inner{flex-direction:column;gap:16px}.trust-sep{width:60px;height:1px}}
+@media (prefers-reduced-motion:reduce){.marquee-track{animation:none}}
+@media (max-width:1100px){.hero-inner{flex-direction:column}.hero-visual{width:100%;max-width:620px}.show-row,.show-row.reverse{flex-direction:column}.scenario-grid,.download-grid,.resource-grid{grid-template-columns:repeat(2,1fr)}.testi-grid{grid-template-columns:1fr}.metrics-inner{flex-wrap:wrap}.metric{flex:1 1 40%}.metric-sep{display:none}}
+@media (max-width:720px){.hero{padding:100px 20px 44px}.hero-title{font-size:46px}.section-head h2{font-size:32px}.showcase,.scenarios,.testimonials,.cases,.solutions,.resources,.download,.faq{padding:60px 20px}.show-copy h3{font-size:30px}.scenario-grid,.download-grid,.testi-grid,.resource-grid{grid-template-columns:1fr}.float-card{display:none}.metrics{padding:44px 20px}.metric strong{font-size:32px}.about-inner{flex-direction:column;gap:16px}.about-sep{width:60px;height:1px}.cta{padding:64px 20px}.cta-inner h2{font-size:32px}.footer-inner{grid-template-columns:1fr}.footer-bottom{flex-direction:column;gap:12px;text-align:center}}
 </style>
