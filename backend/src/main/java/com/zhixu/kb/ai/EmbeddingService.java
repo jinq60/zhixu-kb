@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.zhixu.kb.common.config.NonRedirectingSimpleClientHttpRequestFactory;
+import com.zhixu.kb.common.utils.SafeUrlValidator;
 import com.zhixu.kb.config.AiProperties;
 import com.zhixu.kb.config.MilvusProperties;
 import com.zhixu.kb.ai.service.UserAiConfigService;
@@ -13,7 +15,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
@@ -288,6 +289,8 @@ public class EmbeddingService {
 
     private List<float[]> embedWith(String baseUrl, String apiKey, String model, List<String> texts,
                                     AiApiPool.Endpoint poolEndpoint) {
+        // P0-1 修复：向量化入口同样做 SSRF 校验（此前缺失，用户自配 embeddingBaseUrl 可直达内网）
+        SafeUrlValidator.validateBeforeRequest(baseUrl);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(apiKey);
@@ -391,7 +394,8 @@ public class EmbeddingService {
     private static final RestTemplate EMBEDDING_REST_TEMPLATE = createEmbeddingRestTemplate();
 
     private static RestTemplate createEmbeddingRestTemplate() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        // P0-1 修复：禁重定向，避免 302 跳内网
+        NonRedirectingSimpleClientHttpRequestFactory factory = new NonRedirectingSimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5000);
         factory.setReadTimeout(30000);
         return new RestTemplate(factory);

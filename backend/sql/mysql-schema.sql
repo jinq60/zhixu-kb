@@ -26,6 +26,14 @@ CREATE TABLE IF NOT EXISTS sys_user (
 
 -- 已有部署升级时手动执行（MySQL 8.0 不支持 ADD COLUMN IF NOT EXISTS）：
 -- ALTER TABLE sys_user ADD COLUMN email_verified TINYINT NOT NULL DEFAULT 0 COMMENT '邮箱是否已验证(0否 1是)' AFTER email;
+-- ALTER TABLE ask_records ADD COLUMN conversation_id VARCHAR(36) NULL COMMENT '会话ID(多轮对话上下文)' AFTER risk_flags;
+-- CREATE INDEX idx_conversation ON ask_records (user_id, conversation_id);
+-- ALTER TABLE ai_user_config ADD COLUMN embedding_base_url VARCHAR(255) NULL AFTER model,
+--   ADD COLUMN embedding_api_key VARCHAR(500) NULL AFTER embedding_base_url,
+--   ADD COLUMN embedding_model VARCHAR(100) NULL AFTER embedding_api_key;
+-- ALTER TABLE ai_endpoints ADD COLUMN embedding_model VARCHAR(100) NULL AFTER model;
+-- 缺表（sys_user_auth / note_embedding_chunk / document_process_task / clean_chunk_task / embed_chunk_task）
+-- 直接 SOURCE 本文件即可（全部 CREATE TABLE IF NOT EXISTS，幂等）。
 
 CREATE TABLE IF NOT EXISTS sys_role (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '角色ID',

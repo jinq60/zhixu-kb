@@ -334,23 +334,21 @@ public class FileService {
 
     public FileInfo findReadableFile(Long fileId) {
         FileInfo info = fileInfoMapper.selectById(fileId);
-        if (info == null) {
+        // P1-7 修复：对外统一 NOT_FOUND，避免 NOT_FOUND/FORBIDDEN 区分导致私有笔记存在性枚举
+        if (info == null || info.getNoteId() == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
-        }
-        if (info.getNoteId() == null) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "文件未绑定笔记，禁止访问");
         }
 
         Note note = noteMapper.selectById(info.getNoteId());
         if (note == null || (note.getIsDeleted() != null && note.getIsDeleted() == 1)) {
-            throw new BusinessException(ResultCode.NOT_FOUND, "笔记不存在");
+            throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
         }
 
         Long currentUserId = SecurityUtils.getUserId();
         boolean ownNote = currentUserId != null && currentUserId.equals(note.getUserId());
         boolean published = note.getStatus() != null && note.getStatus() == 1;
         if (!ownNote && !published) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该文件");
+            throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
         }
         return info;
     }
@@ -914,6 +912,10 @@ public class FileService {
      * 命中即拒绝，防止伪装扩展名上传可执行载荷借已发布笔记分发。
      */
     private void rejectExecutableSignature(byte[] head) {
+        // P2 修复：0/1 字节文件直接放行，避免 head[1]/head[2] 越界 500
+        if (head == null || head.length < 2) {
+            return;
+        }
         int b0 = head[0] & 0xFF;
         int b1 = head[1] & 0xFF;
         boolean executable = (b0 == 0x4D && b1 == 0x5A)                      // MZ: PE/EXE/DLL

@@ -103,6 +103,7 @@ public class EmailCodeService {
         String code = generateCode();
         // 新验证码发放即重置失败计数，避免旧码的错误尝试把新码也锁死
         verifyAttempts.remove(attemptsKey);
+        redisClearAttempts(attemptsKey);
         store(email, code, redisPrefix, storeMap);
         long now = System.currentTimeMillis();
         if (!redisSet(redisSendPrefix + email, String.valueOf(now), RESEND_INTERVAL)) {
@@ -117,10 +118,19 @@ public class EmailCodeService {
         if (email == null || code == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "邮箱或验证码不能为空");
         }
-        AtomicInteger attempts = verifyAttempts.get(attemptsKey);
-        if (attempts != null && attempts.get() >= MAX_VERIFY_ATTEMPTS) {
-            remove(email, redisPrefix, storeMap);
-            throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
+        // P1-6 修复：计数器优先走 Redis（多实例共享），Redis 不可用才回落本地内存
+        int sharedAttempts = redisAttempts(attemptsKey);
+        if (sharedAttempts >= 0) {
+            if (sharedAttempts >= MAX_VERIFY_ATTEMPTS) {
+                remove(email, redisPrefix, storeMap);
+                throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
+            }
+        } else {
+            AtomicInteger attempts = verifyAttempts.get(attemptsKey);
+            if (attempts != null && attempts.get() >= MAX_VERIFY_ATTEMPTS) {
+                remove(email, redisPrefix, storeMap);
+                throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
+            }
         }
         String stored = fetch(email, redisPrefix, storeMap);
         if (stored == null) {
@@ -129,11 +139,14 @@ public class EmailCodeService {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码已过期，请重新获取");
         }
         if (!constantTimeEquals(stored, code)) {
-            // 仅在真实比对失败时才创建/递增计数条目
-            verifyAttempts.computeIfAbsent(attemptsKey, k -> new AtomicInteger(0)).incrementAndGet();
+            // 仅在真实比对失败时才创建/递增计数条目（Redis 优先）
+            if (!redisIncrAttempts(attemptsKey)) {
+                verifyAttempts.computeIfAbsent(attemptsKey, k -> new AtomicInteger(0)).incrementAndGet();
+            }
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误");
         }
         verifyAttempts.remove(attemptsKey);
+        redisClearAttempts(attemptsKey);
         remove(email, redisPrefix, storeMap);
     }
 
@@ -242,6 +255,50 @@ public class EmailCodeService {
             if (now > it.next().getValue().expiresAt) {
                 it.remove();
             }
+        }
+    }
+
+    /** Redis 共享失败计数：返回 >=0 为当前次数，-1 表示 Redis 不可用（调用方回落本地） */
+    private int redisAttempts(String attemptsKey) {
+        if (redisTemplate == null) {
+            return -1;
+        }
+        try {
+            String v = redisTemplate.opsForValue().get("auth:email:attempts:" + attemptsKey);
+            if (v == null) {
+                return 0;
+            }
+            return Integer.parseInt(v.trim());
+        } catch (Exception e) {
+            log.warn("Redis 读取验证码计数失败，降级本地计数");
+            return -1;
+        }
+    }
+
+    private boolean redisIncrAttempts(String attemptsKey) {
+        if (redisTemplate == null) {
+            return false;
+        }
+        try {
+            String key = "auth:email:attempts:" + attemptsKey;
+            Long v = redisTemplate.opsForValue().increment(key);
+            if (v != null && v == 1) {
+                redisTemplate.expire(key, CODE_TTL);
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("Redis 递增验证码计数失败，降级本地计数");
+            return false;
+        }
+    }
+
+    private void redisClearAttempts(String attemptsKey) {
+        if (redisTemplate == null) {
+            return;
+        }
+        try {
+            redisTemplate.delete("auth:email:attempts:" + attemptsKey);
+        } catch (Exception ignored) {
         }
     }
 

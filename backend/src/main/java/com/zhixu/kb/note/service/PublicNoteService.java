@@ -35,6 +35,8 @@ public class PublicNoteService {
     private final HtmlSanitizer htmlSanitizer;
 
     private static final int MAX_PAGE_SIZE = 100;
+    private static final int MAX_PAGE = 10000;
+    private static final int MAX_KEYWORD_LEN = 100;
 
     public Page<PublicNoteSummary> listPublished(int page, int size, String keyword) {
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
@@ -43,7 +45,9 @@ public class PublicNoteService {
                 .orderByDesc(Note::getUpdateTime);
 
         if (StringUtils.hasText(keyword)) {
-            String escapedKeyword = com.zhixu.kb.common.utils.LikeUtils.escape(keyword);
+            // P1-7 修复：匿名可达接口关键词截断，避免超大 LIKE 拖慢
+            String truncated = keyword.length() > MAX_KEYWORD_LEN ? keyword.substring(0, MAX_KEYWORD_LEN) : keyword;
+            String escapedKeyword = com.zhixu.kb.common.utils.LikeUtils.escape(truncated);
             wrapper.and(w -> w.like(Note::getTitle, escapedKeyword)
                     .or()
                     .like(Note::getContent, escapedKeyword)
@@ -56,7 +60,7 @@ public class PublicNoteService {
         }
 
         Page<Note> rawPage = noteMapper.selectPage(
-                new Page<>(Math.max(1, page), Math.min(Math.max(size, 1), MAX_PAGE_SIZE)), wrapper);
+                new Page<>(Math.min(Math.max(1, page), MAX_PAGE), Math.min(Math.max(size, 1), MAX_PAGE_SIZE)), wrapper);
         Page<PublicNoteSummary> resultPage = new Page<>(rawPage.getCurrent(), rawPage.getSize(), rawPage.getTotal());
         resultPage.setRecords(toSummaryList(rawPage.getRecords()));
         return resultPage;

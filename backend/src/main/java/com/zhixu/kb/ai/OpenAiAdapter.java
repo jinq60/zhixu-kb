@@ -2,6 +2,7 @@ package com.zhixu.kb.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhixu.kb.common.config.NonRedirectingSimpleClientHttpRequestFactory;
 import com.zhixu.kb.config.AiProperties;
 import com.zhixu.kb.ai.service.UserAiConfigService;
 import com.zhixu.kb.common.utils.SafeUrlValidator;
@@ -47,8 +48,9 @@ public class OpenAiAdapter implements AIEngineAdapter {
         this.objectMapper = objectMapper;
         this.userAiConfigService = userAiConfigService;
         this.aiApiPool = aiApiPool;
-        org.springframework.http.client.SimpleClientHttpRequestFactory completionFactory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        // P0-1 修复：禁用自动重定向，302 到内网不再跟随（SSRF 防护，需与 validateBeforeRequest 配合）
+        NonRedirectingSimpleClientHttpRequestFactory completionFactory =
+                new NonRedirectingSimpleClientHttpRequestFactory();
         completionFactory.setConnectTimeout(5000);
         int readTimeout = aiProperties.getApi().getTimeoutMs() == null ? 120000 : aiProperties.getApi().getTimeoutMs();
         completionFactory.setReadTimeout(Math.max(10000, readTimeout));
@@ -319,8 +321,9 @@ public class OpenAiAdapter implements AIEngineAdapter {
     private static final RestTemplate healthRestTemplate = createHealthRestTemplate();
 
     private static RestTemplate createHealthRestTemplate() {
-        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        // P0-1 修复：健康探测同样禁重定向
+        NonRedirectingSimpleClientHttpRequestFactory factory =
+                new NonRedirectingSimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5000);
         factory.setReadTimeout(10000);
         return new RestTemplate(factory);

@@ -98,6 +98,7 @@ services:
       - etcd-data:/etcd
     logging: *default-logging
     healthcheck:
+      # etcd 镜像无 shell，必须用 exec 格式（CMD-SHELL 永失败）；默认即连 127.0.0.1:2379
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 15s
       timeout: 5s
@@ -116,7 +117,9 @@ services:
       - minio-data:/minio_data
     logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"]
+      # minio 镜像自带 curl+bash；旧版本 /min/health/live 未鉴权返回 403，故只验证端口可连通
+      # （不加 -f，任何 HTTP 状态都算存活；403 恰证明服务在正常响应）
+      test: ["CMD-SHELL", "curl -so /dev/null http://127.0.0.1:9000/min/health/live || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -179,7 +182,7 @@ services:
       - ocr-tmp:/app/tmp
     logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:5001/ocr/health || exit 1"]
+      test: ["CMD-SHELL", "/bin/busybox wget -qO- http://127.0.0.1:5001/ocr/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -217,10 +220,9 @@ services:
     restart: unless-stopped
     mem_limit: 2g
     cpus: 1.0
-    # Docker Desktop(WSL2) 中 docker.sock 属主为 root:root(660)，
-    # 非 root 的 app 用户需补充 root 组才能只读访问（仅本机部署场景）
-    group_add:
-      - "0"
+    # P0-3 修复：默认不再挂载 docker.sock（等效宿主机 root）。
+    # 如需运行状态页容器监控，请手动取消下方 volumes 中 docker.sock 注释，
+    # 并同步加回 group_add: ["0"]；生产默认保持关闭，后端已做 available=false 降级。
     environment:
       <<: *common-env
       DB_URL: jdbc:mysql://mysql:3306/zhixu_kb?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
@@ -274,16 +276,18 @@ services:
       # JSON 日志输出目录（logback-spring.xml 引用，供 Filebeat 采集）
       LOG_FILE_PATH: /app/logs
     ports:
-      - "8080:8080"
+      # P1 修复：仅本机可达，避免公网直连绕过 nginx
+      - "127.0.0.1:8080:8080"
     volumes:
       - backend-uploads:/app/uploads
       - backend-logs:/app/logs
-      # 运行状态页采集容器状态（只读）。注意：docker.sock 等效宿主机 root 权限，
-      # 生产环境请评估风险或改用只读代理（如 socket-proxy）
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 运行状态页采集容器状态（可选，高危）。注意：即使 :ro 也等效宿主机 root，
+      # 默认关闭；确需开启请取消注释并加 group_add: ["0"]，或改用 socket-proxy 仅开 GET。
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
     logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health || exit 1"]
+      # P0-2：探针用镜像内 busybox wget（不依赖 apt/curl，弱网可构建）
+      test: ["CMD-SHELL", "/bin/busybox wget -qO- http://127.0.0.1:8080/actuator/health 2>/dev/null | /bin/busybox grep -q '\"status\"' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -311,6 +315,13 @@ services:
       backend:
         condition: service_healthy
     logging: *default-logging
+    # P1 修复：前端探活（nginx:alpine 无 curl，用 wget）
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   admin-frontend:
     build: ./admin-frontend
@@ -323,6 +334,12 @@ services:
       backend:
         condition: service_healthy
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   # ---------------- ELK 日志栈（profile: logs，按需启动） ----------------
   # 启动：docker compose --profile logs up -d
@@ -414,7 +431,8 @@ services:
       - "127.0.0.1:9000:9000"
     volumes:
       - portainer-data:/data
-      # 只读挂载：Portainer 仅做状态/日志/终端，不需要改动 Docker 实体的写权限场景
+      # P0-3 说明：Unix Socket 的 :ro 不限制 Docker API 写操作（仍可 create/exec 特权容器），
+      # 等效宿主机 root。仅本机按需启用，且建议改用 socket-proxy 限制为只读 GET。
       - /var/run/docker.sock:/var/run/docker.sock:ro
     logging: *default-logging
     mem_limit: 256m

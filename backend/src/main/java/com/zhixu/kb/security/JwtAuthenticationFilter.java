@@ -83,7 +83,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         : null;
                 if (issuedAt != null && userId != null) {
                     Long revokedAt = revocationStore.getUserRevokedAt(userId);
-                    if (revokedAt != null && issuedAt.getTime() < revokedAt) {
+                    // P2 修复：秒级比较（JWT iat 精确到秒），避免改密后同秒新签 token 被误杀
+                    if (revokedAt != null && issuedAt.getTime() / 1000 < revokedAt / 1000) {
                         filterChain.doFilter(request, response);
                         return;
                     }

@@ -21,6 +21,11 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
+/** P0-7 修复：开放重定向加固，拒绝 //evil 等协议相对 URL */
+function isSafeRedirect(path: unknown): path is string {
+  return typeof path === 'string' && /^\/(?!\/)[\w\-./?=&%#]*$/.test(path)
+}
+
 const visible = ref(auth.showLoginModal)
 const loading = ref(false)
 const loginMode = ref<'password' | 'email' | 'sms'>('password')
@@ -151,7 +156,7 @@ const handleSubmit = async () => {
     ElMessage.success('登录成功')
     auth.closeLoginModal()
     const redirect = route.query.redirect as string
-    if (redirect && redirect.startsWith('/')) {
+    if (isSafeRedirect(redirect)) {
       router.replace(redirect)
     } else {
       router.replace('/notes')
@@ -166,6 +171,10 @@ const openOAuth = (provider: 'github' | 'google' | 'qq') => {
     ElMessage.warning('该登录方式暂不可用')
     return
   }
+  // P0-7 修复：标记本次 OAuth 由本页面发起，直跳回调无标记时拒绝（防 Login CSRF）
+  try {
+    sessionStorage.setItem('oauth_initiated', '1')
+  } catch { /* ignore */ }
   const url = oauthAuthorizeUrl(provider)
   const width = 560
   const height = 640
@@ -198,7 +207,7 @@ const openOAuth = (provider: 'github' | 'google' | 'qq') => {
           ElMessage.success('登录成功')
           auth.closeLoginModal()
           const redirect = route.query.redirect as string
-          router.replace(redirect && redirect.startsWith('/') ? redirect : '/notes')
+          router.replace(isSafeRedirect(redirect) ? redirect : '/notes')
         } else {
           ElMessage.error('登录失败')
         }

@@ -16,6 +16,9 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 COPY --from=build /build/target/*.jar app.jar
+# P0-2 修复：healthcheck 探针来自 busybox 静态二进制，不依赖 apt 源
+# （apt 在代理/弱网下易 502，曾导致整镜像构建失败），构建完全离线可复现
+COPY --from=busybox:stable-glibc /bin/busybox /bin/busybox
 # /app/logs 必须预建并归属 app 用户：named volume 首挂时按镜像内目录属主初始化，
 # 否则 volume 根目录为 root 属主，非 root 容器写 JSON 日志会 Permission denied
 RUN mkdir -p /app/uploads/images /app/logs && \
@@ -25,4 +28,5 @@ RUN mkdir -p /app/uploads/images /app/logs && \
 USER app
 
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+# JVM 内存/时区：mem_limit 2g 下堆上限 75%，避免堆不可控 OOM
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-Duser.timezone=Asia/Shanghai", "-jar", "/app/app.jar"]

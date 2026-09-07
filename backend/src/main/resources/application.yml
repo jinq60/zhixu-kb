@@ -1,3 +1,20 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        # P0-4 修复：默认仅暴露健康与信息端点，避免 env/beans/mappings 裸奔
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
+  health:
+    defaults:
+      enabled: true
+    # SMTP 常未配置/不可达，邮件探针 DOWN 会把聚合状态拖成 503，
+    # 导致全栈 depends_on healthy 死锁；发码逻辑已有 Redis/内存降级，探针直接关闭
+    mail:
+      enabled: false
+
 server:
   port: 8080
   servlet:

@@ -176,7 +176,9 @@ public class GraphController {
 
     private Map<String, Object> toTaskView(GraphTaskManager.TaskState state) {
         Map<String, Object> view = new HashMap<>();
-        view.put("taskId", state.getTaskType().name() + ":" + state.getTargetId());
+        // 与 GraphTaskManager.buildTaskId(userId, ...) 保持一致：用户隔离前缀
+        view.put("taskId", (state.getUserId() == null ? "anon" : state.getUserId())
+                + ":" + state.getTaskType().name() + ":" + state.getTargetId());
         view.put("taskType", state.getTaskType().name());
         view.put("targetId", state.getTargetId());
         view.put("targetName", state.getTargetName());

@@ -50,6 +50,13 @@ public class AskController {
     private static final long SYNC_ASK_ACQUIRE_TIMEOUT_SECONDS = 3;
     private final Semaphore syncAskPermits = new Semaphore(SYNC_ASK_MAX_CONCURRENT);
 
+    /**
+     * P1-2 修复：流式问答同样加全局并发护栏（此前直进 StreamingResponseBody，
+     * 单用户开数十条慢 AI 流即可占满 async 池，全站 SSE 拒绝）。
+     */
+    private static final int STREAM_ASK_MAX_CONCURRENT = 16;
+    private final Semaphore streamAskPermits = new Semaphore(STREAM_ASK_MAX_CONCURRENT);
+
     @PostMapping
     public Result<AskRecord> ask(@Valid @RequestBody AskRequest request) {
         boolean acquired = false;
@@ -72,6 +79,16 @@ public class AskController {
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<StreamingResponseBody> askStream(@Valid @RequestBody AskRequest request) {
         Long userId = SecurityUtils.getUserId();
+        boolean acquired = false;
+        try {
+            acquired = streamAskPermits.tryAcquire(SYNC_ASK_ACQUIRE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "请求被中断，请重试");
+        }
+        if (!acquired) {
+            throw new BusinessException(ResultCode.TOO_MANY_REQUESTS, "当前流式问答并发已满，请稍后再试");
+        }
         StreamingResponseBody body = outputStream -> {
             try {
                 // 首帧心跳（SSE 注释帧，前端按规范跳过非 data: 行）：
@@ -94,6 +111,8 @@ public class AskController {
                 });
             } catch (ClientDisconnectedException ex) {
                 log.info("stream closed by client: {}", ex.getMessage());
+            } finally {
+                streamAskPermits.release();
             }
         };
         return ResponseEntity.ok()

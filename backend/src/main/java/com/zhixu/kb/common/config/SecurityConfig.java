@@ -45,10 +45,9 @@ public class SecurityConfig {
             "/api/public/**",
             "/api/health",
             "/api/v1/health",
-            "/v3/api-docs/**",
-            "/swagger-ui/**",
-            "/swagger-ui.html",
-            "/actuator/**"
+            // P0-4 修复：Swagger/Actuator 不再默认匿名，仅健康探针公开
+            "/actuator/health",
+            "/actuator/info"
     };
 
     @Bean
@@ -72,12 +71,10 @@ public class SecurityConfig {
                 .antMatchers(HttpMethod.GET, "/api/files/*/content").permitAll()
                 .antMatchers(HttpMethod.GET, "/api/categories/**").authenticated();
 
-        // 生产环境：Swagger/Actuator 需要登录后才能访问，避免接口信息泄露
-        if (isProdProfile()) {
-            http.authorizeRequests()
-                    .antMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/**")
-                    .authenticated();
-        }
+        // P0-4 修复：Swagger/Actuator 默认需认证（不限 profile，原先 permitAll 首匹配导致 prod 分支死代码）
+        http.authorizeRequests()
+                .antMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/**")
+                .authenticated();
 
         http.authorizeRequests()
                 .anyRequest().authenticated();

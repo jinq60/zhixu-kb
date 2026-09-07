@@ -76,11 +76,11 @@ public class TokenRevocationStore {
             try {
                 return Boolean.TRUE.equals(redisTemplate.hasKey(redisKey(key)));
             } catch (Exception ex) {
-                // 单实例部署下本地缓存即权威；Redis 故障时按"未撤销"处理，
-                // 避免 Redis 抖动导致全部用户被误判登出（可用性优先），同时记录错误日志便于告警
+                // P1 修复：撤销检查 Redis 故障时 fail-closed（视为已撤销），避免已登出/改密 token 复活；
+                // 单实例下本地缓存已先命中，此分支仅多实例 Redis 不可用时生效，安全优先于可用性
                 org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
-                        .error("Token revocation Redis check failed: {}", ex.getMessage());
-                return false;
+                        .error("Token revocation Redis check failed, fail-closed: {}", ex.getMessage());
+                return true;
             }
         }
         return false;

@@ -33,7 +33,8 @@ public class GraphTaskManager {
      */
     public String tryStart(Long userId, TaskType taskType, String targetId, String targetName) {
         sweepExpired();
-        String taskId = buildTaskId(taskType, targetId);
+        // P1-4 修复：任务 ID 按用户隔离，避免不同用户同 noteId/categoryId 互相阻塞/存在性探测
+        String taskId = buildTaskId(userId, taskType, targetId);
         TaskState state = tasks.computeIfAbsent(taskId, k -> new TaskState());
         synchronized (state) {
             long now = System.currentTimeMillis();
@@ -213,8 +214,9 @@ public class GraphTaskManager {
         return empty;
     }
 
-    private String buildTaskId(TaskType taskType, String targetId) {
-        return taskType.name() + ":" + (targetId == null ? "global" : targetId);
+    private String buildTaskId(Long userId, TaskType taskType, String targetId) {
+        return (userId == null ? "anon" : userId) + ":" + taskType.name() + ":"
+                + (targetId == null ? "global" : targetId);
     }
 
     public enum TaskType {

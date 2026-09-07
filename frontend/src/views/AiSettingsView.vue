@@ -67,9 +67,32 @@ const load = async () => {
   }
 }
 
+/** P0-1 修复：前端拦截私网/明文地址，后端仍有 SafeUrlValidator 强制校验 */
+function isPublicHttpsUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw.trim())
+    if (u.protocol !== 'https:') return false
+    const host = u.hostname.toLowerCase()
+    if (['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(host)) return false
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(host)) return false
+    if (host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.lan')) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
 const handleSave = async () => {
   if (!form.value.baseUrl.trim()) {
     ElMessage.warning('请填写接口地址')
+    return
+  }
+  if (!isPublicHttpsUrl(form.value.baseUrl)) {
+    ElMessage.warning('接口地址仅支持公网 https 地址，不支持内网/localhost/明文 http')
+    return
+  }
+  if (form.value.embeddingBaseUrl.trim() && !isPublicHttpsUrl(form.value.embeddingBaseUrl)) {
+    ElMessage.warning('向量化地址仅支持公网 https 地址')
     return
   }
   if (!form.value.model.trim()) {
@@ -114,6 +137,10 @@ const handleSave = async () => {
 const handleTest = async () => {
   if (!form.value.baseUrl.trim()) {
     ElMessage.warning('请先填写接口地址')
+    return
+  }
+  if (!isPublicHttpsUrl(form.value.baseUrl)) {
+    ElMessage.warning('接口地址仅支持公网 https 地址')
     return
   }
   if (!form.value.apiKey.trim()) {

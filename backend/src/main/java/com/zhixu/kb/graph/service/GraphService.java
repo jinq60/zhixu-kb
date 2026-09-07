@@ -187,6 +187,11 @@ public class GraphService {
      */
     public GraphBuildResult buildCategory(Long categoryId, BooleanSupplier cancelSignal) {
         Long userId = SecurityUtils.getUserId();
+        // P1-4 修复：异步 LoginUser 为 null 时 userId 为 null，ConcurrentHashMap 禁 null key 会 NPE；
+        // 未登录直接拒绝（调用方本应已鉴权，此为纵深兜底）
+        if (userId == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "未登录或登录已过期");
+        }
         if (buildingUsers.putIfAbsent(userId, Boolean.TRUE) != null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "已有图谱构建任务进行中，请稍后再试");
         }

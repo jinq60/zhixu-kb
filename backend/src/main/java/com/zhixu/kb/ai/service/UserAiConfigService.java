@@ -71,6 +71,7 @@ public class UserAiConfigService {
 
     /**
      * 当前线程用户的可用 API 配置（仅当配置了可用的云端 API 时返回）。
+     * P0-2 修复：解密失败回落平台池而非抛 500（Key 轮换/损坏时用户被锁死）。
      */
     public Optional<ResolvedApiConfig> resolveApiConfig() {
         AiUserConfigEntity entity = getCurrentUserConfig();
@@ -78,10 +79,16 @@ public class UserAiConfigService {
                 && Boolean.TRUE.equals(entity.getEnabled() == null || entity.getEnabled() == 1)
                 && StringUtils.hasText(entity.getApiKey())
                 && StringUtils.hasText(entity.getBaseUrl())) {
-            return Optional.of(new ResolvedApiConfig(
-                    entity.getBaseUrl(),
-                    cryptoService.decrypt(entity.getApiKey()),
-                    StringUtils.hasText(entity.getModel()) ? entity.getModel() : "deepseek-chat"));
+            try {
+                return Optional.of(new ResolvedApiConfig(
+                        entity.getBaseUrl(),
+                        cryptoService.decrypt(entity.getApiKey()),
+                        StringUtils.hasText(entity.getModel()) ? entity.getModel() : "deepseek-chat"));
+            } catch (Exception ex) {
+                log.warn("user api key decrypt failed, fallback to platform pool: userId={} err={}",
+                        entity.getUserId(), ex.getMessage());
+                return Optional.empty();
+            }
         }
         return Optional.empty();
     }
@@ -95,10 +102,16 @@ public class UserAiConfigService {
                 && Boolean.TRUE.equals(entity.getEnabled() == null || entity.getEnabled() == 1)
                 && StringUtils.hasText(entity.getEmbeddingApiKey())
                 && StringUtils.hasText(entity.getEmbeddingBaseUrl())) {
-            return Optional.of(new ResolvedApiConfig(
-                    entity.getEmbeddingBaseUrl(),
-                    cryptoService.decrypt(entity.getEmbeddingApiKey()),
-                    StringUtils.hasText(entity.getEmbeddingModel()) ? entity.getEmbeddingModel() : "text-embedding-3-small"));
+            try {
+                return Optional.of(new ResolvedApiConfig(
+                        entity.getEmbeddingBaseUrl(),
+                        cryptoService.decrypt(entity.getEmbeddingApiKey()),
+                        StringUtils.hasText(entity.getEmbeddingModel()) ? entity.getEmbeddingModel() : "text-embedding-3-small"));
+            } catch (Exception ex) {
+                log.warn("user embedding key decrypt failed, fallback to platform pool: userId={} err={}",
+                        entity.getUserId(), ex.getMessage());
+                return Optional.empty();
+            }
         }
         return Optional.empty();
     }

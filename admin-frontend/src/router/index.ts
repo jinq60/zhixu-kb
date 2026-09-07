@@ -31,7 +31,15 @@ router.beforeEach(async (to) => {
   if (!auth.isLoggedIn) {
     return '/login'
   }
-  if (!auth.isAdmin) {
+  // P0-6 修复：管理鉴权以服务端角色为准，不信任 localStorage roles；
+  // 每次进后台都刷新一次服务端角色，401/非 admin 一律回登录页
+  const roles = await auth.refreshRoles()
+  if (!roles) {
+    await auth.logout()
+    return '/login'
+  }
+  if (!roles.some((r) => String(r).toLowerCase() === 'admin')) {
+    await auth.logout()
     return '/login'
   }
   return true

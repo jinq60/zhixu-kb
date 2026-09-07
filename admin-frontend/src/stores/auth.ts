@@ -16,10 +16,11 @@ interface AuthState {
 
 function loadRoles(): string[] {
   try {
-    const raw = localStorage.getItem('zhixu_admin_roles')
+    // P0-5 修复：改存 sessionStorage，关标签即失效
+    const raw = sessionStorage.getItem('zhixu_admin_roles')
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? parsed.filter((r) => typeof r === 'string') : []
   } catch {
     return []
   }
@@ -27,8 +28,8 @@ function loadRoles(): string[] {
 
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
-    token: localStorage.getItem('zhixu_admin_token'),
-    username: localStorage.getItem('zhixu_admin_username'),
+    token: sessionStorage.getItem('zhixu_admin_token'),
+    username: sessionStorage.getItem('zhixu_admin_username'),
     roles: loadRoles()
   }),
   getters: {
@@ -41,24 +42,41 @@ export const useAuthStore = defineStore('auth', {
       const token = data.data.token
       this.token = token
       this.username = username
-      localStorage.setItem('zhixu_admin_token', token)
-      // 读取角色
+      sessionStorage.setItem('zhixu_admin_token', token)
+      // 读取角色（服务端权威）
       try {
         const me = await http.get('/api/auth/me')
         this.roles = me.data.data.roles || ['user']
       } catch {
         this.roles = ['user']
       }
-      localStorage.setItem('zhixu_admin_username', this.username || '')
-      localStorage.setItem('zhixu_admin_roles', JSON.stringify(this.roles))
+      sessionStorage.setItem('zhixu_admin_username', this.username || '')
+      sessionStorage.setItem('zhixu_admin_roles', JSON.stringify(this.roles))
     },
-    logout() {
+    /** P0-6/P1 修复：服务端角色刷新（路由守卫用），401 时返回 null */
+    async refreshRoles(): Promise<string[] | null> {
+      if (!this.token) return null
+      try {
+        const me = await http.get('/api/auth/me')
+        const roles = me.data.data.roles || ['user']
+        this.roles = roles
+        sessionStorage.setItem('zhixu_admin_roles', JSON.stringify(roles))
+        return roles
+      } catch {
+        return null
+      }
+    },
+    async logout() {
+      // P1 修复：先调后端撤销 Token，再清本地
+      try {
+        await http.post('/api/auth/logout')
+      } catch { /* ignore */ }
       this.token = null
       this.username = null
       this.roles = []
-      localStorage.removeItem('zhixu_admin_token')
-      localStorage.removeItem('zhixu_admin_username')
-      localStorage.removeItem('zhixu_admin_roles')
+      sessionStorage.removeItem('zhixu_admin_token')
+      sessionStorage.removeItem('zhixu_admin_username')
+      sessionStorage.removeItem('zhixu_admin_roles')
       router.push('/login')
     }
   }

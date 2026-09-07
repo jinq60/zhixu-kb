@@ -31,8 +31,11 @@ export const useAuthStore = defineStore('auth', {
     user: null,
     showLoginModal: false
   }),
+  // P0-5 修复：Token 改存 sessionStorage（关闭标签即失效），降低 XSS 持久接管面；
+  // 长期应迁移 HttpOnly Cookie，此为过渡期最小加固
   persist: {
-    paths: ['token', 'user']
+    paths: ['token', 'user'],
+    storage: sessionStorage
   },
   getters: {
     isLoggedIn: (state) => !!state.token,

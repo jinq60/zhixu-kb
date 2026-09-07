@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -97,10 +98,9 @@ public class AiApiPool {
      * 提升整体吞吐并降低单个厂家被限流的概率。全部冷却时回退到第一个端点强制重试。
      */
     public Endpoint select() {
-        // CopyOnWriteArrayList 每次 get 都重读底层数组：size() 与 get(idx) 若非同一快照，
-        // refreshFromDb 清空重建期间可能取到越界索引抛 IOOBE（在适配器重试保护之外）。
-        // 固定使用局部快照引用，保证 size 与 get 遍历同一数组。
-        List<Endpoint> snapshot = this.endpoints;
+        // P1-1 修复：拷贝为真正的数组快照，避免 refreshFromDb clear()+addAll() 期间 size/get 跨快照 IOOBE。
+        // 原先 List<Endpoint> snapshot = this.endpoints 仍是同一对象引用，非快照。
+        List<Endpoint> snapshot = new ArrayList<>(this.endpoints);
         int size = snapshot.size();
         if (size == 0) {
             return null;

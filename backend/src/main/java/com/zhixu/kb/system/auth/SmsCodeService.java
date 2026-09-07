@@ -61,6 +61,7 @@ public class SmsCodeService {
         String code = generateCode();
         // 新验证码发放即重置失败计数，避免旧码的错误尝试把新码也锁死
         verifyAttempts.remove(phone);
+        redisClearAttempts(phone);
         store(phone, code);
         long now = System.currentTimeMillis();
         if (!redisSet(REDIS_SEND_PREFIX + phone, String.valueOf(now), RESEND_INTERVAL)) {
@@ -74,10 +75,19 @@ public class SmsCodeService {
         if (phone == null || code == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "手机号或验证码不能为空");
         }
-        AtomicInteger attempts = verifyAttempts.get(phone);
-        if (attempts != null && attempts.get() >= MAX_VERIFY_ATTEMPTS) {
-            remove(phone);
-            throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
+        // P1-6 修复：计数器优先走 Redis（多实例共享），不可用才回落本地
+        int sharedAttempts = redisAttempts(phone);
+        if (sharedAttempts >= 0) {
+            if (sharedAttempts >= MAX_VERIFY_ATTEMPTS) {
+                remove(phone);
+                throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
+            }
+        } else {
+            AtomicInteger attempts = verifyAttempts.get(phone);
+            if (attempts != null && attempts.get() >= MAX_VERIFY_ATTEMPTS) {
+                remove(phone);
+                throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
+            }
         }
         String stored = fetch(phone);
         if (stored == null) {
@@ -86,11 +96,14 @@ public class SmsCodeService {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码已过期，请重新获取");
         }
         if (!constantTimeEquals(stored, code)) {
-            // 仅在真实比对失败时才创建/递增计数条目
-            verifyAttempts.computeIfAbsent(phone, k -> new AtomicInteger(0)).incrementAndGet();
+            // 仅在真实比对失败时才创建/递增计数条目（Redis 优先）
+            if (!redisIncrAttempts(phone)) {
+                verifyAttempts.computeIfAbsent(phone, k -> new AtomicInteger(0)).incrementAndGet();
+            }
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误");
         }
         verifyAttempts.remove(phone);
+        redisClearAttempts(phone);
         remove(phone);
     }
 
@@ -185,6 +198,49 @@ public class SmsCodeService {
             if (now > it.next().getValue().expiresAt) {
                 it.remove();
             }
+        }
+    }
+
+    private int redisAttempts(String phone) {
+        if (redisTemplate == null) {
+            return -1;
+        }
+        try {
+            String v = redisTemplate.opsForValue().get("auth:sms:attempts:" + phone);
+            if (v == null) {
+                return 0;
+            }
+            return Integer.parseInt(v.trim());
+        } catch (Exception e) {
+            log.warn("Redis 读取短信验证码计数失败，降级本地计数");
+            return -1;
+        }
+    }
+
+    private boolean redisIncrAttempts(String phone) {
+        if (redisTemplate == null) {
+            return false;
+        }
+        try {
+            String key = "auth:sms:attempts:" + phone;
+            Long v = redisTemplate.opsForValue().increment(key);
+            if (v != null && v == 1) {
+                redisTemplate.expire(key, CODE_TTL);
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("Redis 递增短信验证码计数失败，降级本地计数");
+            return false;
+        }
+    }
+
+    private void redisClearAttempts(String phone) {
+        if (redisTemplate == null) {
+            return;
+        }
+        try {
+            redisTemplate.delete("auth:sms:attempts:" + phone);
+        } catch (Exception ignored) {
         }
     }
 

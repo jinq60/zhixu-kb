@@ -97,6 +97,8 @@ private final DocumentProcessTaskService documentProcessTaskService;
 
     /** 单页条数上限：防止 size 超大分页拖垮数据库 */
     private static final int MAX_PAGE_SIZE = 100;
+    /** P1-6 修复：页码上界，避免 page=Integer.MAX 导致大 OFFSET 全表扫描 */
+    private static final int MAX_PAGE = 10000;
 
     public Page<Note> list(int page, int size, Long categoryId) {
         Long userId = getUserIdOrThrow();
@@ -107,7 +109,7 @@ private final DocumentProcessTaskService documentProcessTaskService;
         if (categoryId != null) {
             wrapper.eq(Note::getCategoryId, categoryId);
         }
-        return noteMapper.selectPage(new Page<>(Math.max(1, page), safePageSize(size)), wrapper);
+        return noteMapper.selectPage(new Page<>(safePage(page), safePageSize(size)), wrapper);
     }
 
     public Page<Note> search(int page, int size, String keyword, Long categoryId) {
@@ -115,7 +117,9 @@ private final DocumentProcessTaskService documentProcessTaskService;
         if (!StringUtils.hasText(keyword)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "Search keyword must not be empty");
         }
-        String escapedKeyword = LikeUtils.escape(keyword);
+        // P1-7 修复：关键词截断 100 字符，避免超大 LIKE 全表扫
+        String truncated = keyword.length() > 100 ? keyword.substring(0, 100) : keyword;
+        String escapedKeyword = LikeUtils.escape(truncated);
 
         LambdaQueryWrapper<Note> wrapper = new LambdaQueryWrapper<Note>()
                 .eq(Note::getUserId, userId)
@@ -133,11 +137,15 @@ private final DocumentProcessTaskService documentProcessTaskService;
         if (categoryId != null) {
             wrapper.eq(Note::getCategoryId, categoryId);
         }
-        return noteMapper.selectPage(new Page<>(Math.max(1, page), safePageSize(size)), wrapper);
+        return noteMapper.selectPage(new Page<>(safePage(page), safePageSize(size)), wrapper);
     }
 
     private int safePageSize(int size) {
         return Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+    }
+
+    private int safePage(int page) {
+        return Math.min(Math.max(page, 1), MAX_PAGE);
     }
 
     public NoteStatsResponse stats() {

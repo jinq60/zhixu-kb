@@ -7,6 +7,11 @@ from PIL import Image, ImageFilter, ImageOps
 
 logger = logging.getLogger(__name__)
 
+# P0-8 修复：解压炸弹防护（全解码前拦截超大像素图）
+Image.MAX_IMAGE_PIXELS = 50_000_000  # ~50MP
+Image.LOAD_TRUNCATED_IMAGES = False
+_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "BMP", "TIFF"}
+
 # ---------------------------------------------------------------------------
 # Optional OpenCV import – gracefully degrade when not installed.
 # ---------------------------------------------------------------------------
@@ -123,7 +128,16 @@ def _four_point_transform(image: np.ndarray, pts: np.ndarray) -> Image.Image:
 
 
 def load_image_from_bytes(data: bytes) -> Image.Image:
-    return Image.open(io.BytesIO(data)).convert("RGB")
+    # P0-8 修复：格式白名单 + 像素上限在 open 时即校验（Pillow 在 load 时触发 DecompressionBombWarning/Error）
+    with Image.open(io.BytesIO(data)) as img:
+        fmt = (img.format or "").upper()
+        if fmt and fmt not in _ALLOWED_FORMATS:
+            raise ValueError(f"Unsupported image format: {fmt}")
+        img.load()
+        # 缩小后再转 RGB，减少大图内存占用
+        if img.width * img.height > Image.MAX_IMAGE_PIXELS:
+            raise ValueError("Image too large")
+        return img.convert("RGB")
 
 
 def resize_if_needed(img: Image.Image, max_size: Tuple[int, int] = (2000, 2000)) -> Image.Image:

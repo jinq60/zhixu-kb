@@ -17,6 +17,13 @@ public class MaskingMessageConverter extends MessageConverter {
     // 长 token：32+ 位字母数字/下划线/短横线（不含点，避免误伤异常堆栈中的类名）
     private static final Pattern LONG_TOKEN_PATTERN =
             Pattern.compile("(?<![A-Za-z0-9_\\-])(?=[A-Za-z0-9_\\-]*[A-Za-z])[A-Za-z0-9_\\-]{32,}(?![A-Za-z0-9_\\-])");
+    // P1 修复：Bearer/Authorization 头与 AK/SK（此前仅脱敏裸长 token，带前缀的同样泄漏）
+    private static final Pattern BEARER_PATTERN =
+            Pattern.compile("(?i)Bearer\\s+[A-Za-z0-9_\\-\\.~\\+/=]{8,}");
+    private static final Pattern AUTHORIZATION_PATTERN =
+            Pattern.compile("(?i)Authorization(['\"]?\\s*[:=]\\s*['\"]?)[^'\"\\s,}]{8,}");
+    private static final Pattern AK_SK_PATTERN =
+            Pattern.compile("(?i)(?:api[_-]?key|secret|sk-|ak-)(['\"]?\\s*[:=]\\s*['\"]?)[A-Za-z0-9_\\-\\.~\\+/=]{8,}");
 
     @Override
     public String convert(ILoggingEvent event) {
@@ -28,6 +35,9 @@ public class MaskingMessageConverter extends MessageConverter {
         masked = EMAIL_PATTERN.matcher(masked).replaceAll("[EMAIL]");
         masked = PHONE_PATTERN.matcher(masked).replaceAll("[PHONE]");
         masked = ID_CARD_PATTERN.matcher(masked).replaceAll("$1********$3");
+        masked = BEARER_PATTERN.matcher(masked).replaceAll("Bearer [TOKEN]");
+        masked = AUTHORIZATION_PATTERN.matcher(masked).replaceAll("Authorization$1[TOKEN]");
+        masked = AK_SK_PATTERN.matcher(masked).replaceAll("$1[TOKEN]");
         masked = LONG_TOKEN_PATTERN.matcher(masked).replaceAll("[TOKEN]");
         return masked;
     }
