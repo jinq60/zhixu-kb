@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -461,7 +462,8 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
      */
     public boolean retryTask(Long userId, Long taskId) {
         DocumentProcessTaskEntity task = taskMapper.selectById(taskId);
-        if (task == null || !task.getUserId().equals(userId)) {
+        // Objects.equals 防 NPE：脏数据 userId 为 null 或未登录 userId 为 null 时返回 false 而非 500
+        if (task == null || !Objects.equals(task.getUserId(), userId)) {
             return false;
         }
         boolean vectorizeTask = task.getFileId() == null;
@@ -1030,7 +1032,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
 
     public Map<String, Object> taskView(Long userId, Long taskId) {
         DocumentProcessTaskEntity task = taskMapper.selectById(taskId);
-        if (task == null || !task.getUserId().equals(userId)) {
+        if (task == null || !Objects.equals(task.getUserId(), userId)) {
             return null;
         }
         return buildTaskView(task);
@@ -1038,7 +1040,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
 
     public Map<String, Object> latestTaskViewByNote(Long userId, Long noteId) {
         DocumentProcessTaskEntity task = getLatestTaskByNote(noteId);
-        if (task == null || !task.getUserId().equals(userId)) {
+        if (task == null || !Objects.equals(task.getUserId(), userId)) {
             return null;
         }
         return buildTaskView(task);
@@ -1057,7 +1059,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
      */
     public boolean deleteTask(Long userId, Long taskId) {
         DocumentProcessTaskEntity task = taskMapper.selectById(taskId);
-        if (task == null || !task.getUserId().equals(userId)) {
+        if (task == null || !Objects.equals(task.getUserId(), userId)) {
             return false;
         }
         cleanChunkMapper.delete(new LambdaQueryWrapper<CleanChunkTaskEntity>()

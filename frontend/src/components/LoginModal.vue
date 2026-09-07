@@ -63,11 +63,14 @@ const formRef = ref<any>(null)
 const rules: Record<string, any> = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 24, message: '长度在 3 到 24 个字符', trigger: 'blur' }
+    // 与后端 RegisterRequest 对齐（2-24），登录态不额外加严
+    { min: 2, max: 24, message: '长度在 2 到 24 个字符', trigger: 'blur' }
   ],
+  // 登录表单不套注册密码策略（老用户短密码仍需能登录，是否放行由服务端判定）；
+  // 新密码最低 8 位的约束在注册/改密入口执行
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '长度在 6 到 32 个字符', trigger: 'blur' }
+    { max: 128, message: '密码过长', trigger: 'blur' }
   ],
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },

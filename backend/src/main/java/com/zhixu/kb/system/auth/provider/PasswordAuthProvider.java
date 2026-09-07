@@ -77,8 +77,9 @@ public class PasswordAuthProvider implements AuthProvider {
         if (username.length() < 2 || username.length() > 24 || !username.matches(USERNAME_PATTERN)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "用户名仅支持中文、字母、数字、下划线、短横线与空格，长度 2-24");
         }
-        if (password.length() < 6 || password.length() > 64) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "密码长度需在 6-64 个字符之间");
+        // 与 RegisterRequest/UpdatePasswordRequest 保持一致：新密码最低 8 位
+        if (password.length() < 8 || password.length() > 64) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "密码长度需在 8-64 个字符之间");
         }
     }
 

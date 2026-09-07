@@ -67,8 +67,8 @@ const loadProfile = async () => {
 }
 
 const handlePasswordSubmit = async () => {
-  if (!newPassword.value || newPassword.value.length < 6) {
-    ElMessage.warning('新密码长度不能少于 6 位')
+  if (!newPassword.value || newPassword.value.length < 8) {
+    ElMessage.warning('新密码长度不能少于 8 位')
     return
   }
   if (newPassword.value !== confirmPassword.value) {

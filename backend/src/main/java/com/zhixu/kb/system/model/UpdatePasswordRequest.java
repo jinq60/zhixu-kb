@@ -12,6 +12,6 @@ public class UpdatePasswordRequest {
     private String oldPassword;
 
     @NotBlank(message = "新密码不能为空")
-    @Size(min = 6, max = 32, message = "新密码长度必须在 6-32 位之间")
+    @Size(min = 8, max = 64, message = "新密码长度必须在 8-64 位之间")
     private String newPassword;
 }

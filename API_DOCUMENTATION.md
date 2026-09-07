@@ -11,7 +11,7 @@
 | 项目 | 说明 |
 |---|---|
 | 基础路径 | `http://localhost:8080`（开发）；Docker 环境下前端 Nginx 反代 `/api`） |
-| 统一响应 | `Result<T>` 包装：`{ "code": 0, "message": "...", "data": T }`；非 0 为业务错误 |
+| 统一响应 | `Result<T>` 包装：`{ "code": 200, "message": "...", "data": T }`；非 200 为业务错误（401 未登录、403 无权限、404 不存在、429 限流、500 系统繁忙） |
 | 认证方式 | JWT 会话 Cookie（`ZHIXU_SESSION`，HttpOnly + SameSite=Lax）：登录后由 Set-Cookie 下发，浏览器自动携带；非浏览器 API 调用仍可用 Header `Authorization: Bearer <token>` |
 | 内容类型 | `application/json`；文件上传使用 `multipart/form-data`；SSE 流式问答返回 `text/event-stream` |
 | 分页参数 | `page` 从 1 开始，`size` 默认 10 |
@@ -21,7 +21,7 @@
 ```json
 // 成功
 {
-  "code": 0,
+  "code": 200,
   "message": "ok",
   "data": { ... }
 }

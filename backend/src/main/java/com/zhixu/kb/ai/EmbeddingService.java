@@ -232,18 +232,26 @@ public class EmbeddingService {
                 List<float[]> probe = embedWith(endpoint.getBaseUrl(), endpoint.getApiKey(), candidate,
                         Collections.singletonList("test"), null);
                 if (probe == null || probe.isEmpty() || probe.get(0) == null || probe.get(0).length == 0) {
+                    log.debug("embedding probe empty result: baseUrl={} model={}",
+                            endpoint.getBaseUrl(), candidate);
                     continue;
                 }
                 if (probe.get(0).length != milvusProperties.getDimension()) {
-                    // 维度不匹配的模型跳过（如 OpenAI 1536 维 vs bge-m3 1024 维）
+                    // 维度不匹配的模型跳过（如 OpenAI 1536 维 vs bge-m3 1024 维）；
+                    // 打 info 而非吞掉：这是排查"向量化不可用"最常见的根因
+                    log.info("embedding probe dimension mismatch (skipped): baseUrl={} model={} dim={} expected={}",
+                            endpoint.getBaseUrl(), candidate, probe.get(0).length,
+                            milvusProperties.getDimension());
                     continue;
                 }
                 embeddingModelCache.put(cacheKey, candidate);
                 log.info("auto-detected embedding model: baseUrl={} model={} dim={}",
                         endpoint.getBaseUrl(), candidate, probe.get(0).length);
                 return candidate;
-            } catch (Exception ignored) {
-                // 该候选模型不可用，尝试下一个
+            } catch (Exception ex) {
+                // 该候选模型不可用，尝试下一个（记录模型名+错误摘要，便于排查 Key/模型 ID 配错）
+                log.debug("embedding probe failed: baseUrl={} model={} err={}",
+                        endpoint.getBaseUrl(), candidate, ex.getMessage());
             }
         }
         embeddingProbeFailedCache.put(cacheKey, Boolean.TRUE);

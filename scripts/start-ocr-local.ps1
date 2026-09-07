@@ -25,8 +25,11 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
     if ($LASTEXITCODE -ne 0) { Write-Error "venv creation failed"; exit 1 }
 }
 
-# Install dependencies (paddle legacy route, manual inspection)
-& $venvPython -m pip install -r (Join-Path $ocrDir "requirements-paddle-legacy.txt") 2>&1 | Select-Object -Last 3
+# Install dependencies (paddle legacy route, manual inspection).
+# 注意：不用管道接 Select（管道后 $LASTEXITCODE 会变成 Select 的退出码，导致安装失败被吞掉）
+$pipLog = & $venvPython -m pip install -r (Join-Path $ocrDir "requirements-paddle-legacy.txt") 2>&1
+$pipLog | Select-Object -Last 3
+if ($LASTEXITCODE -ne 0) { Write-Error "pip install 失败，详见上方输出"; exit 1 }
 
 Write-Host "==> Starting OCR service on :5001 ..." -ForegroundColor Cyan
 Push-Location $ocrDir
