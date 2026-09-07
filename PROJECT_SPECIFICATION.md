@@ -127,11 +127,11 @@
 
 | 技术 | 版本/说明 | 用途 |
 |---|---|---|
-| Spring Boot | 2.7.18（Java 8） | 基础框架 |
-| Spring Security | 5.7.12 | 认证授权 |
-| Spring Validation | - | 参数校验 |
+| Spring Boot | 3.2.5（Java 17） | 基础框架 |
+| Spring Security | 6.2.x（Boot 管理） | 认证授权 |
+| Spring Validation | - | 参数校验（jakarta 命名空间） |
 | Spring Mail | - | 邮箱验证码 |
-| MyBatis-Plus | 3.5.5 | ORM / 分页 |
+| MyBatis-Plus | 3.5.7 + mybatis-spring 3.0.3 | ORM / 分页 |
 | MySQL Connector/J | 8.x | 数据库驱动 |
 | Redis | 7.x（可选，降级本地缓存） | Token 撤销 / 限流 / 缓存 |
 | Neo4j Java Driver | 4.4.15 | 知识图谱 |
@@ -452,7 +452,7 @@ MILVUS_ENABLED: "false"
 
 ### 9.2 已知限制
 
-- **Spring Boot 2.7.x EOL**：已通过依赖加固覆盖关键 CVE，但建议未来升级到 Spring Boot 3.x。
+- **Spring Boot 3.2**：已完成 2.7→3.2 迁移（jakarta、Security 6、jjwt 0.12、MP 3.5.7、neo4j 驱动 5.x、springdoc 2.x）。
 - **本地 OCR 精度**：容器内默认 RapidOCR，复杂场景推荐本地 PaddleOCR 或 DeepSeek-OCR-2。
 - **Milvus 资源占用**：完整 Docker Compose 对内存要求较高（建议 ≥8GB）。
 - **OCR 服务无鉴权**：仅绑定 `127.0.0.1`，不得暴露到公网。
@@ -473,7 +473,7 @@ MILVUS_ENABLED: "false"
 
 ```text
 IntelligentKnowledgeBase/
-├─ backend/                    # 统一后端（Spring Boot 2.7 + Java 8）
+├─ backend/                    # 统一后端（Spring Boot 3.2 + Java 17）
 │  ├─ src/main/java/com/zhixu/kb/
 │  │  ├─ admin/                # 管理端接口
 │  │  ├─ ai/                   # AI 引擎适配器、用户配置、端点管理

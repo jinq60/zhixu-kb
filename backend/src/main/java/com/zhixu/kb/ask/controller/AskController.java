@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;

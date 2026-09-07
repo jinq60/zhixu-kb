@@ -51,7 +51,7 @@ public class AskService {
 
     private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
-    @javax.annotation.PostConstruct
+    @jakarta.annotation.PostConstruct
     public void initTx() {
         this.transactionTemplate = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
     }

@@ -29,7 +29,7 @@
 
 ```text
 IntelligentKnowledgeBase/
-├─ backend/          # 统一后端 Spring Boot 2.7（Java 8）+ MyBatis-Plus
+├─ backend/          # 统一后端 Spring Boot 3.2（Java 17）+ MyBatis-Plus
 │  └─ sql/           # mysql-schema.sql 统一建库脚本
 ├─ frontend/         # 用户端 Vue3 + TypeScript + Element Plus + ECharts
 ├─ admin-frontend/   # 独立管理后台（登录制，深色布局，端口 5175）

@@ -2,7 +2,7 @@ package com.zhixu.kb.admin;
 
 import lombok.Data;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 
 /**
  * AI 引擎运行时切换请求。

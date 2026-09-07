@@ -6,14 +6,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * 会话 Cookie 签发与解析：JWT 存 HttpOnly Cookie（JS 不可读），替代 localStorage。
  * <ul>
- *   <li>写入一律走 Set-Cookie 响应头手拼（javax Cookie 无 SameSite 属性）：{@code Path=/; HttpOnly; SameSite=Lax}，
+ *   <li>写入一律走 Set-Cookie 响应头手拼（Servlet Cookie 无 SameSite 属性）：{@code Path=/; HttpOnly; SameSite=Lax}，
  *       生产 HTTPS 下追加 {@code Secure}（{@code app.auth.cookie-secure}）。</li>
  *   <li>读取优先级：Cookie → Authorization Bearer（兼容非浏览器 API 调用）；
  *       旧登录响应体不再返回 token，前端不得再存储。</li>
