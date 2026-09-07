@@ -64,11 +64,21 @@ public final class SafeUrlValidator {
     }
 
     private static void validateInternal(String baseUrl) {
+        if (baseUrl == null || baseUrl.trim().isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "接口地址不能为空");
+        }
+        // userinfo（如 http://u:p@host）可能绕过 host 提取，先嗅探原始串
+        if (baseUrl.contains("@")) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "接口地址不允许包含用户信息");
+        }
         URI uri;
         try {
             uri = new URI(baseUrl.trim());
         } catch (Exception ex) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "接口地址格式非法");
+        }
+        if (uri.getUserInfo() != null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "接口地址不允许包含用户信息");
         }
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!"http".equals(scheme) && !"https".equals(scheme)) {
@@ -99,11 +109,16 @@ public final class SafeUrlValidator {
 
     private static boolean isDeniedHost(String host) {
         String lower = host.toLowerCase(Locale.ROOT);
+        // 阻断 0.0.0.0、:: 字面量及常见内网后缀
+        if (lower.equals("0.0.0.0") || lower.equals("::") || lower.equals("[::]")) {
+            return true;
+        }
         return lower.equals("localhost")
                 || lower.endsWith(".localhost")
                 || lower.endsWith(".local")
                 || lower.endsWith(".internal")
                 || lower.endsWith(".lan")
+                || lower.endsWith(".home.arpa")
                 || isNumericIpLiteral(lower);
     }
 
@@ -116,29 +131,42 @@ public final class SafeUrlValidator {
             byte[] b = addr.getAddress();
             int first = b[0] & 0xFF;
             int second = b[1] & 0xFF;
+            int third = b[2] & 0xFF;
             if (first == 0) {
-                return true;
+                return true; // 0.0.0.0/8
             }
             if (first == 10) {
-                return true;
+                return true; // 10.0.0.0/8
             }
             if (first == 127) {
-                return true;
+                return true; // 127.0.0.0/8
             }
             if (first == 169 && second == 254) {
-                return true;
+                return true; // 169.254.0.0/16 链路本地
             }
             if (first == 172 && second >= 16 && second <= 31) {
-                return true;
+                return true; // 172.16.0.0/12
             }
             if (first == 192 && second == 168) {
-                return true;
+                return true; // 192.168.0.0/16
             }
             if (first == 100 && second >= 64 && second <= 127) {
-                return true;
+                return true; // 100.64.0.0/10 CGNAT
+            }
+            if (first == 192 && second == 0 && third == 2) {
+                return true; // 192.0.2.0/24 TEST-NET-1
+            }
+            if (first == 198 && second == 51 && third == 100) {
+                return true; // 198.51.100.0/24 TEST-NET-2
+            }
+            if (first == 203 && second == 0 && third == 113) {
+                return true; // 203.0.113.0/24 TEST-NET-3
+            }
+            if (first == 192 && second == 88 && third == 99) {
+                return true; // 192.88.99.0/24 6to4 relay (deprecated)
             }
             if (first >= 224) {
-                return true;
+                return true; // 224.0.0.0/4 组播 + 240.0.0.0/4 保留
             }
             // 198.18.0.0/15（benchmark 段）：默认拒绝；仅开发环境开启
             // ssrf.allow-fake-ip-ranges 后放行（Clash/Mihomo fake-ip 模式）
@@ -150,10 +178,23 @@ public final class SafeUrlValidator {
         if (addr instanceof Inet6Address) {
             byte[] b = addr.getAddress();
             if (b[0] == 0) {
+                return true; // ::/128 未指定
+            }
+            if ((b[0] & 0xFF) == 0xFF) {
+                return true; // ff00::/8 组播
+            }
+            // ::ffff:0:0/96 IPv4 映射
+            if (b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0 && b[4] == 0 && b[5] == 0
+                    && b[6] == 0 && b[7] == 0 && b[8] == 0 && b[9] == 0
+                    && (b[10] & 0xFF) == 0xFF && (b[11] & 0xFF) == 0xFF) {
+                return true;
+            }
+            // 2001:db8::/32 文档前缀
+            if ((b[0] & 0xFF) == 0x20 && (b[1] & 0xFF) == 0x01 && (b[2] & 0xFF) == 0x0D && (b[3] & 0xFF) == 0xB8) {
                 return true;
             }
             if ((b[0] & 0xFF) == 0xFE && (b[1] & 0xC0) == 0x80) {
-                return true;
+                return true; // fe80::/10 链路本地
             }
             if ((b[0] & 0xFF) == 0xFC || (b[0] & 0xFF) == 0xFD) {
                 // fc00::/7（ULA 真实私网段）默认拒绝；同上，仅开发环境 fake-ip 兼容时放行

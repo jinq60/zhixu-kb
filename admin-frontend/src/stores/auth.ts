@@ -16,7 +16,7 @@ interface AuthState {
 
 function loadRoles(): string[] {
   try {
-    const raw = localStorage.getItem('zhixu_admin_roles')
+    const raw = sessionStorage.getItem('zhixu_admin_roles')
     if (!raw) return []
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed : []
@@ -27,8 +27,8 @@ function loadRoles(): string[] {
 
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
-    token: localStorage.getItem('zhixu_admin_token'),
-    username: localStorage.getItem('zhixu_admin_username'),
+    token: sessionStorage.getItem('zhixu_admin_token'),
+    username: sessionStorage.getItem('zhixu_admin_username'),
     roles: loadRoles()
   }),
   getters: {
@@ -38,27 +38,30 @@ export const useAuthStore = defineStore('auth', {
   actions: {
     async login(username: string, password: string) {
       const { data } = await http.post('/api/auth/login', { username, password })
-      const token = data.data.token
+      const token = data?.data?.token
+      if (!token) throw new Error('登录未返回 token')
       this.token = token
       this.username = username
-      localStorage.setItem('zhixu_admin_token', token)
-      // 读取角色
+      sessionStorage.setItem('zhixu_admin_token', token)
+      // 读取角色（以服务端为准，本地仅缓存）
       try {
         const me = await http.get('/api/auth/me')
-        this.roles = me.data.data.roles || ['user']
+        const roles = me?.data?.data?.roles
+        this.roles = Array.isArray(roles) ? roles.filter(Boolean) : ['user']
+        if (this.roles.length === 0) this.roles = ['user']
       } catch {
         this.roles = ['user']
       }
-      localStorage.setItem('zhixu_admin_username', this.username || '')
-      localStorage.setItem('zhixu_admin_roles', JSON.stringify(this.roles))
+      sessionStorage.setItem('zhixu_admin_username', this.username || '')
+      sessionStorage.setItem('zhixu_admin_roles', JSON.stringify(this.roles))
     },
     logout() {
       this.token = null
       this.username = null
       this.roles = []
-      localStorage.removeItem('zhixu_admin_token')
-      localStorage.removeItem('zhixu_admin_username')
-      localStorage.removeItem('zhixu_admin_roles')
+      sessionStorage.removeItem('zhixu_admin_token')
+      sessionStorage.removeItem('zhixu_admin_username')
+      sessionStorage.removeItem('zhixu_admin_roles')
       router.push('/login')
     }
   }

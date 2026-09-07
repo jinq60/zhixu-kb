@@ -9,6 +9,7 @@ import com.zhixu.kb.note.entity.Category;
 import com.zhixu.kb.note.entity.Note;
 import com.zhixu.kb.note.entity.NoteMindmap;
 import com.zhixu.kb.note.entity.NoteStructure;
+import com.zhixu.kb.common.utils.HtmlSanitizer;
 import com.zhixu.kb.note.mapper.CategoryMapper;
 import com.zhixu.kb.note.mapper.NoteMapper;
 import com.zhixu.kb.note.mapper.NoteMindmapMapper;
@@ -46,6 +47,7 @@ public class NoteHistoryService {
     private final NoteStructureService noteStructureService;
     private final NoteVectorizeTaskRunner noteVectorizeTaskRunner;
     private final ObjectMapper objectMapper;
+    private final HtmlSanitizer htmlSanitizer;
 
     public void recordNoteSnapshot(Long noteId, String operationType, String operationDesc, String requestUrl, Object requestParams) {
         try {
@@ -143,12 +145,12 @@ public class NoteHistoryService {
             throw new BusinessException(ResultCode.SERVER_ERROR, "History snapshot is invalid");
         }
 
-        note.setTitle(snapshot.getTitle());
-        note.setContent(snapshot.getContent());
-        note.setOcrText(snapshot.getOcrText());
-        note.setSummary(snapshot.getSummary());
-        note.setKeywords(snapshot.getKeywords());
-        note.setCoverImage(snapshot.getCoverImage());
+        note.setTitle(htmlSanitizer.sanitizeText(snapshot.getTitle()));
+        note.setContent(htmlSanitizer.sanitizeRich(snapshot.getContent()));
+        note.setOcrText(htmlSanitizer.sanitizeText(snapshot.getOcrText()));
+        note.setSummary(htmlSanitizer.sanitizeText(snapshot.getSummary()));
+        note.setKeywords(htmlSanitizer.sanitizeText(snapshot.getKeywords()));
+        note.setCoverImage(htmlSanitizer.sanitizeText(snapshot.getCoverImage()));
         // 快照中的分类可能已被删除或不属于该用户：无效时恢复为未分类，避免产生悬挂引用
         note.setCategoryId(resolveRestoreCategoryId(snapshot.getCategoryId(), note.getUserId()));
         note.setStatus(snapshot.getStatus());

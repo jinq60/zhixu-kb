@@ -182,9 +182,8 @@ private final DocumentProcessTaskService documentProcessTaskService;
         note.setKeywords(request.getKeywords());
         note.setCoverImage(request.getCoverImage());
         note.setStatus(request.getStatus() == null ? 0 : normalizeStatus(request.getStatus()));
-        if (note.getStatus() != null && note.getStatus() == 1) {
-            note.setContent(htmlSanitizer.sanitizeRich(note.getContent()));
-        }
+        // 统一落库前清洗，防止草稿 XSS 通过历史恢复重新激活
+        note.setContent(htmlSanitizer.sanitizeRich(note.getContent()));
         noteMapper.insert(note);
         if (!CollectionUtils.isEmpty(request.getOutline())) {
             noteStructureService.saveStructure(note.getId(), request.getOutline(), null);
@@ -217,9 +216,8 @@ private final DocumentProcessTaskService documentProcessTaskService;
         if (request.getStatus() != null) {
             note.setStatus(normalizeStatus(request.getStatus()));
         }
-        if (note.getStatus() != null && note.getStatus() == 1) {
-            note.setContent(htmlSanitizer.sanitizeRich(note.getContent()));
-        }
+        // 统一落库前清洗
+        note.setContent(htmlSanitizer.sanitizeRich(note.getContent()));
         noteMapper.updateById(note);
         if (request.getOutline() != null) {
             noteStructureService.saveStructure(note.getId(), request.getOutline(), null);
@@ -296,9 +294,9 @@ private final DocumentProcessTaskService documentProcessTaskService;
             }
             return transactionTemplate.execute(status -> {
                 Note fresh = findOwnNote(id);
-                fresh.setOcrText(text);
+                fresh.setOcrText(htmlSanitizer.sanitizeText(text));
                 if (!StringUtils.hasText(fresh.getContent())) {
-                    fresh.setContent(text);
+                    fresh.setContent(htmlSanitizer.sanitizeRich(text));
                 }
                 noteMapper.updateById(fresh);
                 noteHistoryService.recordNoteSnapshot(

@@ -53,10 +53,23 @@ public class SecurityConfig {
             "/api/device/validate",
             "/api/device/refresh",
             // 仅存在于桌面版 jar（服务器版无对应 Controller，配置保留无害）
-            "/api/auth/desktop-token",
+            "/api/auth/desktop-token"
+    };
+
+    private static final String[] SWAGGER_ENDPOINTS = {
             "/v3/api-docs/**",
             "/swagger-ui/**",
-            "/swagger-ui.html",
+            "/swagger-ui.html"
+    };
+
+    /** 健康探针公开（docker healthcheck 无鉴权），其余 actuator 仅管理员 */
+    private static final String[] ACTUATOR_PUBLIC = {
+            "/actuator/health",
+            "/actuator/health/**",
+            "/actuator/info"
+    };
+
+    private static final String[] ACTUATOR_ADMIN = {
             "/actuator/**"
     };
 
@@ -73,20 +86,24 @@ public class SecurityConfig {
                     response.getWriter().write("{\"code\":401,\"message\":\"未登录或token已过期\"}");
                 })
                 .and()
+                .authorizeRequests();
+        // CORS 预检必须最先放行，否则 prod 下 OPTIONS /v3/api-docs 会被鉴权拦截
+        // 健康探针公开（docker healthcheck），actuator 其余仅管理员；swagger 生产需登录
+        http.authorizeRequests().antMatchers(HttpMethod.OPTIONS, "/**").permitAll();
+        http.authorizeRequests().antMatchers(ACTUATOR_PUBLIC).permitAll();
+        if (isProdProfile()) {
+            http.authorizeRequests().antMatchers(SWAGGER_ENDPOINTS).authenticated();
+        } else {
+            http.authorizeRequests().antMatchers(SWAGGER_ENDPOINTS).permitAll();
+        }
+        http.authorizeRequests().antMatchers(ACTUATOR_ADMIN).hasRole("ADMIN");
+        http
                 .authorizeRequests()
                 .antMatchers(PUBLIC_ENDPOINTS).permitAll()
-                .antMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 // 文件内容接口匿名放行，Service 层（findReadableFile）仍强制：
                 // 仅自己笔记或已发布笔记的附件可读，禁止匿名遍历自增文件 ID。
                 .antMatchers(HttpMethod.GET, "/api/files/*/content").permitAll()
                 .antMatchers(HttpMethod.GET, "/api/categories/**").authenticated();
-
-        // 生产环境：Swagger/Actuator 需要登录后才能访问，避免接口信息泄露
-        if (isProdProfile()) {
-            http.authorizeRequests()
-                    .antMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/actuator/**")
-                    .authenticated();
-        }
 
         // 桌面版：后端直接托管前端静态资源与 SPA history 路由——
         // 非幂等的 API 读接口先锁 authenticated，其余非 API 的 GET（静态资源/前端路由）放行；

@@ -121,6 +121,11 @@ public class MilvusVectorStore {
             // 维度校验：embedding 模型更换导致维度变化时自动重建集合（向量数据由启动回填/笔记编辑自动恢复）
             int existingDim = readCollectionDimension(name);
             if (existingDim > 0 && existingDim != properties.getDimension()) {
+                if (!properties.isAutoRecreateOnDimensionMismatch()) {
+                    log.error("Milvus collection dimension mismatch (existing={} configured={}), autoRecreate disabled - vector search disabled until manual migration. collection={}",
+                            existingDim, properties.getDimension(), name);
+                    throw new IllegalStateException("Milvus dimension mismatch, autoRecreate disabled");
+                }
                 log.warn("Milvus collection dimension mismatch (existing={} configured={}), dropping and recreating: {}",
                         existingDim, properties.getDimension(), name);
                 try {

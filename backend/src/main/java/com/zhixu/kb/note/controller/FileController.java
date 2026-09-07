@@ -174,6 +174,9 @@ public class FileController {
         return ResponseEntity.ok()
                 .contentType(mediaType)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(content.getFilename()).build().toString())
+                // Query Token 场景防缓存：避免 token 进代理/浏览器历史缓存
+                .header(HttpHeaders.CACHE_CONTROL, "private, no-store, max-age=0")
+                .header(HttpHeaders.PRAGMA, "no-cache")
                 .body(resource);
     }
 

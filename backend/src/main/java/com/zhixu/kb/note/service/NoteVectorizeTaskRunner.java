@@ -1,5 +1,7 @@
 package com.zhixu.kb.note.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zhixu.kb.ai.EmbeddingService;
 import com.zhixu.kb.note.entity.Note;
 import com.zhixu.kb.note.mapper.NoteMapper;
@@ -64,14 +66,24 @@ public class NoteVectorizeTaskRunner {
             return;
         }
         try {
-            List<Note> pending = noteMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Note>()
-                    .select(Note::getId)
-                    .eq(Note::getIsDeleted, 0));
+            // 分页加载，避免百万笔记时 OOM
             List<Long> pendingIds = new ArrayList<>();
-            for (Note note : pending) {
-                if (note.getId() != null) {
-                    pendingIds.add(note.getId());
+            int page = 1;
+            int pageSize = 1000;
+            while (true) {
+                Page<Note> p = new Page<>(page, pageSize);
+                Page<Note> result = noteMapper.selectPage(p, new LambdaQueryWrapper<Note>()
+                        .select(Note::getId)
+                        .eq(Note::getIsDeleted, 0));
+                List<Note> pending = result.getRecords();
+                if (pending.isEmpty()) break;
+                for (Note note : pending) {
+                    if (note.getId() != null) {
+                        pendingIds.add(note.getId());
+                    }
                 }
+                if (pending.size() < pageSize) break;
+                page++;
             }
             // 批量探测已有向量的笔记，替代逐笔记一次网络往返
             java.util.Set<Long> existingIds = vectorStore.existingNoteIds(pendingIds);

@@ -12,13 +12,14 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
-import java.util.Iterator;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -38,17 +39,22 @@ public class EmailCodeService {
     private static final Duration RESEND_INTERVAL = Duration.ofSeconds(60);
     private static final int CODE_LENGTH = 6;
     private static final int MAX_VERIFY_ATTEMPTS = 5;
-    private static final int MEMORY_CLEANUP_THRESHOLD = 1000;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final StringRedisTemplate redisTemplate;
     private final JavaMailSender mailSender;
     private final String mailUsername;
-    private final Map<String, CodeEntry> memoryStore = new ConcurrentHashMap<>();
-    private final Map<String, Long> memorySendTime = new ConcurrentHashMap<>();
-    private final Map<String, CodeEntry> bindMemoryStore = new ConcurrentHashMap<>();
-    private final Map<String, Long> bindMemorySendTime = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> verifyAttempts = new ConcurrentHashMap<>();
+    // 降级内存缓存：使用 Caffeine 自动过期，避免随机邮箱灌表常驻内存
+    private final Cache<String, CodeEntry> memoryStore = Caffeine.newBuilder()
+            .expireAfterWrite(CODE_TTL).maximumSize(10_000).build();
+    private final Cache<String, Long> memorySendTime = Caffeine.newBuilder()
+            .expireAfterWrite(RESEND_INTERVAL).maximumSize(10_000).build();
+    private final Cache<String, CodeEntry> bindMemoryStore = Caffeine.newBuilder()
+            .expireAfterWrite(CODE_TTL).maximumSize(10_000).build();
+    private final Cache<String, Long> bindMemorySendTime = Caffeine.newBuilder()
+            .expireAfterWrite(RESEND_INTERVAL).maximumSize(10_000).build();
+    private final Cache<String, AtomicInteger> verifyAttempts = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMinutes(10)).maximumSize(10_000).build();
 
     private static final class CodeEntry {
         private final String code;
@@ -89,7 +95,7 @@ public class EmailCodeService {
     }
 
     private void doSend(String email, String redisPrefix, String redisSendPrefix,
-                          Map<String, CodeEntry> storeMap, Map<String, Long> sendMap,
+                          Cache<String, CodeEntry> storeMap, Cache<String, Long> sendMap,
                           String attemptsKey,
                           String subject, String bodyTemplate) {
         if (email == null || !email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$")) {
@@ -101,23 +107,24 @@ public class EmailCodeService {
             throw new BusinessException(ResultCode.SERVER_ERROR, "邮件服务未配置，请联系管理员");
         }
         String code = generateCode();
+        // 先发送邮件，成功后再落库，避免 SMTP 失败也锁 60s
+        sendRealEmail(email, code, subject, bodyTemplate);
         // 新验证码发放即重置失败计数，避免旧码的错误尝试把新码也锁死
-        verifyAttempts.remove(attemptsKey);
+        verifyAttempts.invalidate(attemptsKey);
         store(email, code, redisPrefix, storeMap);
         long now = System.currentTimeMillis();
         if (!redisSet(redisSendPrefix + email, String.valueOf(now), RESEND_INTERVAL)) {
             sendMap.put(email, now);
         }
-        sendRealEmail(email, code, subject, bodyTemplate);
         log.info("邮箱验证码已发送 email={}", maskEmail(email));
     }
 
     private void doVerify(String email, String code, String redisPrefix,
-                          Map<String, CodeEntry> storeMap, String attemptsKey) {
+                          Cache<String, CodeEntry> storeMap, String attemptsKey) {
         if (email == null || code == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "邮箱或验证码不能为空");
         }
-        AtomicInteger attempts = verifyAttempts.get(attemptsKey);
+        AtomicInteger attempts = verifyAttempts.getIfPresent(attemptsKey);
         if (attempts != null && attempts.get() >= MAX_VERIFY_ATTEMPTS) {
             remove(email, redisPrefix, storeMap);
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
@@ -129,11 +136,11 @@ public class EmailCodeService {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码已过期，请重新获取");
         }
         if (!constantTimeEquals(stored, code)) {
-            // 仅在真实比对失败时才创建/递增计数条目
-            verifyAttempts.computeIfAbsent(attemptsKey, k -> new AtomicInteger(0)).incrementAndGet();
+            // 仅在真实比对失败时才创建/递增计数条目（原子加载，防并发丢增量）
+            verifyAttempts.get(attemptsKey, k -> new AtomicInteger(0)).incrementAndGet();
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误");
         }
-        verifyAttempts.remove(attemptsKey);
+        verifyAttempts.invalidate(attemptsKey);
         remove(email, redisPrefix, storeMap);
     }
 
@@ -151,7 +158,7 @@ public class EmailCodeService {
         }
     }
 
-    private void checkResend(String email, String redisSendPrefix, Map<String, Long> sendMap) {
+    private void checkResend(String email, String redisSendPrefix, Cache<String, Long> sendMap) {
         // 注意：业务限流异常必须抛在 try/catch 之外——BusinessException 是 RuntimeException，
         // 若在 try 内抛出会被下面的 catch(Exception) 吞掉，导致 Redis 在线时限流完全失效（可被邮件轰炸）
         Boolean exists = null;
@@ -165,46 +172,45 @@ public class EmailCodeService {
         if (Boolean.TRUE.equals(exists)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
         }
-        Long last = sendMap.get(email);
+        Long last = sendMap.getIfPresent(email);
         if (last != null && System.currentTimeMillis() - last < RESEND_INTERVAL.toMillis()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
         }
     }
 
-    private void store(String email, String code, String redisPrefix, Map<String, CodeEntry> storeMap) {
+    private void store(String email, String code, String redisPrefix, Cache<String, CodeEntry> storeMap) {
         if (redisSet(redisPrefix + email, code, CODE_TTL)) {
             return;
         }
-        cleanupIfNeeded(storeMap);
         storeMap.put(email, new CodeEntry(code, System.currentTimeMillis() + CODE_TTL.toMillis()));
     }
 
-    private String fetch(String email, String redisPrefix, Map<String, CodeEntry> storeMap) {
+    private String fetch(String email, String redisPrefix, Cache<String, CodeEntry> storeMap) {
         if (redisTemplate != null) {
             String value = redisGet(redisPrefix + email);
             if (value != null) {
                 return value;
             }
         }
-        CodeEntry entry = storeMap.get(email);
+        CodeEntry entry = storeMap.getIfPresent(email);
         if (entry == null) {
             return null;
         }
         if (System.currentTimeMillis() > entry.expiresAt) {
-            storeMap.remove(email);
+            storeMap.invalidate(email);
             return null;
         }
         return entry.code;
     }
 
-    private void remove(String email, String redisPrefix, Map<String, CodeEntry> storeMap) {
+    private void remove(String email, String redisPrefix, Cache<String, CodeEntry> storeMap) {
         if (redisTemplate != null) {
             try {
                 redisTemplate.delete(redisPrefix + email);
             } catch (Exception ignored) {
             }
         }
-        storeMap.remove(email);
+        storeMap.invalidate(email);
     }
 
     private boolean redisSet(String key, String value, Duration ttl) {
@@ -229,19 +235,6 @@ public class EmailCodeService {
         } catch (Exception e) {
             log.warn("Redis 读取失败，验证码降级为内存存储");
             return null;
-        }
-    }
-
-    private void cleanupIfNeeded(Map<String, CodeEntry> storeMap) {
-        if (storeMap.size() <= MEMORY_CLEANUP_THRESHOLD) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, CodeEntry>> it = storeMap.entrySet().iterator();
-        while (it.hasNext()) {
-            if (now > it.next().getValue().expiresAt) {
-                it.remove();
-            }
         }
     }
 

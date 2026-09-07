@@ -8,13 +8,16 @@ import com.zhixu.kb.common.result.ResultCode;
 import com.zhixu.kb.common.utils.JwtUtils;
 import com.zhixu.kb.system.entity.DeviceBinding;
 import com.zhixu.kb.system.mapper.DeviceBindingMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,11 +30,10 @@ import java.util.UUID;
  *   <li>桌面端凭 bindCode 兑换长期 device_token（30 天），服务端落库设备绑定；</li>
  *   <li>桌面端定期在线校验（validate），用户可在官网查看/吊销设备。</li>
  * </ol>
- * bindCode 存内存 Caffeine（60s TTL + 一次性消费），多实例部署时可迁 Redis。
+ * bindCode 优先存 Redis（多实例共享，原子消费），Redis 不可用时降级内存 Caffeine。
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class DeviceAuthService {
 
     public static final long DEVICE_TOKEN_TTL_MS = 30L * 24 * 3600 * 1000L;
@@ -39,18 +41,37 @@ public class DeviceAuthService {
 
     private final DeviceBindingMapper deviceBindingMapper;
     private final JwtUtils jwtUtils;
+    private final StringRedisTemplate redisTemplate;
     private final SecureRandom random = new SecureRandom();
 
-    /** bindCode -> userId（一次性，60s 过期） */
+    /** bindCode -> userId（一次性，60s 过期）降级缓存 */
     private final Cache<String, Long> bindCodeCache = Caffeine.newBuilder()
             .expireAfterWrite(BIND_CODE_TTL)
             .maximumSize(10_000)
             .build();
 
+    public DeviceAuthService(DeviceBindingMapper deviceBindingMapper,
+                             JwtUtils jwtUtils,
+                             ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
+        this.deviceBindingMapper = deviceBindingMapper;
+        this.jwtUtils = jwtUtils;
+        this.redisTemplate = redisTemplateProvider.getIfAvailable();
+    }
+
     /** 官网已登录用户为待授权桌面端生成一次性绑定码 */
     public Map<String, Object> createBindCode(Long userId) {
         String code = "bind_" + randomHex(32);
-        bindCodeCache.put(code, userId);
+        // 优先写 Redis，多实例共享；Redis 成功时不写本地，避免双写放大竞态窗口
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.opsForValue().set(redisBindKey(code), String.valueOf(userId), BIND_CODE_TTL);
+            } catch (Exception ex) {
+                log.warn("BindCode Redis write failed, fallback to local: {}", ex.getMessage());
+                bindCodeCache.put(code, userId);
+            }
+        } else {
+            bindCodeCache.put(code, userId);
+        }
         Map<String, Object> data = new HashMap<>();
         data.put("bindCode", code);
         data.put("expiresIn", BIND_CODE_TTL.getSeconds());
@@ -59,9 +80,36 @@ public class DeviceAuthService {
 
     /** 桌面端用一次性 bindCode 兑换长期设备凭证（码消费即失效，防重放） */
     public Map<String, Object> exchange(String bindCode, String deviceName) {
-        Long userId = bindCodeCache.asMap().remove(bindCode);
+        if (bindCode == null || bindCode.isBlank()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "绑定码无效或已过期，请重新验证");
+        }
+        Long userId = null;
+        // Lua 原子消费：GET + DEL 一次完成，防多实例并发重放
+        if (redisTemplate != null) {
+            try {
+                String key = redisBindKey(bindCode);
+                DefaultRedisScript<String> script = new DefaultRedisScript<>(
+                        "local v = redis.call('GET', KEYS[1]); if v then redis.call('DEL', KEYS[1]); return v; else return nil; end",
+                        String.class);
+                String val = redisTemplate.execute(script, Collections.singletonList(key));
+                if (val != null) {
+                    userId = Long.valueOf(val);
+                }
+            } catch (Exception ex) {
+                log.warn("BindCode Redis read failed: {}", ex.getMessage());
+            }
+        }
+        if (userId == null) {
+            userId = bindCodeCache.asMap().remove(bindCode);
+        }
         if (userId == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "绑定码无效或已过期，请重新验证");
+        }
+        // 每用户设备数上限，防循环建码造无限设备
+        Long deviceCount = deviceBindingMapper.selectCount(new QueryWrapper<DeviceBinding>().lambda()
+                .eq(DeviceBinding::getUserId, userId));
+        if (deviceCount != null && deviceCount >= 20) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "设备数量已达上限（20），请先吊销旧设备");
         }
         String deviceId = UUID.randomUUID().toString();
 
@@ -103,7 +151,7 @@ public class DeviceAuthService {
             }
             DeviceBinding binding = deviceBindingMapper.selectOne(new QueryWrapper<DeviceBinding>().lambda()
                     .eq(DeviceBinding::getDeviceId, deviceId));
-            if (binding == null || binding.getRevoked() != null && binding.getRevoked() == 1
+            if (binding == null || (binding.getRevoked() != null && binding.getRevoked() == 1)
                     || !userId.equals(binding.getUserId())) {
                 data.put("valid", false);
                 data.put("reason", "REVOKED_OR_MISSING");
@@ -162,7 +210,13 @@ public class DeviceAuthService {
         if (name == null || name.isBlank()) {
             return "Windows 设备";
         }
-        return name.length() > 100 ? name.substring(0, 100) : name.trim();
+        // 防存储型 XSS：官网设备列表展示该字段，需剥危险字符
+        String clean = name.trim().replaceAll("[<>\"'&]", "");
+        return clean.length() > 100 ? clean.substring(0, 100) : clean;
+    }
+
+    private String redisBindKey(String code) {
+        return "device:bind:" + code;
     }
 
     private String randomHex(int length) {

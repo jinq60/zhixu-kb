@@ -23,11 +23,33 @@ from image_processor import load_image_from_bytes, auto_crop_and_correct
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = settings.MAX_CONTENT_LENGTH
 
+# 可选 API Key 鉴权（OCR_API_KEY 未设置时不启用，仅依赖 127.0.0.1 绑定）
+@app.before_request
+def _check_ocr_api_key():
+    # CORS 预检直接放行，否则启用 KEY 后浏览器 POST 预检无头会被 401 掐断
+    if request.method == "OPTIONS":
+        return "", 204
+    if request.path in ("/ocr/health", "/ocr/engines"):
+        return
+    expected = os.getenv("OCR_API_KEY")
+    if expected:
+        provided = request.headers.get("X-API-Key") or request.headers.get("X-OCR-Key")
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            provided = provided or auth[7:]
+        if provided != expected:
+            return jsonify({"error": "Unauthorized: invalid OCR API key"}), 401
+
 if settings.CORS_ENABLED:
     try:
         from flask_cors import CORS
 
-        CORS(app)
+        # 限制仅本机前端可跨域，避免任意站点刷 OCR
+        CORS(app, origins=[
+            "http://localhost:5173", "http://localhost:5175",
+            "http://127.0.0.1:5173", "http://127.0.0.1:5175",
+            "http://localhost:8080", "http://127.0.0.1:8080"
+        ])
     except Exception:
         logger.warning("flask_cors not installed, CORS disabled.")
 
@@ -150,7 +172,7 @@ def _is_safe_url(url: str) -> bool:
 
     try:
         addr = ipaddress.ip_address(hostname)
-        if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local:
+        if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local or addr.is_multicast or addr.is_unspecified:
             return False
     except ValueError:
         # hostname is a domain name, resolve it
@@ -159,7 +181,7 @@ def _is_safe_url(url: str) -> bool:
             resolved = socket.getaddrinfo(hostname, None)
             for _, _, _, _, sockaddr in resolved:
                 addr = ipaddress.ip_address(sockaddr[0])
-                if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local:
+                if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local or addr.is_multicast or addr.is_unspecified:
                     return False
         except socket.gaierror:
             return False
@@ -179,9 +201,24 @@ def fetch_image_bytes(payload: Dict[str, Any]) -> Optional[bytes]:
     if image_url:
         if not _is_safe_url(image_url):
             raise ValueError("Blocked: URL points to a private or reserved address")
-        resp = requests.get(image_url, timeout=settings.REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        return resp.content
+        # 禁止重定向链绕过：先禁自动重定向，手动追踪并逐跳校验
+        current_url = image_url
+        for _ in range(3):
+            resp = requests.get(current_url, timeout=settings.REQUEST_TIMEOUT, allow_redirects=False)
+            if 300 <= resp.status_code < 400 and "Location" in resp.headers:
+                next_url = resp.headers["Location"]
+                # 相对重定向补全
+                if next_url.startswith("/"):
+                    from urllib.parse import urlparse
+                    pu = urlparse(current_url)
+                    next_url = f"{pu.scheme}://{pu.netloc}{next_url}"
+                if not _is_safe_url(next_url):
+                    raise ValueError("Blocked: redirect to private address")
+                current_url = next_url
+                continue
+            resp.raise_for_status()
+            return resp.content
+        raise ValueError("Too many redirects")
     return None
 
 

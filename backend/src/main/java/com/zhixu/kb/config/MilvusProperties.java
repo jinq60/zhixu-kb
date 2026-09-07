@@ -16,6 +16,8 @@ public class MilvusProperties {
     private int dimension = 1536;
     /** 集合名（v2：显式主键 upsert 幂等；v1 为 autoID 已弃用） */
     private String collectionName = "note_embedding_v2";
+    /** 维度不一致时是否自动删重建（默认 false，需人工确认，避免误删全量向量） */
+    private boolean autoRecreateOnDimensionMismatch = false;
 
     public boolean isEnabled() {
         return enabled;
@@ -63,5 +65,13 @@ public class MilvusProperties {
 
     public void setCollectionName(String collectionName) {
         this.collectionName = collectionName;
+    }
+
+    public boolean isAutoRecreateOnDimensionMismatch() {
+        return autoRecreateOnDimensionMismatch;
+    }
+
+    public void setAutoRecreateOnDimensionMismatch(boolean autoRecreateOnDimensionMismatch) {
+        this.autoRecreateOnDimensionMismatch = autoRecreateOnDimensionMismatch;
     }
 }

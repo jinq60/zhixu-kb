@@ -21,6 +21,10 @@ const routes: RouteRecordRaw[] = [
   { path: '/settings/ai', component: () => import('../views/AiSettingsView.vue'), meta: { requiresAuth: true } },
   { path: '/settings/account', component: () => import('../views/AccountSettingsView.vue'), meta: { requiresAuth: true } },
 
+  // 产品详情（可扩展，新增产品仅需在 config/products.ts 加配置）
+  { path: '/products/:slug([a-z0-9-]+)', component: () => import('../views/ProductDetailView.vue'), meta: { public: true, layout: 'blank' } },
+  { path: '/products', redirect: '/home' },
+
   // 官网/落地页
   { path: '/', component: () => import('../views/HomeView.vue'), meta: { public: true, layout: 'blank' } },
   { path: '/home', component: () => import('../views/HomeView.vue'), meta: { public: true, layout: 'blank' } },
@@ -30,9 +34,14 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior(to) {
+  scrollBehavior(to, _from, savedPosition) {
+    if (savedPosition) {
+      return savedPosition
+    }
     if (to.hash) {
-      return { el: to.hash, behavior: 'smooth' }
+      const reduced = typeof window !== 'undefined'
+        && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      return { el: to.hash, behavior: reduced ? 'auto' : 'smooth' }
     }
     return { top: 0 }
   }

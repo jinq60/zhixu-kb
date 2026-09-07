@@ -150,14 +150,23 @@ const handleSubmit = async () => {
   if (ok) {
     ElMessage.success('登录成功')
     auth.closeLoginModal()
-    const redirect = route.query.redirect as string
-    if (redirect && redirect.startsWith('/')) {
-      router.replace(redirect)
-    } else {
-      router.replace('/notes')
-    }
+    router.replace(safeRedirectPath(route.query.redirect))
   } else {
     ElMessage.error('登录失败，请检查输入')
+  }
+}
+
+/** 同源路径校验：防 %2F%2F / %5c / javascript: 等编码绕过，数组取首个 */
+const safeRedirectPath = (q: unknown): string => {
+  const raw = Array.isArray(q) ? q[0] : q
+  if (typeof raw !== 'string' || !raw) return '/notes'
+  try {
+    const u = new URL(decodeURIComponent(raw), window.location.origin)
+    if (u.origin !== window.location.origin) return '/notes'
+    const path = u.pathname + u.search + u.hash
+    return path.startsWith('/') ? path : '/notes'
+  } catch {
+    return '/notes'
   }
 }
 
@@ -197,8 +206,7 @@ const openOAuth = (provider: 'github' | 'google' | 'qq') => {
         if (ok) {
           ElMessage.success('登录成功')
           auth.closeLoginModal()
-          const redirect = route.query.redirect as string
-          router.replace(redirect && redirect.startsWith('/') ? redirect : '/notes')
+          router.replace(safeRedirectPath(route.query.redirect))
         } else {
           ElMessage.error('登录失败')
         }

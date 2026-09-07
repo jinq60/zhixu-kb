@@ -16,6 +16,8 @@ import java.time.Instant;
  * Token 撤销存储：Redis + 本地内存双写，登出后 token 立即失效。
  * <p>
  * 内存与 Redis 中均使用 token 的 SHA-256 摘要作为 key，避免原始 token 被长期缓存。
+ * <p>
+ * 仅覆盖用户 JWT；30 天 device token 吊销走 {@code DeviceBinding.revoked}，不受本存储 TTL 约束。
  */
 @Component
 public class TokenRevocationStore {
@@ -31,10 +33,15 @@ public class TokenRevocationStore {
      */
     private final Duration revokedTokenTtl;
 
+    private final boolean strictRevocation;
+
     public TokenRevocationStore(ObjectProvider<StringRedisTemplate> redisTemplateProvider,
                                 @org.springframework.beans.factory.annotation.Value("${jwt.expiration:86400000}")
-                                long jwtExpirationMs) {
+                                long jwtExpirationMs,
+                                @org.springframework.beans.factory.annotation.Value("${app.security.revoke-strict:false}")
+                                boolean strictRevocation) {
         this.redisTemplate = redisTemplateProvider.getIfAvailable();
+        this.strictRevocation = strictRevocation;
         long floor = Duration.ofDays(3).toMillis();
         this.revokedTokenTtl = Duration.ofMillis(Math.max(floor, jwtExpirationMs + 60_000L));
         this.revokedTokens = Caffeine.newBuilder()
@@ -56,10 +63,17 @@ public class TokenRevocationStore {
         if (redisTemplate != null) {
             try {
                 redisTemplate.opsForValue().set(redisKey(key), "1", revokedTokenTtl);
-            } catch (Exception ex) {
-                // 本地缓存已记录（单实例部署下即全部生效），Redis 失败仅影响多实例场景，记录错误日志
-                org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
-                        .error("Token revocation Redis write failed: {}", ex.getMessage());
+            } catch (Exception first) {
+                // 重试一次，仍失败时严格模式抛异常让调用方感知（登出/改密返回 503），默认模式仅日志
+                try {
+                    redisTemplate.opsForValue().set(redisKey(key), "1", revokedTokenTtl);
+                } catch (Exception ex) {
+                    org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
+                            .error("Token revocation Redis write failed: {}", ex.getMessage());
+                    if (strictRevocation) {
+                        throw new RevocationUnavailableException("撤销存储不可用，撤销可能未同步到其他实例", ex);
+                    }
+                }
             }
         }
     }
@@ -76,10 +90,13 @@ public class TokenRevocationStore {
             try {
                 return Boolean.TRUE.equals(redisTemplate.hasKey(redisKey(key)));
             } catch (Exception ex) {
-                // 单实例部署下本地缓存即权威；Redis 故障时按"未撤销"处理，
-                // 避免 Redis 抖动导致全部用户被误判登出（可用性优先），同时记录错误日志便于告警
                 org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
-                        .error("Token revocation Redis check failed: {}", ex.getMessage());
+                        .warn("Token revocation Redis check failed (strict={}): {}",
+                                strictRevocation, ex.getMessage());
+                // 严格模式抛 503 由过滤器处理，避免伪装 401 导致全员掉线；默认可用性优先走本地
+                if (strictRevocation) {
+                    throw new RevocationUnavailableException("撤销存储不可用", ex);
+                }
                 return false;
             }
         }
@@ -100,9 +117,16 @@ public class TokenRevocationStore {
         if (redisTemplate != null) {
             try {
                 redisTemplate.opsForValue().set(userRevokedKey(userId), String.valueOf(now), revokedTokenTtl);
-            } catch (Exception ex) {
-                org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
-                        .error("User revocation Redis write failed: {}", ex.getMessage());
+            } catch (Exception first) {
+                try {
+                    redisTemplate.opsForValue().set(userRevokedKey(userId), String.valueOf(now), revokedTokenTtl);
+                } catch (Exception ex) {
+                    org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
+                            .error("User revocation Redis write failed: {}", ex.getMessage());
+                    if (strictRevocation) {
+                        throw new RevocationUnavailableException("撤销存储不可用，用户级撤销可能未同步", ex);
+                    }
+                }
             }
         }
     }
@@ -130,7 +154,10 @@ public class TokenRevocationStore {
                 }
             } catch (Exception ex) {
                 org.slf4j.LoggerFactory.getLogger(TokenRevocationStore.class)
-                        .error("User revocation Redis check failed: {}", ex.getMessage());
+                        .warn("User revocation Redis check failed (strict={}): {}", strictRevocation, ex.getMessage());
+                if (strictRevocation) {
+                    throw new RevocationUnavailableException("撤销存储不可用", ex);
+                }
             }
         }
         return null;

@@ -62,8 +62,8 @@ CREATE TABLE IF NOT EXISTS category (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     is_deleted TINYINT DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES sys_user(id),
-    UNIQUE KEY uk_user_name (user_id, name, is_deleted)
+    FOREIGN KEY (user_id) REFERENCES sys_user(id)
+    -- 修复：移除 UNIQUE(user_id,name,is_deleted) 避免软删同名重复删冲突，见 mysql-schema.sql
 );
 
 CREATE TABLE IF NOT EXISTS note (

@@ -320,10 +320,11 @@ public class AskService {
             for (AskRecordEntity h : history) {
                 String q = safeDecrypt(h.getQuestion());
                 String a = safeDecrypt(h.getAnswer());
-                if (StringUtils.hasText(q)) {
+                // 解密失败的轮次直接跳过，避免 "[解密失败]" 占位污染 prompt 上下文
+                if (StringUtils.hasText(q) && !"[解密失败]".equals(q)) {
                     sb.append("用户：").append(truncateContext(q)).append("\n");
                 }
-                if (StringUtils.hasText(a)) {
+                if (StringUtils.hasText(a) && !"[解密失败]".equals(a)) {
                     sb.append("助手：").append(truncateContext(a)).append("\n");
                 }
             }
@@ -346,10 +347,12 @@ public class AskService {
     }
 
     private String safeDecrypt(String cipher) {
+        if (cipher == null) return null;
         try {
             return cryptoService.decrypt(cipher);
-        } catch (Exception e) {
-            return "";
+        } catch (Exception ex) {
+            log.warn("Ask record decrypt failed: {}", ex.getMessage());
+            return "[解密失败]";
         }
     }
 
@@ -380,8 +383,8 @@ public class AskService {
         AskRecord model = new AskRecord();
         model.setId(entity.getId());
         model.setUserId(entity.getUserId());
-        model.setQuestion(cryptoService.decrypt(entity.getQuestion()));
-        model.setAnswer(cryptoService.decrypt(entity.getAnswer()));
+        model.setQuestion(safeDecrypt(entity.getQuestion()));
+        model.setAnswer(safeDecrypt(entity.getAnswer()));
         model.setRelatedNotes(parseRelatedNotes(entity.getRelatedNotes()));
         model.setStatus(entity.getStatus());
         model.setConfidenceLevel(entity.getConfidenceLevel());

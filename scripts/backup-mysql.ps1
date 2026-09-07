@@ -30,15 +30,26 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $target = Join-Path $backupDir "$($Database)-$stamp.sql"
 
 Write-Host "==> 备份 $Database -> $target" -ForegroundColor Cyan
-docker exec $ContainerName sh -c "exec mysqldump -uroot -p'$password' --single-transaction --routines --triggers $Database" > $target
-if ($LASTEXITCODE -ne 0) {
-    Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
-    Write-Error "mysqldump 失败，请检查容器 $ContainerName 是否在运行"
+# 使用宿主 MYSQL_PWD 透传（docker exec -e MYSQL_PWD 无值即继承宿主环境），避免密码进入进程表及特殊字符拆分；
+# WinPS5.1 的 > 默认写 UTF-16LE 会破坏 dump，改用 utf8NoBOM
+$env:MYSQL_PWD = $password
+try {
+    docker exec -e MYSQL_PWD $ContainerName sh -c "exec mysqldump -uroot --single-transaction --routines --triggers $Database" | Out-File -FilePath $target -Encoding utf8NoBOM
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+        Write-Error "mysqldump 失败，请检查容器 $ContainerName 是否在运行"
+    }
+} finally {
+    Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue
 }
 
-# 压缩为 zip 并删除原始 sql
+# 压缩为 zip 并校验后删除原始 sql
 $zipTarget = "$target.zip"
 Compress-Archive -Path $target -DestinationPath $zipTarget -Force
+if (-not (Test-Path -LiteralPath $zipTarget) -or (Get-Item -LiteralPath $zipTarget).Length -eq 0) {
+    Write-Error "压缩失败，保留原始 sql: $target"
+    exit 1
+}
 Remove-Item -LiteralPath $target -Force
 $backupFile = Get-Item -LiteralPath $zipTarget
 Write-Host "==> 备份完成: $($backupFile.Name) ($([math]::Round($backupFile.Length / 1KB, 1)) KB)" -ForegroundColor Green

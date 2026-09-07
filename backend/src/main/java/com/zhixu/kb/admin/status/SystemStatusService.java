@@ -262,7 +262,7 @@ public class SystemStatusService {
         Map<String, Object> data = new ConcurrentHashMap<>();
         if (dockerClient == null) {
             data.put("available", false);
-            data.put("note", "Docker Socket 不可用（容器外本地运行或未挂载 /var/run/docker.sock）");
+            data.put("note", "Docker 容器采集未启用（backend 未挂载 docker.sock，属预期安全降级；主机/中间件探活不受影响。如需容器列表请部署 socket-proxy 白名单）");
             return data;
         }
         long now = System.currentTimeMillis();

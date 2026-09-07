@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS category (
     is_deleted TINYINT DEFAULT 0 COMMENT '是否删除(0否 1是)',
     FOREIGN KEY (user_id) REFERENCES sys_user(id),
     INDEX idx_user_id (user_id),
-    UNIQUE KEY uk_user_name (user_id, name, is_deleted)
+    INDEX idx_user_name (user_id, name)
+    -- 修复：移除 UNIQUE(user_id,name,is_deleted) 避免软删后同名重复删报 Duplicate entry；
+    -- 唯一性由应用层校验 is_deleted=0 时不重复（见 CategoryService），已删数据可同名复用
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='笔记分类表';
 
 CREATE TABLE IF NOT EXISTS note (

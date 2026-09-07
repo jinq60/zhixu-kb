@@ -7,13 +7,13 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -31,13 +31,15 @@ public class SmsCodeService {
     private static final Duration RESEND_INTERVAL = Duration.ofSeconds(60);
     private static final int CODE_LENGTH = 6;
     private static final int MAX_VERIFY_ATTEMPTS = 5;
-    private static final int MEMORY_CLEANUP_THRESHOLD = 1000;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final StringRedisTemplate redisTemplate;
-    private final Map<String, CodeEntry> memoryStore = new ConcurrentHashMap<>();
-    private final Map<String, Long> memorySendTime = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> verifyAttempts = new ConcurrentHashMap<>();
+    private final Cache<String, CodeEntry> memoryStore = Caffeine.newBuilder()
+            .expireAfterWrite(CODE_TTL).maximumSize(10_000).build();
+    private final Cache<String, Long> memorySendTime = Caffeine.newBuilder()
+            .expireAfterWrite(RESEND_INTERVAL).maximumSize(10_000).build();
+    private final Cache<String, AtomicInteger> verifyAttempts = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMinutes(10)).maximumSize(10_000).build();
 
     private static final class CodeEntry {
         private final String code;
@@ -60,7 +62,7 @@ public class SmsCodeService {
         checkResend(phone);
         String code = generateCode();
         // 新验证码发放即重置失败计数，避免旧码的错误尝试把新码也锁死
-        verifyAttempts.remove(phone);
+        verifyAttempts.invalidate(phone);
         store(phone, code);
         long now = System.currentTimeMillis();
         if (!redisSet(REDIS_SEND_PREFIX + phone, String.valueOf(now), RESEND_INTERVAL)) {
@@ -74,7 +76,7 @@ public class SmsCodeService {
         if (phone == null || code == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "手机号或验证码不能为空");
         }
-        AtomicInteger attempts = verifyAttempts.get(phone);
+        AtomicInteger attempts = verifyAttempts.getIfPresent(phone);
         if (attempts != null && attempts.get() >= MAX_VERIFY_ATTEMPTS) {
             remove(phone);
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误次数过多，请重新获取");
@@ -86,11 +88,11 @@ public class SmsCodeService {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码已过期，请重新获取");
         }
         if (!constantTimeEquals(stored, code)) {
-            // 仅在真实比对失败时才创建/递增计数条目
-            verifyAttempts.computeIfAbsent(phone, k -> new AtomicInteger(0)).incrementAndGet();
+            // 仅在真实比对失败时才创建/递增计数条目（原子加载，防并发丢增量）
+            verifyAttempts.get(phone, k -> new AtomicInteger(0)).incrementAndGet();
             throw new BusinessException(ResultCode.UNAUTHORIZED, "验证码错误");
         }
-        verifyAttempts.remove(phone);
+        verifyAttempts.invalidate(phone);
         remove(phone);
     }
 
@@ -108,7 +110,7 @@ public class SmsCodeService {
         if (Boolean.TRUE.equals(exists)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
         }
-        Long last = memorySendTime.get(phone);
+        Long last = memorySendTime.getIfPresent(phone);
         if (last != null && System.currentTimeMillis() - last < RESEND_INTERVAL.toMillis()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "发送过于频繁，请稍后再试");
         }
@@ -118,7 +120,6 @@ public class SmsCodeService {
         if (redisSet(REDIS_PREFIX + phone, code, CODE_TTL)) {
             return;
         }
-        cleanupIfNeeded();
         memoryStore.put(phone, new CodeEntry(code, System.currentTimeMillis() + CODE_TTL.toMillis()));
     }
 
@@ -129,12 +130,12 @@ public class SmsCodeService {
                 return value;
             }
         }
-        CodeEntry entry = memoryStore.get(phone);
+        CodeEntry entry = memoryStore.getIfPresent(phone);
         if (entry == null) {
             return null;
         }
         if (System.currentTimeMillis() > entry.expiresAt) {
-            memoryStore.remove(phone);
+            memoryStore.invalidate(phone);
             return null;
         }
         return entry.code;
@@ -147,7 +148,7 @@ public class SmsCodeService {
             } catch (Exception ignored) {
             }
         }
-        memoryStore.remove(phone);
+        memoryStore.invalidate(phone);
     }
 
     private boolean redisSet(String key, String value, Duration ttl) {
@@ -172,19 +173,6 @@ public class SmsCodeService {
         } catch (Exception e) {
             log.warn("Redis 读取失败，验证码降级为内存存储");
             return null;
-        }
-    }
-
-    private void cleanupIfNeeded() {
-        if (memoryStore.size() <= MEMORY_CLEANUP_THRESHOLD) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, CodeEntry>> it = memoryStore.entrySet().iterator();
-        while (it.hasNext()) {
-            if (now > it.next().getValue().expiresAt) {
-                it.remove();
-            }
         }
     }
 

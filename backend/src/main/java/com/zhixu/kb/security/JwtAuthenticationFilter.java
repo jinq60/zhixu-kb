@@ -30,7 +30,8 @@ import java.io.IOException;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private static final int MAX_QUERY_TOKEN_LENGTH = 4096;
+    private static final int MAX_QUERY_TOKEN_LENGTH = 2048;
+    private static final int MAX_HEADER_TOKEN_LENGTH = 8192;
 
     private final JwtUtils jwtUtils;
     private final TokenRevocationStore revocationStore;
@@ -42,7 +43,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
         String token = null;
         if (StringUtils.hasText(header) && header.startsWith("Bearer ")) {
-            token = header.substring(7);
+            token = header.substring(7).trim();
+            // 超大 header 直接丢弃，避免超大 token 打 JJWT 解析 CPU/内存
+            if (!StringUtils.hasText(token) || token.length() > MAX_HEADER_TOKEN_LENGTH
+                    || token.indexOf(' ') >= 0 || token.indexOf('\n') >= 0 || token.indexOf('\r') >= 0) {
+                token = null;
+            }
         }
 
         // Support token in query string ONLY for <img src="..."> resource loading:
@@ -94,6 +100,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }
+            } catch (RevocationUnavailableException ex) {
+                // 严格模式下撤销存储故障：返回 503 而非伪装 401，避免全员掉线
+                org.slf4j.LoggerFactory.getLogger(JwtAuthenticationFilter.class)
+                        .warn("Revocation store unavailable: {}", ex.getMessage());
+                response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"code\":503,\"message\":\"认证服务暂时不可用，请稍后重试\"}");
+                return;
             } catch (Exception ex) {
                 // Invalid token should not break the request pipeline; debug 级留痕便于排查（如用户服务瞬时故障）
                 if (!isExpectedJwtFailure(ex)) {

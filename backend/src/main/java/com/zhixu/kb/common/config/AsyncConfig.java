@@ -1,9 +1,12 @@
 package com.zhixu.kb.common.config;
 
+import com.zhixu.kb.common.utils.SecurityUtils;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskDecorator;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -15,6 +18,18 @@ import java.util.concurrent.ThreadPoolExecutor;
 @EnableAsync
 public class AsyncConfig {
 
+    private TaskDecorator clearingDecorator() {
+        return runnable -> () -> {
+            try {
+                SecurityUtils.clear();
+                runnable.run();
+            } finally {
+                SecurityUtils.clear();
+                SecurityContextHolder.clearContext();
+            }
+        };
+    }
+
     @Bean("aiTaskExecutor")
     public Executor aiTaskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -22,6 +37,7 @@ public class AsyncConfig {
         executor.setMaxPoolSize(8);
         executor.setQueueCapacity(200);
         executor.setThreadNamePrefix("ai-task-");
+        executor.setTaskDecorator(clearingDecorator());
         // 队列满时直接拒绝（AbortPolicy），由提交方捕获并提示“系统繁忙”：
         // 若用 CallerRunsPolicy，最坏 15 分钟的 AI 调用会在 HTTP 线程上同步执行，拖垮服务。
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
@@ -38,6 +54,7 @@ public class AsyncConfig {
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(50);
         executor.setThreadNamePrefix("graph-task-");
+        executor.setTaskDecorator(clearingDecorator());
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);

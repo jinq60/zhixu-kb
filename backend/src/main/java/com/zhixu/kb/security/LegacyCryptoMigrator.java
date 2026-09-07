@@ -1,5 +1,7 @@
 package com.zhixu.kb.security;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zhixu.kb.ai.entity.AiEndpointEntity;
 import com.zhixu.kb.ai.entity.AiUserConfigEntity;
 import com.zhixu.kb.ai.mapper.AiEndpointMapper;
@@ -60,66 +62,124 @@ public class LegacyCryptoMigrator implements ApplicationRunner {
             return;
         }
         SecretKeySpec legacyKey = buildKeySpec(LEGACY_AES_KEY);
-        int migrated = 0;
-        List<AskRecordEntity> records = askRecordMapper.selectList(null);
-        for (AskRecordEntity record : records) {
-            boolean changed = false;
-            if (hasText(record.getQuestion())) {
-                String legacyPlain = legacyDecrypt(record.getQuestion(), legacyKey);
-                if (legacyPlain != null) {
-                    record.setQuestion(cryptoService.encrypt(legacyPlain));
-                    changed = true;
-                }
-            }
-            if (hasText(record.getAnswer())) {
-                String legacyPlain = legacyDecrypt(record.getAnswer(), legacyKey);
-                if (legacyPlain != null) {
-                    record.setAnswer(cryptoService.encrypt(legacyPlain));
-                    changed = true;
-                }
-            }
-            if (changed) {
-                askRecordMapper.updateById(record);
-                migrated++;
-            }
-        }
+        int migrated = migrateAskRecords(legacyKey);
         log.info("LegacyCryptoMigrator: re-encrypted {} ask_records with new CRYPTO_AES_KEY", migrated);
         migrateUserApiKeys(legacyKey);
         migrateEndpointApiKeys(legacyKey);
     }
 
+    private int migrateAskRecords(SecretKeySpec legacyKey) {
+        int migrated = 0;
+        int failed = 0;
+        int page = 1;
+        int pageSize = 500;
+        while (true) {
+            Page<AskRecordEntity> p = new Page<>(page, pageSize);
+            QueryWrapper<AskRecordEntity> qw = new QueryWrapper<>();
+            qw.orderByAsc("id");
+            Page<AskRecordEntity> result = askRecordMapper.selectPage(p, qw);
+            List<AskRecordEntity> records = result.getRecords();
+            if (records.isEmpty()) break;
+            for (AskRecordEntity record : records) {
+                try {
+                    boolean changed = false;
+                    if (hasText(record.getQuestion())) {
+                        String legacyPlain = legacyDecrypt(record.getQuestion(), legacyKey);
+                        if (legacyPlain != null) {
+                            record.setQuestion(cryptoService.encrypt(legacyPlain));
+                            changed = true;
+                        }
+                    }
+                    if (hasText(record.getAnswer())) {
+                        String legacyPlain = legacyDecrypt(record.getAnswer(), legacyKey);
+                        if (legacyPlain != null) {
+                            record.setAnswer(cryptoService.encrypt(legacyPlain));
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        askRecordMapper.updateById(record);
+                        migrated++;
+                    }
+                } catch (Exception ex) {
+                    // 单行失败不中断整轮，避免一行坏数据拖垮启动
+                    failed++;
+                    log.warn("LegacyCryptoMigrator: skip ask_record id={}: {}", record.getId(), ex.getMessage());
+                }
+            }
+            if (records.size() < pageSize) break;
+            page++;
+        }
+        if (migrated == 0 && failed == 0) {
+            log.warn("LegacyCryptoMigrator: 0 ask_records migrated, verify key derivation with a production backup before assuming completion");
+        } else if (failed > 0) {
+            log.warn("LegacyCryptoMigrator: ask_records migrated={} failed={}", migrated, failed);
+        }
+        return migrated;
+    }
+
     private void migrateUserApiKeys(SecretKeySpec legacyKey) {
         int migrated = 0;
-        List<AiUserConfigEntity> entities = aiUserConfigMapper.selectList(null);
-        for (AiUserConfigEntity entity : entities) {
-            if (!hasText(entity.getApiKey())) {
-                continue;
+        int failed = 0;
+        int page = 1;
+        int pageSize = 500;
+        while (true) {
+            Page<AiUserConfigEntity> p = new Page<>(page, pageSize);
+            QueryWrapper<AiUserConfigEntity> qw = new QueryWrapper<>();
+            qw.orderByAsc("id");
+            Page<AiUserConfigEntity> result = aiUserConfigMapper.selectPage(p, qw);
+            List<AiUserConfigEntity> entities = result.getRecords();
+            if (entities.isEmpty()) break;
+            for (AiUserConfigEntity entity : entities) {
+                try {
+                    if (!hasText(entity.getApiKey())) continue;
+                    String legacyPlain = legacyDecrypt(entity.getApiKey(), legacyKey);
+                    if (legacyPlain != null) {
+                        entity.setApiKey(cryptoService.encrypt(legacyPlain));
+                        aiUserConfigMapper.updateById(entity);
+                        migrated++;
+                    }
+                } catch (Exception ex) {
+                    failed++;
+                    log.warn("LegacyCryptoMigrator: skip ai_user_config id={}: {}", entity.getId(), ex.getMessage());
+                }
             }
-            String legacyPlain = legacyDecrypt(entity.getApiKey(), legacyKey);
-            if (legacyPlain != null) {
-                entity.setApiKey(cryptoService.encrypt(legacyPlain));
-                aiUserConfigMapper.updateById(entity);
-                migrated++;
-            }
+            if (entities.size() < pageSize) break;
+            page++;
         }
-        log.info("LegacyCryptoMigrator: re-encrypted {} ai_user_config api keys", migrated);
+        log.info("LegacyCryptoMigrator: re-encrypted {} ai_user_config api keys (failed={})", migrated, failed);
     }
 
     private void migrateEndpointApiKeys(SecretKeySpec legacyKey) {
         int migrated = 0;
-        List<AiEndpointEntity> entities = aiEndpointMapper.selectList(null);
-        for (AiEndpointEntity entity : entities) {
-            if (!hasText(entity.getApiKey())) {
-                continue;
+        int failed = 0;
+        int page = 1;
+        int pageSize = 500;
+        while (true) {
+            Page<AiEndpointEntity> p = new Page<>(page, pageSize);
+            QueryWrapper<AiEndpointEntity> qw = new QueryWrapper<>();
+            qw.orderByAsc("id");
+            Page<AiEndpointEntity> result = aiEndpointMapper.selectPage(p, qw);
+            List<AiEndpointEntity> entities = result.getRecords();
+            if (entities.isEmpty()) break;
+            for (AiEndpointEntity entity : entities) {
+                try {
+                    if (!hasText(entity.getApiKey())) continue;
+                    String legacyPlain = legacyDecrypt(entity.getApiKey(), legacyKey);
+                    if (legacyPlain != null) {
+                        entity.setApiKey(cryptoService.encrypt(legacyPlain));
+                        aiEndpointMapper.updateById(entity);
+                        migrated++;
+                    }
+                } catch (Exception ex) {
+                    failed++;
+                    log.warn("LegacyCryptoMigrator: skip ai_endpoints id={}: {}", entity.getId(), ex.getMessage());
+                }
             }
-            String legacyPlain = legacyDecrypt(entity.getApiKey(), legacyKey);
-            if (legacyPlain != null) {
-                entity.setApiKey(cryptoService.encrypt(legacyPlain));
-                aiEndpointMapper.updateById(entity);
-                migrated++;
-            }
+            if (entities.size() < pageSize) break;
+            page++;
         }
-        log.info("LegacyCryptoMigrator: re-encrypted {} ai_endpoints api keys", migrated);
+        log.info("LegacyCryptoMigrator: re-encrypted {} ai_endpoints api keys (failed={})", migrated, failed);
     }
 
     private boolean hasText(String value) {

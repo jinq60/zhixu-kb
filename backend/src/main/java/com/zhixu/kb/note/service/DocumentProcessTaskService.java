@@ -87,13 +87,10 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
     private final ExecutorService advanceExecutor = Executors.newFixedThreadPool(4);
 
     /** 按 taskId 细粒度锁，避免 advance 全局串行。
-     *  使用带过期回收的 Caffeine 缓存（30 分钟无访问过期 + 容量上限）：
-     *  纯 ConcurrentHashMap 只增不减，任务数增长会慢性泄漏；
-     *  活跃任务每轮定时扫描都会触碰（刷新访问时间），不会被误回收。 */
-    private final Cache<Long, Lock> taskLocks = Caffeine.newBuilder()
-            .expireAfterAccess(Duration.ofMinutes(30))
-            .maximumSize(10_000)
-            .build();
+     *  修复前使用 Caffeine expireAfterAccess(30m)，持锁期间若无访问条目被驱逐，
+     *  另一线程会新建 ReentrantLock 导致同 taskId 并发进入，已改为永驻 ConcurrentHashMap
+     *  （任务量有限，10k 条目内存可控；如需防泄漏可定时清理已完成超 1h 的 key）。 */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Lock> taskLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * 创建上传任务（PENDING，解析在任务内异步执行）。上传接口不阻塞。
@@ -264,7 +261,7 @@ public class DocumentProcessTaskService implements org.springframework.beans.fac
                 || "COMPLETED".equals(task.getStatus()) || "FAILED".equals(task.getStatus())) {
             return;
         }
-        Lock lock = taskLocks.asMap().computeIfAbsent(task.getId(), k -> new ReentrantLock());
+        Lock lock = taskLocks.computeIfAbsent(task.getId(), k -> new ReentrantLock());
         if (!lock.tryLock()) {
             // 已有其他线程在推进本任务，本次直接跳过
             return;

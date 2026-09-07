@@ -11,9 +11,13 @@ import org.springframework.web.client.RestTemplate;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * 桌面版激活服务：与官网完成「浏览器验证」握手，
@@ -34,22 +38,31 @@ public class DesktopActivationService {
     private final String portalUrl;
     private final String portalApiBase;
     private final long offlineGraceMs;
+    private final String hmacKey;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestTemplate restTemplate = createRestTemplate();
 
     /** 一次验证会话的防伪造状态（浏览器回跳时必须一致） */
     private volatile String pendingState;
+    private volatile long pendingStateAt;
 
     public DesktopActivationService(
             @Value("${app.data-dir}") String dataDir,
             @Value("${app.desktop.portal-url:http://localhost:5173}") String portalUrl,
             @Value("${app.desktop.portal-api-base:http://localhost:5173}") String portalApiBase,
-            @Value("${app.desktop.offline-grace-days:7}") long offlineGraceDays) {
+            @Value("${app.desktop.offline-grace-days:7}") long offlineGraceDays,
+            @Value("${JWT_SECRET:}") String jwtSecret,
+            @Value("${CRYPTO_AES_KEY:}") String aesKey) {
         this.dataDir = dataDir;
         this.portalUrl = portalUrl;
         this.portalApiBase = portalApiBase;
         this.offlineGraceMs = offlineGraceDays > 0
                 ? offlineGraceDays * 24 * 3600 * 1000L : OFFLINE_GRACE_MS_DEFAULT;
+        // 离线宽限文件 HMAC 密钥：与 JWT 签名密钥做域分离派生（一钥一用），避免弱 secret 连带 JWT 被破；
+        // 无可用密钥时回退到 dataDir 派生（仍比明文强，但需尽快配置 JWT_SECRET）
+        String raw = (jwtSecret != null && jwtSecret.length() >= 16) ? jwtSecret
+                : (aesKey != null && aesKey.length() >= 16 ? aesKey : dataDir);
+        this.hmacKey = sha256Hex("zhixu-desktop-file-hmac-v1|" + raw);
     }
 
     // ---------------- 状态 ----------------
@@ -65,7 +78,8 @@ public class DesktopActivationService {
             return state;
         }
         try {
-            JsonNode node = objectMapper.readTree(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            JsonNode node = objectMapper.readTree(content);
             if (node.hasNonNull("deviceToken")) {
                 state.put("deviceToken", node.get("deviceToken").asText());
             }
@@ -74,6 +88,21 @@ public class DesktopActivationService {
             }
             if (node.hasNonNull("validatedAt")) {
                 state.put("validatedAt", node.get("validatedAt").asLong());
+            }
+            // 校验 HMAC 防篡改：sig 必须存在且校验通过，否则视为未激活（防删 sig 字段绕过）
+            if (!node.hasNonNull("sig")) {
+                log.warn("Device token file missing sig - treating as not activated, please re-verify");
+                return new HashMap<>();
+            }
+            String sig = node.get("sig").asText();
+            String deviceToken = (String) state.get("deviceToken");
+            String deviceId = (String) state.get("deviceId");
+            long validatedAt = state.get("validatedAt") == null ? 0L : (long) state.get("validatedAt");
+            String expected = computeHmac(deviceToken, deviceId, validatedAt);
+            if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8),
+                    sig.getBytes(StandardCharsets.UTF_8))) {
+                log.warn("Device token HMAC mismatch - file may be tampered, treating as not activated");
+                return new HashMap<>();
             }
         } catch (Exception ex) {
             log.warn("Read device token failed: {}", ex.getMessage());
@@ -85,13 +114,43 @@ public class DesktopActivationService {
         try {
             File file = tokenFile();
             file.getParentFile().mkdirs();
+            long now = System.currentTimeMillis();
+            String sig = computeHmac(deviceToken, deviceId, now);
             Map<String, Object> json = new HashMap<>();
             json.put("deviceToken", deviceToken);
             json.put("deviceId", deviceId);
-            json.put("validatedAt", System.currentTimeMillis());
+            json.put("validatedAt", now);
+            json.put("sig", sig);
             Files.writeString(file.toPath(), objectMapper.writeValueAsString(json), StandardCharsets.UTF_8);
         } catch (Exception ex) {
             throw new IllegalStateException("保存设备凭证失败: " + ex.getMessage(), ex);
+        }
+    }
+
+    private static String sha256Hex(String input) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 algorithm not available", ex);
+        }
+    }
+
+    private String computeHmac(String deviceToken, String deviceId, long validatedAt) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            SecretKeySpec keySpec = new SecretKeySpec(hmacKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            mac.init(keySpec);
+            String payload = (deviceToken == null ? "" : deviceToken) + "|" + (deviceId == null ? "" : deviceId) + "|" + validatedAt;
+            byte[] h = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(h);
+        } catch (Exception ex) {
+            throw new IllegalStateException("HMAC compute failed", ex);
         }
     }
 
@@ -117,7 +176,8 @@ public class DesktopActivationService {
 
     /** 发起验证：生成一次性 state 并唤起系统浏览器打开官网验证页 */
     public String startVerify() {
-        pendingState = randomHex(24);
+        pendingState = randomHex(32);
+        pendingStateAt = System.currentTimeMillis();
         String callback = "http://127.0.0.1:" + getLocalPort() + "/desktop/callback";
         String url = portalUrl + "/verify?state=" + pendingState + "&callback=" + callback;
         try {
@@ -136,9 +196,15 @@ public class DesktopActivationService {
     /** 官网验证完成后的本地回跳处理 */
     public synchronized Map<String, Object> handleCallback(String bindCode, String state) {
         Map<String, Object> result = new HashMap<>();
-        if (pendingState == null || state == null || !pendingState.equals(state)) {
+        // state 5 分钟过期防重放
+        if (pendingState == null || state == null || !pendingState.equals(state)
+                || System.currentTimeMillis() - pendingStateAt > 5 * 60 * 1000L) {
             result.put("ok", false);
             result.put("message", "state 校验失败（会话不匹配或已过期），请重新发起验证");
+            // 过期后清理，防止无限重试
+            if (System.currentTimeMillis() - pendingStateAt > 5 * 60 * 1000L) {
+                pendingState = null;
+            }
             return result;
         }
         if (bindCode == null || bindCode.isBlank()) {

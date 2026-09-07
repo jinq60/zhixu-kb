@@ -55,6 +55,8 @@ public class AppProperties {
      * 公网直连后端端口时 XFF 一律不信任，防止伪造绕过限流。
      */
     public static class ClientIp {
+        // 默认信任本机回环 + Docker/私网（便于 docker-compose 下取到真实客户端 IP）；
+        // 公网部署时请显式覆盖为仅 LB/可信代理网段（如 127.0.0.1 + LB_IP/32），避免内部网络伪造 XFF
         private List<String> trustedProxies = new ArrayList<>(Arrays.asList(
                 "127.0.0.1", "::1",
                 "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",

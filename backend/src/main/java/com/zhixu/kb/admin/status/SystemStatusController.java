@@ -40,7 +40,13 @@ public class SystemStatusController {
         if (name == null || !name.matches("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")) {
             return Result.error(400, "非法容器名");
         }
-        String logs = systemStatusService.containerLogs(name, tail == null ? 300 : tail);
+        String logs;
+        try {
+            logs = systemStatusService.containerLogs(name, tail == null ? 300 : tail);
+        } catch (IllegalStateException ex) {
+            // 未挂载 docker.sock 的预期安全降级，转 503 并给出引导，而非 500
+            return Result.error(503, "容器日志未启用（backend 未挂载 docker.sock，属预期安全降级；主机/中间件探活不受影响）");
+        }
         Map<String, Object> data = new HashMap<>();
         data.put("container", name);
         data.put("logs", logs);

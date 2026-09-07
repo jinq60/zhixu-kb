@@ -69,6 +69,9 @@ public class FileService {
     private final FileInfoMapper fileInfoMapper;
     private final NoteMapper noteMapper;
     private final DocumentNormalizeService documentNormalizeService;
+    /** 分片合并锁：按 userId:identifier 隔离，避免 String.intern 全局污染与跨用户争用 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object> MERGE_LOCKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
     /** Xberg 专用短超时客户端，避免解析服务挂起时拖住上传请求线程 */
     private static final RestTemplate XBERG_REST_TEMPLATE = buildXbergRestTemplate();
 
@@ -530,16 +533,20 @@ public class FileService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "分片总数不合法");
         }
         Path chunkDir = chunkTempDir(userId, identifier);
-        Path merged = chunkDir.resolve("merged.bin");
-        try {
-            long totalSize = 0L;
-            for (int i = 0; i < totalChunks; i++) {
-                Path part = chunkDir.resolve("part-" + i);
-                if (!Files.exists(part)) {
-                    throw new BusinessException(ResultCode.BAD_REQUEST, "分片不完整，缺少 part-" + i + "，请重传");
+        // 同 userId:identifier 合并加锁 + 校验常规文件防 symlink，临时文件用随机名避免并发覆盖
+        String lockKey = userId + ":" + identifier;
+        Object mergeLock = MERGE_LOCKS.computeIfAbsent(lockKey, k -> new Object());
+        synchronized (mergeLock) {
+            Path merged = chunkDir.resolve("merged-" + java.util.UUID.randomUUID() + ".bin");
+            try {
+                long totalSize = 0L;
+                for (int i = 0; i < totalChunks; i++) {
+                    Path part = chunkDir.resolve("part-" + i);
+                    if (!Files.exists(part) || !Files.isRegularFile(part, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        throw new BusinessException(ResultCode.BAD_REQUEST, "分片不完整，缺少 part-" + i + "，请重传");
+                    }
+                    totalSize += Files.size(part);
                 }
-                totalSize += Files.size(part);
-            }
             // 合并前先做总大小校验，避免把超限内容整块读入内存
             if (storageProperties.getMaxSize() != null && totalSize > storageProperties.getMaxSize()) {
                 deleteChunkTempDir(chunkDir);
@@ -548,24 +555,35 @@ public class FileService {
             Files.deleteIfExists(merged);
             try (OutputStream out = Files.newOutputStream(merged)) {
                 for (int i = 0; i < totalChunks; i++) {
-                    Files.copy(chunkDir.resolve("part-" + i), out);
+                    // 打开时即 NOFOLLOW，避免校验与使用之间的 symlink 替换窗口
+                    try (InputStream in = Files.newInputStream(chunkDir.resolve("part-" + i),
+                            java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) != -1) {
+                            out.write(buf, 0, n);
+                        }
+                    }
                 }
             }
             // 使用基于磁盘路径的 MultipartFile，避免合并后再整块读入内存
             String safeName = StringUtils.hasText(fileName) ? fileName : "upload.bin";
             MultipartFile multipartFile = new PathMultipartFile(merged, safeName,
                     mimeForImage(getExtension(safeName)), totalSize);
-            try {
-                return storeWithText(multipartFile, noteId, normalize);
+                try {
+                    return storeWithText(multipartFile, noteId, normalize);
+                } finally {
+                    // 常规存储/解析完成后清理临时分片目录
+                    deleteChunkTempDir(chunkDir);
+                }
+            } catch (BusinessException e) {
+                throw e;
+            } catch (IOException e) {
+                log.error("Merge chunks failed: identifier={}", identifier, e);
+                throw new BusinessException(ResultCode.SERVER_ERROR, "分片合并失败");
             } finally {
-                // 常规存储/解析完成后清理临时分片目录
-                deleteChunkTempDir(chunkDir);
+                MERGE_LOCKS.remove(lockKey, mergeLock);
             }
-        } catch (BusinessException e) {
-            throw e;
-        } catch (IOException e) {
-            log.error("Merge chunks failed: identifier={}", identifier, e);
-            throw new BusinessException(ResultCode.SERVER_ERROR, "分片合并失败");
         }
     }
 

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.servlet.http.HttpServletRequest;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -49,9 +50,17 @@ public class DesktopAuthController {
         }, "desktop-validate-online").start();
     }
 
-    /** 为本地单用户签发会话 token（公开端点；该端点仅存在于桌面版 jar 中，且需已完成激活） */
+    /** 为本地单用户签发会话 token（公开端点；该端点仅存在于桌面版 jar 中，且需已完成激活，限本机回环） */
     @PostMapping("/api/auth/desktop-token")
-    public Result<Map<String, Object>> desktopToken() {
+    public Result<Map<String, Object>> desktopToken(HttpServletRequest request) {
+        // 直接校验回环地址（覆盖 127/8、::1、::ffff:127.0.0.1 等全部写法），不读 XFF 防伪造
+        try {
+            if (!java.net.InetAddress.getByName(request.getRemoteAddr()).isLoopbackAddress()) {
+                return com.zhixu.kb.common.result.Result.error(403, "仅本机可访问");
+            }
+        } catch (Exception ex) {
+            return com.zhixu.kb.common.result.Result.error(403, "仅本机可访问");
+        }
         if (!activationService.isActivated()) {
             return com.zhixu.kb.common.result.Result.error(403, "桌面版尚未完成验证");
         }

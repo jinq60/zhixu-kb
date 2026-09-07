@@ -39,7 +39,10 @@ export const useAuthStore = defineStore('auth', {
     appMode: 'server',
     appActivated: true
   }),
+  // sessionStorage：关闭标签即清除，减少 token 在磁盘驻留时间；同源 XSS 同样可读，真防需 httpOnly Cookie
   persist: {
+    key: 'zhixu_auth',
+    storage: typeof window !== 'undefined' ? window.sessionStorage : undefined,
     paths: ['token', 'user']
   },
   getters: {
@@ -55,6 +58,11 @@ export const useAuthStore = defineStore('auth', {
      * 服务器版无任何副作用。
      */
     async initDesktopSession(): Promise<void> {
+      // 清理老版本 localStorage 残留 token（曾用默认 key 明文落盘），避免升级后旧 token 仍可被 XSS 读取
+      try {
+        localStorage.removeItem('auth')
+        localStorage.removeItem('zhixu_auth')
+      } catch { /* 忽略隐私模式异常 */ }
       // 桌面版已有会话则跳过；否则（含首次激活完成后）探测并建立会话
       if (this.appMode === 'desktop' && this.token) return
       try {
