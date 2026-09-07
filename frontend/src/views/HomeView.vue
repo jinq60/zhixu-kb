@@ -279,8 +279,12 @@ const vReveal = {
     <!-- Hero -->
     <section class="hero">
       <div class="hero-inner">
+        <div class="hero-rail" aria-hidden="true">采集 · 识别 · 整理 · 图谱 · 问答 — KNOWLEDGE LIFECYCLE</div>
         <div class="hero-content">
-          <div class="hero-eyebrow">ZHI XU · KNOWLEDGE OS</div>
+          <div class="hero-eyebrow-row">
+            <span class="seal" aria-hidden="true">知序</span>
+            <span class="hero-eyebrow">ZHI XU · KNOWLEDGE OS</span>
+          </div>
           <h1>让知识<span class="h1-accent">创造价值</span></h1>
           <p class="hero-desc">
             知序专注于知识管理与 AI 赋能，提供从个人笔记整理到企业知识中枢的完整产品矩阵。
@@ -405,6 +409,18 @@ const vReveal = {
         </div>
       </div>
     </section>
+
+    <!-- 跑马灯：知识生命周期的节奏带 -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track">
+        <span v-for="n in 2" :key="n" class="marquee-chunk">
+          <span v-for="s in pipeline" :key="s.label + n" class="marquee-item">
+            {{ s.label }}<i>◆</i><em>{{ s.en }}</em>
+          </span>
+          <span class="marquee-item"><em>ZHI XU KNOWLEDGE OS</em><i>◆</i></span>
+        </span>
+      </div>
+    </div>
 
     <!-- 知识流水线：内容本身就是顺序 -->
     <section class="pipeline">
@@ -640,6 +656,7 @@ const vReveal = {
 
     <!-- Footer -->
     <footer id="contact" class="landing-footer">
+      <div class="footer-wordmark" aria-hidden="true">知序</div>
       <div class="footer-inner">
         <div class="footer-brand">
           <div class="brand-logo">知序</div>
@@ -712,6 +729,11 @@ const vReveal = {
   border-radius: 8px;
 }
 
+.landing-page ::selection {
+  background: var(--zx-brand);
+  color: #fff;
+}
+
 /* ---------- 纸纹颗粒：全站 4% 透明度的胶片颗粒，去扁平 AI 感 ---------- */
 .grain-overlay {
   position: fixed;
@@ -747,10 +769,10 @@ section {
 }
 
 .section-head h2 {
-  font-family: var(--zx-display);
-  font-size: 36px;
-  font-weight: 800;
-  letter-spacing: 1px;
+  font-family: var(--zx-serif);
+  font-size: 38px;
+  font-weight: 900;
+  letter-spacing: 3px;
   color: var(--zx-ink);
   margin-bottom: 12px;
 }
@@ -798,11 +820,12 @@ section {
 /* ---------- Hero ---------- */
 .hero {
   position: relative;
-  padding: 72px 48px 64px;
+  padding: 84px 48px 72px;
   overflow: hidden;
   background:
-    radial-gradient(720px 420px at 88% -8%, rgba(242, 100, 30, 0.1), transparent 65%),
-    radial-gradient(560px 380px at 4% 12%, rgba(122, 90, 248, 0.08), transparent 60%),
+    radial-gradient(880px 480px at 90% -10%, rgba(242, 100, 30, 0.14), transparent 62%),
+    radial-gradient(640px 420px at 2% 16%, rgba(122, 90, 248, 0.1), transparent 60%),
+    radial-gradient(500px 360px at 55% 110%, rgba(12, 167, 137, 0.08), transparent 60%),
     var(--zx-paper);
 }
 
@@ -815,9 +838,35 @@ section {
   gap: 56px;
 }
 
+/* 竖排饰栏：中文编辑感，纯装饰，移动端隐藏 */
+.hero-rail {
+  position: absolute;
+  left: -56px;
+  top: 8px;
+  writing-mode: vertical-rl;
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  letter-spacing: 6px;
+  color: #c9bfae;
+  user-select: none;
+}
+
+@media (max-width: 1320px) {
+  .hero-rail {
+    display: none;
+  }
+}
+
 .hero-content {
   flex: 1;
   max-width: 540px;
+}
+
+.hero-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 22px;
 }
 
 .hero-eyebrow {
@@ -826,17 +875,34 @@ section {
   font-weight: 700;
   letter-spacing: 3px;
   color: var(--zx-brand-ink);
-  margin-bottom: 20px;
+}
+
+/* 印章：品牌钤印，刻意做不规则圆角 + 微转，像盖上去的 */
+.seal {
+  font-family: var(--zx-serif);
+  font-weight: 900;
+  font-size: 15px;
+  line-height: 1;
+  color: #fff;
+  background: linear-gradient(145deg, #f2671f 0%, #d94f0e 100%);
+  border-radius: 7px 10px 8px 11px;
+  padding: 8px 9px 9px 10px;
+  transform: rotate(-4deg);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.55),
+    0 8px 18px var(--zx-brand-ring);
+  letter-spacing: 2px;
+  user-select: none;
 }
 
 .hero h1 {
-  font-family: var(--zx-display);
-  font-size: 58px;
-  font-weight: 800;
-  line-height: 1.12;
-  letter-spacing: 1px;
+  font-family: var(--zx-serif);
+  font-size: clamp(54px, 7.2vw, 102px);
+  font-weight: 900;
+  line-height: 1.14;
+  letter-spacing: 2px;
   color: var(--zx-ink);
-  margin-bottom: 22px;
+  margin-bottom: 24px;
 }
 
 .h1-accent {
@@ -1260,6 +1326,62 @@ section {
   font-size: 10px;
   letter-spacing: 2px;
   color: #a8a29e;
+}
+
+/* ---------- 跑马灯 ---------- */
+.marquee {
+  overflow: hidden;
+  background: var(--zx-ink);
+  border-top: 1px solid #2a364f;
+  border-bottom: 1px solid #2a364f;
+  padding: 13px 0;
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 26s linear infinite;
+}
+
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+.marquee-chunk {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.marquee-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 26px;
+  font-family: var(--zx-serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 4px;
+  color: #e6e1d5;
+  white-space: nowrap;
+}
+
+.marquee-item i {
+  font-style: normal;
+  font-size: 9px;
+  color: var(--zx-brand);
+}
+
+.marquee-item em {
+  font-family: var(--zx-mono);
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  color: #7c8aa5;
+}
+
+@keyframes marquee {
+  to { transform: translateX(-50%); }
 }
 
 /* ---------- 流水线 ---------- */
@@ -1868,10 +1990,10 @@ section {
 }
 
 .about-text h2 {
-  font-family: var(--zx-display);
+  font-family: var(--zx-serif);
   font-size: 34px;
-  font-weight: 800;
-  letter-spacing: 1px;
+  font-weight: 900;
+  letter-spacing: 3px;
   color: var(--zx-ink);
   margin-bottom: 20px;
 }
@@ -2045,10 +2167,10 @@ section {
 }
 
 .cta h2 {
-  font-family: var(--zx-display);
-  font-size: 38px;
-  font-weight: 800;
-  letter-spacing: 1px;
+  font-family: var(--zx-serif);
+  font-size: 40px;
+  font-weight: 900;
+  letter-spacing: 4px;
   color: #fff;
   margin-bottom: 12px;
 }
@@ -2101,9 +2223,24 @@ section {
 
 /* ---------- Footer ---------- */
 .landing-footer {
+  position: relative;
   background: #0c1222;
   color: #d1d5db;
-  padding: 64px 48px 24px;
+  padding: 40px 48px 24px;
+  overflow: hidden;
+}
+
+.footer-wordmark {
+  font-family: var(--zx-serif);
+  font-weight: 900;
+  font-size: clamp(120px, 22vw, 300px);
+  line-height: 0.9;
+  text-align: center;
+  letter-spacing: 0.1em;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.09);
+  user-select: none;
+  margin-bottom: 8px;
 }
 
 .footer-inner {
@@ -2223,8 +2360,13 @@ section {
   .scanline,
   .mock-arrows span,
   .pipeline-link,
-  .stage-progress span {
+  .stage-progress span,
+  .marquee-track {
     animation: none;
+  }
+
+  .marquee {
+    display: none;
   }
 
   .stage-progress {

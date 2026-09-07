@@ -114,6 +114,9 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
   --zx-night: #111a2e;
   --zx-display:
     'Baloo 2', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  /* 中文展示衬线：只给大标题与引言，克制使用 */
+  --zx-serif:
+    'Noto Serif SC', 'Songti SC', 'SimSun', serif;
   --zx-mono:
     ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
   /* Element Plus 主色同步（控制台协调换肤的关键一行） */
