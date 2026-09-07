@@ -53,6 +53,7 @@ const products = [
   {
     name: '知序智能知识库',
     en: 'KNOWLEDGE BASE',
+    img: '/img/kb-notes.jpg',
     desc: 'OCR 识别、AI 整理、知识图谱、RAG 问答一站式个人知识管理平台。',
     icon: Notebook,
     color: '#f2641e',
@@ -67,6 +68,7 @@ const products = [
   {
     name: '知序 AI 工作台',
     en: 'TEAM SPACE',
+    img: '/img/team-work.jpg',
     desc: '面向团队的多人协作知识空间，权限管理、版本控制、AI 助手全集成。',
     icon: Monitor,
     color: '#7a5af8',
@@ -81,6 +83,7 @@ const products = [
   {
     name: '知序 OCR 工具箱',
     en: 'OCR TOOLKIT',
+    img: '/img/ocr-manuscript.jpg',
     desc: '本地离线 OCR 识别套件，支持批量图片、PDF 与截图文字提取。',
     icon: SetUp,
     color: '#0ca789',
@@ -95,6 +98,7 @@ const products = [
   {
     name: '知序数据同步助手',
     en: 'SYNC HELPER',
+    img: '/img/sync-desk.jpg',
     desc: '多端知识库同步工具，本地文件、云端与 NAS 一键同步备份。',
     icon: DataLine,
     color: '#d9930d',
@@ -223,7 +227,26 @@ const stopTabTimer = () => {
   }
 }
 
-onMounted(startTabTimer)
+/* ---------- 产品卡聚光灯：跟随鼠标的径向高光，减弱动效时不启用 ---------- */
+const setupSpotlight = () => {
+  if (reduceMotion) return
+  const grid = document.querySelector('.product-grid')
+  if (!grid) return
+  grid.addEventListener('mousemove', (e: Event) => {
+    const me = e as MouseEvent;
+    const cards = grid.querySelectorAll<HTMLElement>('.product-card')
+    cards.forEach((card) => {
+      const rect = card.getBoundingClientRect()
+      card.style.setProperty('--mx', `${me.clientX - rect.left}px`)
+      card.style.setProperty('--my', `${me.clientY - rect.top}px`)
+    })
+  })
+}
+
+onMounted(() => {
+  startTabTimer()
+  setupSpotlight()
+})
 onBeforeUnmount(stopTabTimer)
 
 /* ---------- 滚动显现：一次性，减弱动效时直接呈现 ---------- */
@@ -252,6 +275,7 @@ const vReveal = {
 
 <template>
   <div class="landing-page">
+    <div class="grain-overlay" aria-hidden="true" />
     <!-- Hero -->
     <section class="hero">
       <div class="hero-inner">
@@ -356,6 +380,10 @@ const vReveal = {
               </div>
             </div>
 
+            <div class="stage-progress" aria-hidden="true">
+              <span :key="activeTab" />
+            </div>
+
             <ul class="stage-points">
               <li v-for="pt in products[activeTab].points" :key="pt">
                 <el-icon><Check /></el-icon>{{ pt }}
@@ -420,6 +448,10 @@ const vReveal = {
           :class="['product-card', { primary: p.primary, coming: p.coming }]"
           :style="{ '--p': p.color, '--ps': p.soft }"
         >
+          <div class="product-photo">
+            <img :src="p.img" :alt="p.name" loading="lazy" />
+            <span class="product-photo-tag">{{ p.tags[0] }}</span>
+          </div>
           <div class="product-icon">
             <el-icon><component :is="p.icon" /></el-icon>
           </div>
@@ -538,33 +570,30 @@ const vReveal = {
       </div>
     </section>
 
-    <!-- About -->
+    <!-- About：编辑风大照片 + 玻璃数据片 + 衬线引言 -->
     <section id="about" class="about">
       <div class="about-inner" v-reveal>
+        <div class="about-photo">
+          <img src="/img/library-hall.jpg" alt="图书馆藏书" loading="lazy" />
+          <div class="glass-chip chip-a">
+            <strong>2000+</strong><span>论文资料结构化</span>
+          </div>
+          <div class="glass-chip chip-b">
+            <strong>50万+</strong><span>公开分享阅读</span>
+          </div>
+        </div>
         <div class="about-text">
           <span class="section-eyebrow">ABOUT · 关于知序</span>
           <h2>专注于知识管理的长期价值</h2>
+          <p class="serif-quote">“知识的沉淀，比信息的堆砌更有价值。”</p>
           <p>
             知序（ZhiXu Tech）致力于用 AI 与图谱技术，帮助个人和组织把零散信息转化为结构化、可复用的知识资产。
-            我们相信，知识的沉淀比信息的堆砌更有价值。
-          </p>
-          <p>
             从 OCR 识别到 AI 整理，从个人知识库到企业知识中枢，知序的产品矩阵覆盖知识获取、整理、应用与传承的全生命周期。
           </p>
           <div class="about-values">
             <div><strong>本地优先</strong><span>数据自主可控</span></div>
             <div><strong>开放集成</strong><span>API 与插件扩展</span></div>
             <div><strong>持续进化</strong><span>紧跟大模型能力</span></div>
-          </div>
-        </div>
-        <div class="about-visual">
-          <div class="about-card">
-            <div class="about-card-title">使命 · MISSION</div>
-            <p>让每个人都能拥有属于自己的智能知识库。</p>
-          </div>
-          <div class="about-card">
-            <div class="about-card-title">愿景 · VISION</div>
-            <p>成为个人与组织最信赖的知识管理基础设施。</p>
           </div>
         </div>
       </div>
@@ -681,6 +710,16 @@ const vReveal = {
   outline: 2px solid var(--zx-brand);
   outline-offset: 2px;
   border-radius: 8px;
+}
+
+/* ---------- 纸纹颗粒：全站 4% 透明度的胶片颗粒，去扁平 AI 感 ---------- */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
 }
 
 section {
@@ -1181,6 +1220,29 @@ section {
   flex-shrink: 0;
 }
 
+.stage-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: #f3ece0;
+  margin: 0 22px 16px;
+  overflow: hidden;
+}
+
+.stage-progress span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: var(--p);
+  transform-origin: left;
+  animation: stagefill 5.5s linear forwards;
+}
+
+@keyframes stagefill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
 .stage-foot {
   display: flex;
   align-items: center;
@@ -1355,9 +1417,73 @@ section {
     box-shadow 0.22s ease;
 }
 
+.product-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.product-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  background: radial-gradient(
+    320px circle at var(--mx, 50%) var(--my, 50%),
+    rgba(242, 100, 30, 0.1),
+    transparent 65%
+  );
+}
+
+.product-card:hover::after {
+  opacity: 1;
+}
+
 .product-card:hover {
   transform: translateY(-5px);
   box-shadow: 0 20px 44px rgba(23, 32, 47, 0.1);
+}
+
+.product-photo {
+  position: relative;
+  margin: -30px -28px 18px;
+  height: 150px;
+  overflow: hidden;
+}
+
+.product-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transform: scale(1.02);
+  transition: transform 0.4s ease;
+}
+
+.product-card:hover .product-photo img {
+  transform: scale(1.08);
+}
+
+.product-photo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 55%, rgba(255, 255, 255, 0.9));
+}
+
+.product-photo-tag {
+  position: absolute;
+  left: 14px;
+  bottom: 10px;
+  z-index: 1;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--p);
+  border-radius: 999px;
+  padding: 3px 10px;
 }
 
 .product-card.primary {
@@ -1780,39 +1906,68 @@ section {
   color: #6b7280;
 }
 
-.about-visual {
-  width: 360px;
+.about-photo {
+  position: relative;
+  width: 400px;
+  flex-shrink: 0;
+  border-radius: 22px;
+}
+
+.about-photo > img {
+  display: block;
+  width: 100%;
+  height: 440px;
+  object-fit: cover;
+  border-radius: 22px;
+  box-shadow: 0 30px 70px rgba(23, 32, 47, 0.18);
+}
+
+.glass-chip {
+  position: absolute;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 2px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 16px 40px rgba(23, 32, 47, 0.16);
 }
 
-.about-card {
-  padding: 28px;
-  background: var(--zx-paper);
-  border-radius: 18px;
-  border: 1px solid #f0e7d8;
-  border-left: 4px solid var(--zx-brand);
-  box-shadow: 0 10px 24px rgba(23, 32, 47, 0.05);
+.glass-chip strong {
+  font-family: var(--zx-display);
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--zx-ink);
+  line-height: 1.1;
 }
 
-.about-card:last-child {
-  border-left-color: var(--zx-iris);
+.glass-chip span {
+  font-size: 12px;
+  color: #4b5563;
 }
 
-.about-card-title {
-  font-family: var(--zx-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: var(--zx-brand-ink);
-  margin-bottom: 8px;
+.glass-chip.chip-a {
+  top: 28px;
+  left: -28px;
 }
 
-.about-card p {
-  font-size: 15px;
-  line-height: 1.75;
-  color: #374151;
+.glass-chip.chip-b {
+  bottom: 32px;
+  right: -24px;
+}
+
+.serif-quote {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--zx-ink);
+  border-left: 3px solid var(--zx-brand);
+  padding-left: 18px;
+  margin-bottom: 20px;
 }
 
 /* ---------- FAQ ---------- */
@@ -1869,13 +2024,16 @@ section {
   padding-bottom: 20px;
 }
 
-/* ---------- CTA ---------- */
+/* ---------- CTA：书堆照片 + 黛夜渐变压暗 ---------- */
 .cta {
-  padding: 88px 48px;
+  position: relative;
+  padding: 96px 48px;
   background:
-    radial-gradient(600px 300px at 50% 120%, rgba(242, 100, 30, 0.16), transparent 70%),
+    linear-gradient(rgba(17, 26, 46, 0.88), rgba(17, 26, 46, 0.94)),
+    url('/img/books-stack.jpg') center / cover no-repeat,
     var(--zx-night);
   text-align: center;
+  overflow: hidden;
 }
 
 .cta-eyebrow {
@@ -2064,8 +2222,13 @@ section {
 
   .scanline,
   .mock-arrows span,
-  .pipeline-link {
+  .pipeline-link,
+  .stage-progress span {
     animation: none;
+  }
+
+  .stage-progress {
+    display: none;
   }
 
   .showcase-tab:hover,
@@ -2107,8 +2270,21 @@ section {
     flex-direction: column;
   }
 
-  .about-visual {
+  .about-photo {
     width: 100%;
+    max-width: 520px;
+  }
+
+  .about-photo > img {
+    height: 320px;
+  }
+
+  .glass-chip.chip-a {
+    left: 12px;
+  }
+
+  .glass-chip.chip-b {
+    right: 12px;
   }
 
   .footer-inner {
