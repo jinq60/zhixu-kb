@@ -26,7 +26,8 @@ import {
   Message,
   Location,
   QuestionFilled,
-  Upload
+  Upload,
+  Picture
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -48,7 +49,71 @@ const goDownload = () => {
   }
 }
 
-/** 产品矩阵：color 为该产品的主题色（导航 mega 菜单与 Tab 共用同一套） */
+const reduceMotion =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/* ---------- 星图数据：散落成序的现场 ---------- */
+interface StarNode {
+  x: number
+  y: number
+  r: number
+  color: string
+  label?: string
+  halo?: boolean
+}
+
+const NODES: StarNode[] = [
+  { x: 300, y: 250, r: 11, color: '#f2641e', label: '个人知识库', halo: true },
+  { x: 180, y: 150, r: 7, color: '#7a5af8', label: 'OCR' },
+  { x: 420, y: 140, r: 7, color: '#0ca789', label: '问答', halo: true },
+  { x: 150, y: 320, r: 6, color: '#d9930d', label: '笔记' },
+  { x: 450, y: 330, r: 6, color: '#7a5af8', label: '图谱' },
+  { x: 250, y: 90, r: 5, color: '#0ca789' },
+  { x: 370, y: 80, r: 5, color: '#d9930d' },
+  { x: 90, y: 220, r: 5, color: '#f2641e' },
+  { x: 510, y: 230, r: 5, color: '#0ca789' },
+  { x: 220, y: 420, r: 6, color: '#f2641e', label: '整理' },
+  { x: 390, y: 430, r: 5, color: '#7a5af8' },
+  { x: 300, y: 350, r: 5, color: '#d9930d' },
+  { x: 480, y: 420, r: 4, color: '#0ca789' }
+]
+
+const EDGES: Array<[number, number]> = [
+  [0, 1], [0, 2], [0, 3], [0, 4], [0, 9], [0, 11],
+  [1, 5], [1, 7], [2, 6], [2, 8], [4, 9], [4, 10], [10, 11], [4, 11], [10, 12]
+]
+
+const STARS = [
+  [40, 60], [120, 420], [200, 40], [330, 30], [470, 60], [560, 140],
+  [60, 330], [130, 470], [250, 480], [420, 480], [540, 330], [30, 140],
+  [350, 200], [240, 300], [500, 90], [90, 90]
+]
+
+const FRAGMENTS = [
+  { icon: Document, label: 'PDF 报告', x: '2%', y: '12%', delay: '0s' },
+  { icon: Picture, label: '一张截图', x: '86%', y: '8%', delay: '0.8s' },
+  { icon: EditPen, label: '灵感速记', x: '0%', y: '66%', delay: '1.6s' },
+  { icon: Notebook, label: '读书笔记', x: '88%', y: '70%', delay: '2.4s' }
+]
+
+/* ---------- Hero 视差 ---------- */
+const heroRef = ref<HTMLElement | null>(null)
+
+const onHeroMove = (e: MouseEvent) => {
+  if (reduceMotion) return
+  if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) return
+  const el = heroRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const x = (e.clientX - rect.left) / rect.width - 0.5
+  const y = (e.clientY - rect.top) / rect.height - 0.5
+  el.style.setProperty('--px', (x * 14).toFixed(1))
+  el.style.setProperty('--py', (y * 10).toFixed(1))
+}
+
+/* ---------- 产品矩阵 ---------- */
 const products = [
   {
     name: '知序智能知识库',
@@ -61,9 +126,7 @@ const products = [
     tags: ['已上线', '免费版可用'],
     action: 'Web 体验',
     path: '/notes',
-    primary: true,
-    mock: 'kb' as const,
-    points: ['拍照即识别：RapidOCR / PaddleOCR 双引擎', 'AI 摘要、大纲、思维导图一键生成', 'Neo4j 知识图谱 + 个人库 RAG 问答']
+    primary: true
   },
   {
     name: '知序 AI 工作台',
@@ -76,9 +139,7 @@ const products = [
     tags: ['即将上线'],
     action: '预约体验',
     path: '/home',
-    coming: true,
-    mock: 'board' as const,
-    points: ['多人协作空间与细粒度权限', '文档版本历史与一键回滚', '团队 AI 助手接入知识库']
+    coming: true
   },
   {
     name: '知序 OCR 工具箱',
@@ -91,9 +152,7 @@ const products = [
     tags: ['客户端', 'Windows'],
     action: '预约下载',
     path: '/home',
-    coming: true,
-    mock: 'scan' as const,
-    points: ['纯本地运行，图片不出设备', '批量图片 / PDF / 截图一键提取', '透视矫正 + 版面还原']
+    coming: true
   },
   {
     name: '知序数据同步助手',
@@ -106,20 +165,80 @@ const products = [
     tags: ['即将上线'],
     action: '预约体验',
     path: '/home',
-    coming: true,
-    mock: 'sync' as const,
-    points: ['本地 / 云端 / NAS 三端同步', '增量备份与版本快照', '断点续传，大文件无忧']
+    coming: true
   }
 ]
 
-/** 知识流水线：内容本身就是顺序，每一步都可点进对应能力 */
-const pipeline = [
-  { icon: Upload, label: '采集', en: 'CAPTURE', desc: '拍照、截图、文档一键入库' },
-  { icon: Search, label: '识别', en: 'RECOGNIZE', desc: 'OCR 与版面解析' },
-  { icon: MagicStick, label: '整理', en: 'ORGANIZE', desc: '摘要、大纲、思维导图' },
-  { icon: Share, label: '图谱', en: 'CONNECT', desc: '实体关系自动成网' },
-  { icon: ChatDotRound, label: '问答', en: 'ASK', desc: '基于个人库的 RAG' }
+/* ---------- 五步成序：可交互的流水线 ---------- */
+const steps = [
+  {
+    key: 'capture',
+    icon: Upload,
+    label: '采集',
+    en: 'CAPTURE',
+    desc: '散落的信息，先有一个去处。',
+    points: ['手机拍照、截图粘贴、拖拽文档，一键进库', '在库外随手记，回来自动归档', '批量上传不断线，百张图片一次收']
+  },
+  {
+    key: 'recognize',
+    icon: Search,
+    label: '识别',
+    en: 'RECOGNIZE',
+    desc: '图片里的字，一个不落变成文本。',
+    points: ['RapidOCR / PaddleOCR 双引擎自动切换', '透视矫正，还原原始版面', 'PDF / DOCX 直接提取正文']
+  },
+  {
+    key: 'organize',
+    icon: MagicStick,
+    label: '整理',
+    en: 'ORGANIZE',
+    desc: '长文自己长出骨架。',
+    points: ['AI 摘要、大纲、思维导图一键生成', '关键词与自动分类', '历史版本随时回滚']
+  },
+  {
+    key: 'connect',
+    icon: Share,
+    label: '图谱',
+    en: 'CONNECT',
+    desc: '孤立的笔记，连成网络。',
+    points: ['实体关系自动抽取', 'Neo4j 存储，力导图可视化', '跨笔记的关联自动浮现']
+  },
+  {
+    key: 'ask',
+    icon: ChatDotRound,
+    label: '问答',
+    en: 'ASK',
+    desc: '只问你自己的知识库。',
+    points: ['RAG 只检索你的笔记，不编造', '每条答案带引用，一键溯源原文', 'SSE 流式输出，边想边答']
+  }
 ]
+
+const stepIdx = ref(0)
+const stepPaused = ref(false)
+let stepTimer: ReturnType<typeof setInterval> | null = null
+
+const selectStep = (idx: number) => {
+  stepIdx.value = idx
+}
+
+const startStepTimer = () => {
+  if (reduceMotion || stepTimer) return
+  stepTimer = setInterval(() => {
+    if (!stepPaused.value) {
+      stepIdx.value = (stepIdx.value + 1) % steps.length
+    }
+  }, 6000)
+}
+
+const stopStepTimer = () => {
+  if (stepTimer) {
+    clearInterval(stepTimer)
+    stepTimer = null
+  }
+}
+
+/* marquee 复用同一数据源 */
+const pipeline = steps.map((s) => ({ icon: s.icon, label: s.label, en: s.en }))
 
 const solutions = [
   {
@@ -198,58 +317,10 @@ const faqs = [
   }
 ]
 
-/* ---------- Hero 产品 Tab：自动轮播，悬停/聚焦暂停，减弱动效时不自动播 ---------- */
-const activeTab = ref(0)
-const tabPaused = ref(false)
-let tabTimer: ReturnType<typeof setInterval> | null = null
-const reduceMotion =
-  typeof window !== 'undefined' &&
-  typeof window.matchMedia === 'function' &&
-  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+onMounted(startStepTimer)
+onBeforeUnmount(stopStepTimer)
 
-const selectTab = (idx: number) => {
-  activeTab.value = idx
-}
-
-const startTabTimer = () => {
-  if (reduceMotion || tabTimer) return
-  tabTimer = setInterval(() => {
-    if (!tabPaused.value) {
-      activeTab.value = (activeTab.value + 1) % products.length
-    }
-  }, 5500)
-}
-
-const stopTabTimer = () => {
-  if (tabTimer) {
-    clearInterval(tabTimer)
-    tabTimer = null
-  }
-}
-
-/* ---------- 产品卡聚光灯：跟随鼠标的径向高光，减弱动效时不启用 ---------- */
-const setupSpotlight = () => {
-  if (reduceMotion) return
-  const grid = document.querySelector('.product-grid')
-  if (!grid) return
-  grid.addEventListener('mousemove', (e: Event) => {
-    const me = e as MouseEvent;
-    const cards = grid.querySelectorAll<HTMLElement>('.product-card')
-    cards.forEach((card) => {
-      const rect = card.getBoundingClientRect()
-      card.style.setProperty('--mx', `${me.clientX - rect.left}px`)
-      card.style.setProperty('--my', `${me.clientY - rect.top}px`)
-    })
-  })
-}
-
-onMounted(() => {
-  startTabTimer()
-  setupSpotlight()
-})
-onBeforeUnmount(stopTabTimer)
-
-/* ---------- 滚动显现：一次性，减弱动效时直接呈现 ---------- */
+/* ---------- 滚动显现 ---------- */
 const vReveal = {
   mounted(el: HTMLElement) {
     if (reduceMotion || typeof IntersectionObserver === 'undefined') {
@@ -276,141 +347,115 @@ const vReveal = {
 <template>
   <div class="landing-page">
     <div class="grain-overlay" aria-hidden="true" />
-    <!-- Hero -->
-    <section class="hero">
-      <div class="hero-inner">
-        <div class="hero-rail" aria-hidden="true">采集 · 识别 · 整理 · 图谱 · 问答 — KNOWLEDGE LIFECYCLE</div>
-        <div class="hero-content">
+
+    <!-- Hero：活的星图 -->
+    <section
+      ref="heroRef"
+      class="hero-dark"
+      @mousemove="onHeroMove"
+    >
+      <div class="hero-dark-inner">
+        <div class="hero-copy">
           <div class="hero-eyebrow-row">
             <span class="seal" aria-hidden="true">知序</span>
-            <span class="hero-eyebrow">ZHI XU · KNOWLEDGE OS</span>
+            <span class="hero-eyebrow">FROM CHAOS, TO COSMOS</span>
           </div>
-          <h1>让知识<span class="h1-accent">创造价值</span></h1>
+          <h1>化散落<br><span class="h1-grad">为有序</span></h1>
           <p class="hero-desc">
-            知序专注于知识管理与 AI 赋能，提供从个人笔记整理到企业知识中枢的完整产品矩阵。
-            用 OCR、大模型与知识图谱，把散落的信息变成可检索、可问答、可传承的组织资产。
+            照片、截图、文档、灵感——散落的信息在这里被识别、整理、连成图谱，
+            变成一个随时可问的个人知识库。
           </p>
           <div class="hero-actions">
             <el-button type="primary" size="large" class="hero-primary" @click="enterWeb">
-              Web 体验
+              免费开始整理
               <el-icon class="btn-icon"><ArrowRight /></el-icon>
             </el-button>
-            <el-button size="large" class="hero-ghost" @click="goDownload">
-              <el-icon class="btn-icon"><Download /></el-icon>
-              下载客户端
+            <el-button size="large" class="hero-ghost-dark" @click="router.push('/home#how')">
+              看看怎么运作
             </el-button>
           </div>
           <div class="hero-trust">
             <span><el-icon><Check /></el-icon> 免登录体验</span>
             <span><el-icon><Check /></el-icon> 本地优先</span>
             <span><el-icon><Check /></el-icon> 私有化部署</span>
-            <span><el-icon><Check /></el-icon> 持续迭代</span>
           </div>
         </div>
 
-        <!-- 招牌：产品主题 Tab（自动轮播 + 按产品换肤） -->
-        <div
-          class="showcase"
-          role="tablist"
-          aria-label="产品预览"
-          @mouseenter="tabPaused = true"
-          @mouseleave="tabPaused = false"
-          @focusin="tabPaused = true"
-          @focusout="tabPaused = false"
-        >
-          <div class="showcase-tabs">
-            <button
-              v-for="(p, idx) in products"
-              :key="p.name"
-              type="button"
-              role="tab"
-              :aria-selected="activeTab === idx"
-              :class="['showcase-tab', { active: activeTab === idx }]"
-              :style="{ '--p': p.color, '--ps': p.soft }"
-              @click="selectTab(idx)"
+        <div class="constellation" aria-hidden="true">
+          <svg viewBox="0 0 600 520" class="stars-svg">
+            <circle
+              v-for="([sx, sy], i) in STARS"
+              :key="`s${i}`"
+              :cx="sx"
+              :cy="sy"
+              r="1.1"
+              fill="#ffffff"
+              opacity="0.35"
+            />
+            <line
+              v-for="([a, b], i) in EDGES"
+              :key="`e${i}`"
+              :x1="NODES[a].x"
+              :y1="NODES[a].y"
+              :x2="NODES[b].x"
+              :y2="NODES[b].y"
+              class="edge"
+              :style="{ animationDelay: `${0.3 + i * 0.12}s` }"
+              pathLength="1"
+            />
+            <g
+              v-for="(n, i) in NODES"
+              :key="`n${i}`"
+              class="node"
+              :style="{ animationDelay: `${0.5 + i * 0.1}s` }"
             >
-              <span class="tab-dot" />
-              {{ p.name.replace('知序 ', '') }}
-            </button>
-          </div>
-
+              <circle
+                v-if="n.halo"
+                :cx="n.x"
+                :cy="n.y"
+                :r="n.r + 4"
+                :fill="n.color"
+                class="halo"
+                :style="{ animationDelay: `${i * 0.7}s` }"
+              />
+              <circle :cx="n.x" :cy="n.y" :r="n.r" :fill="n.color" class="core" />
+              <text
+                v-if="n.label"
+                :x="n.x"
+                :y="n.y - n.r - 10"
+                text-anchor="middle"
+                class="node-label"
+              >{{ n.label }}</text>
+            </g>
+            <circle class="traveler t1" r="2.6" fill="#ffb48a">
+              <animateMotion dur="7s" repeatCount="indefinite" path="M180,150 L300,250 L420,140" />
+            </circle>
+            <circle class="traveler t2" r="2.2" fill="#b9a5ff">
+              <animateMotion dur="9s" repeatCount="indefinite" path="M150,320 L220,420 L300,350 L390,430" />
+            </circle>
+            <circle class="traveler t3" r="2.2" fill="#5fd8c8">
+              <animateMotion dur="11s" repeatCount="indefinite" path="M450,330 L390,430 L300,350" />
+            </circle>
+          </svg>
           <div
-            class="showcase-stage"
-            :style="{ '--p': products[activeTab].color, '--ps': products[activeTab].soft }"
+            v-for="(f, i) in FRAGMENTS"
+            :key="f.label"
+            class="fragment"
+            :style="{ left: f.x, top: f.y, animationDelay: f.delay }"
           >
-            <div class="stage-head">
-              <div class="stage-traffic"><span /><span /><span /></div>
-              <div class="stage-title">
-                {{ products[activeTab].name }}
-                <span class="stage-en">{{ products[activeTab].en }}</span>
-              </div>
-              <div
-                class="stage-icon"
-                :style="{ background: products[activeTab].color }"
-              >
-                <el-icon><component :is="products[activeTab].icon" /></el-icon>
-              </div>
-            </div>
-
-            <div class="stage-body">
-              <!-- 知识库：笔记网格 -->
-              <div v-if="products[activeTab].mock === 'kb'" class="mock-grid">
-                <div v-for="n in 6" :key="n" class="mock-note">
-                  <div class="mock-line w80" />
-                  <div class="mock-line w60" />
-                  <div class="mock-line w70" />
-                </div>
-              </div>
-              <!-- 工作台：看板列 -->
-              <div v-else-if="products[activeTab].mock === 'board'" class="mock-board">
-                <div v-for="c in 3" :key="c" class="mock-col">
-                  <div class="mock-line w70" />
-                  <div class="mock-card" />
-                  <div class="mock-card short" />
-                </div>
-              </div>
-              <!-- OCR：扫描框 -->
-              <div v-else-if="products[activeTab].mock === 'scan'" class="mock-scan">
-                <div class="mock-doc">
-                  <div v-for="n in 5" :key="n" class="mock-line" :class="`w${[90, 70, 80, 60, 75][n - 1]}`" />
-                  <div class="scanline" />
-                </div>
-              </div>
-              <!-- 同步：双端对传 -->
-              <div v-else class="mock-sync">
-                <div class="mock-device" />
-                <div class="mock-arrows"><span /><span /></div>
-                <div class="mock-device" />
-              </div>
-            </div>
-
-            <div class="stage-progress" aria-hidden="true">
-              <span :key="activeTab" />
-            </div>
-
-            <ul class="stage-points">
-              <li v-for="pt in products[activeTab].points" :key="pt">
-                <el-icon><Check /></el-icon>{{ pt }}
-              </li>
-            </ul>
-
-            <div class="stage-foot">
-              <el-button
-                :type="products[activeTab].primary ? 'primary' : 'default'"
-                class="stage-cta"
-                @click="products[activeTab].primary ? enterWeb() : auth.openLoginModal()"
-              >
-                {{ products[activeTab].action }}
-                <el-icon v-if="!products[activeTab].coming" class="btn-icon"><ArrowRight /></el-icon>
-              </el-button>
-              <span v-if="products[activeTab].coming" class="stage-coming">COMING SOON</span>
-            </div>
+            <el-icon><component :is="f.icon" /></el-icon>
+            <span>{{ f.label }}</span>
+            <em>FRAGMENT_0{{ i + 1 }}</em>
           </div>
         </div>
       </div>
+      <div class="scroll-hint" aria-hidden="true">
+        <span>SCROLL</span>
+        <i />
+      </div>
     </section>
 
-    <!-- 跑马灯：知识生命周期的节奏带 -->
+    <!-- 跑马灯 -->
     <div class="marquee" aria-hidden="true">
       <div class="marquee-track">
         <span v-for="n in 2" :key="n" class="marquee-chunk">
@@ -422,18 +467,78 @@ const vReveal = {
       </div>
     </div>
 
-    <!-- 知识流水线：内容本身就是顺序 -->
-    <section class="pipeline">
-      <div class="pipeline-inner" v-reveal>
-        <div class="pipeline-track">
-          <div v-for="(s, idx) in pipeline" :key="s.label" class="pipeline-node">
-            <div class="pipeline-icon">
-              <el-icon><component :is="s.icon" /></el-icon>
+    <!-- 五步成序 -->
+    <section id="how" class="how">
+      <div class="section-head" v-reveal>
+        <span class="section-eyebrow">HOW IT WORKS · 五步成序</span>
+        <h2>散落，是怎么归位的</h2>
+        <p>点每一步，看一条笔记从碎片变成答案</p>
+      </div>
+      <div
+        class="stepper"
+        v-reveal
+        @mouseenter="stepPaused = true"
+        @mouseleave="stepPaused = false"
+        @focusin="stepPaused = true"
+        @focusout="stepPaused = false"
+      >
+        <div class="step-list" role="tablist" aria-label="知识流水线">
+          <button
+            v-for="(s, idx) in steps"
+            :key="s.key"
+            type="button"
+            role="tab"
+            :aria-selected="stepIdx === idx"
+            :class="['step-btn', { active: stepIdx === idx }]"
+            @click="selectStep(idx)"
+          >
+            <span class="step-num">0{{ idx + 1 }}</span>
+            <span class="step-name">{{ s.label }}</span>
+            <span class="step-en">{{ s.en }}</span>
+          </button>
+        </div>
+        <div class="step-panel">
+          <div class="step-visual" aria-hidden="true">
+            <template v-if="steps[stepIdx].key === 'capture'">
+              <div class="mini-tray" />
+              <div class="mini-chips"><span /><span /><span /></div>
+            </template>
+            <template v-else-if="steps[stepIdx].key === 'recognize'">
+              <div class="mini-scan">
+                <div class="mini-line w90" />
+                <div class="mini-line w65" />
+                <div class="mini-line w80" />
+                <i class="mini-scanline" />
+              </div>
+            </template>
+            <template v-else-if="steps[stepIdx].key === 'organize'">
+              <div class="mini-outline">
+                <span class="l1" /><span class="l2" /><span class="l2" /><span class="l3" /><span class="l1" />
+              </div>
+            </template>
+            <template v-else-if="steps[stepIdx].key === 'connect'">
+              <div class="mini-graph">
+                <i class="g1" /><i class="g2" /><i class="g3" /><i class="g4" />
+              </div>
+            </template>
+            <template v-else>
+              <div class="mini-chat">
+                <span class="bubble user">这篇论文的核心结论？</span>
+                <span class="bubble ai">三点，附原文引用 →</span>
+              </div>
+            </template>
+          </div>
+          <div class="step-info">
+            <div class="step-info-icon">
+              <el-icon><component :is="steps[stepIdx].icon" /></el-icon>
             </div>
-            <div class="pipeline-label">{{ s.label }}</div>
-            <div class="pipeline-en">{{ s.en }}</div>
-            <div class="pipeline-desc">{{ s.desc }}</div>
-            <div v-if="idx < pipeline.length - 1" class="pipeline-link" aria-hidden="true" />
+            <h3>{{ steps[stepIdx].label }}<em>{{ steps[stepIdx].en }}</em></h3>
+            <p class="step-desc">{{ steps[stepIdx].desc }}</p>
+            <ul class="step-points">
+              <li v-for="pt in steps[stepIdx].points" :key="pt">
+                <el-icon><Check /></el-icon>{{ pt }}
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -586,7 +691,7 @@ const vReveal = {
       </div>
     </section>
 
-    <!-- About：编辑风大照片 + 玻璃数据片 + 衬线引言 -->
+    <!-- About -->
     <section id="about" class="about">
       <div class="about-inner" v-reveal>
         <div class="about-photo">
@@ -734,16 +839,6 @@ const vReveal = {
   color: #fff;
 }
 
-/* ---------- 纸纹颗粒：全站 4% 透明度的胶片颗粒，去扁平 AI 感 ---------- */
-.grain-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  pointer-events: none;
-  opacity: 0.05;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
-}
-
 section {
   padding: 96px 48px;
 }
@@ -762,7 +857,7 @@ section {
   transform: none;
 }
 
-/* ---------- 通用眉题/标题 ---------- */
+/* ---------- 通用眉题 ---------- */
 .section-head {
   text-align: center;
   margin-bottom: 56px;
@@ -817,56 +912,42 @@ section {
   margin-left: 6px;
 }
 
-/* ---------- Hero ---------- */
-.hero {
+/* ---------- Hero：暗夜星图 ---------- */
+.hero-dark {
+  --px: 0;
+  --py: 0;
   position: relative;
-  padding: 84px 48px 72px;
   overflow: hidden;
+  padding: 96px 48px 70px;
   background:
-    radial-gradient(880px 480px at 90% -10%, rgba(242, 100, 30, 0.14), transparent 62%),
-    radial-gradient(640px 420px at 2% 16%, rgba(122, 90, 248, 0.1), transparent 60%),
-    radial-gradient(500px 360px at 55% 110%, rgba(12, 167, 137, 0.08), transparent 60%),
-    var(--zx-paper);
+    radial-gradient(900px 480px at 82% -10%, rgba(242, 100, 30, 0.16), transparent 62%),
+    radial-gradient(700px 460px at 8% 20%, rgba(122, 90, 248, 0.14), transparent 60%),
+    radial-gradient(560px 420px at 50% 115%, rgba(12, 167, 137, 0.1), transparent 60%),
+    linear-gradient(180deg, #0d1424 0%, #111a2e 100%);
+  color: #fff;
 }
 
-.hero-inner {
+.hero-dark-inner {
   position: relative;
   max-width: 1200px;
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 56px;
+  gap: 48px;
 }
 
-/* 竖排饰栏：中文编辑感，纯装饰，移动端隐藏 */
-.hero-rail {
-  position: absolute;
-  left: -56px;
-  top: 8px;
-  writing-mode: vertical-rl;
-  font-family: var(--zx-mono);
-  font-size: 10px;
-  letter-spacing: 6px;
-  color: #c9bfae;
-  user-select: none;
-}
-
-@media (max-width: 1320px) {
-  .hero-rail {
-    display: none;
-  }
-}
-
-.hero-content {
+.hero-copy {
   flex: 1;
-  max-width: 540px;
+  max-width: 520px;
+  position: relative;
+  z-index: 2;
 }
 
 .hero-eyebrow-row {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
 }
 
 .hero-eyebrow {
@@ -874,10 +955,9 @@ section {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 3px;
-  color: var(--zx-brand-ink);
+  color: #ffb48a;
 }
 
-/* 印章：品牌钤印，刻意做不规则圆角 + 微转，像盖上去的 */
 .seal {
   font-family: var(--zx-serif);
   font-weight: 900;
@@ -890,86 +970,71 @@ section {
   transform: rotate(-4deg);
   box-shadow:
     inset 0 0 0 1.5px rgba(255, 255, 255, 0.55),
-    0 8px 18px var(--zx-brand-ring);
+    0 8px 18px rgba(242, 100, 30, 0.35);
   letter-spacing: 2px;
   user-select: none;
 }
 
-.hero h1 {
+.hero-dark h1 {
   font-family: var(--zx-serif);
-  font-size: clamp(54px, 7.2vw, 102px);
+  font-size: clamp(56px, 7.4vw, 104px);
   font-weight: 900;
-  line-height: 1.14;
-  letter-spacing: 2px;
-  color: var(--zx-ink);
+  line-height: 1.16;
+  letter-spacing: 6px;
+  color: #fff;
   margin-bottom: 24px;
 }
 
-.h1-accent {
-  position: relative;
-  color: var(--zx-brand);
-  white-space: nowrap;
-}
-
-.h1-accent::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 6px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--zx-brand-soft);
-  border: 1px solid #f5d9c6;
-  z-index: -1;
-}
-
-.hero h1 {
-  position: relative;
-  z-index: 0;
+.h1-grad {
+  background: linear-gradient(100deg, #ff8a4d 0%, #f2641e 45%, #e8a13c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .hero-desc {
   font-size: 16px;
-  line-height: 1.85;
-  color: #4b5563;
-  margin-bottom: 30px;
+  line-height: 1.9;
+  color: #b9c2d4;
+  margin-bottom: 32px;
+  max-width: 480px;
 }
 
 .hero-actions {
   display: flex;
   gap: 14px;
-  margin-bottom: 26px;
+  margin-bottom: 28px;
 }
 
 .hero-primary {
+  font-weight: 800;
+  border-radius: 14px;
+  padding: 13px 30px;
+  height: auto;
+  box-shadow: 0 14px 36px rgba(242, 100, 30, 0.4);
+}
+
+.hero-ghost-dark {
   font-weight: 700;
   border-radius: 14px;
-  padding: 12px 26px;
+  padding: 13px 30px;
   height: auto;
-  box-shadow: 0 12px 28px var(--zx-brand-ring);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #fff;
 }
 
-.hero-actions .hero-ghost {
-  font-weight: 600;
-  border-radius: 14px;
-  padding: 12px 26px;
-  height: auto;
-  background: #fff;
-  border-color: #e8ddc9;
-  color: var(--zx-ink);
-}
-
-.hero-actions .hero-ghost:hover {
-  border-color: var(--zx-brand);
-  color: var(--zx-brand-ink);
-  background: #fff;
+.hero-actions .hero-ghost-dark:hover,
+.hero-actions .hero-ghost-dark:focus-visible {
+  border-color: #fff;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .hero-trust {
   display: flex;
   flex-wrap: wrap;
-  gap: 18px;
+  gap: 20px;
 }
 
 .hero-trust span {
@@ -977,355 +1042,169 @@ section {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #4b5563;
+  color: #cfd6e4;
 }
 
 .hero-trust .el-icon {
-  color: var(--zx-teal);
+  color: #5fd8c8;
   font-size: 15px;
 }
 
-/* ---------- 招牌：产品主题 Tab ---------- */
-.showcase {
-  width: 540px;
+/* ---------- 星座 ---------- */
+.constellation {
+  position: relative;
+  width: 560px;
   flex-shrink: 0;
+  transform: translate3d(calc(var(--px, 0) * 1px), calc(var(--py, 0) * 1px), 0);
+  transition: transform 0.35s ease-out;
 }
 
-.showcase-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+.stars-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  animation: constellation-drift 11s ease-in-out infinite alternate;
 }
 
-.showcase-tab {
-  --p: var(--zx-brand);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 16px;
-  border-radius: 999px;
-  border: 1px solid #ece5d8;
-  background: rgba(255, 255, 255, 0.75);
-  color: #6b7280;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    color 0.2s ease,
-    border-color 0.2s ease,
-    background 0.2s ease,
-    transform 0.2s ease;
+@keyframes constellation-drift {
+  from { transform: translateY(-5px); }
+  to { transform: translateY(7px); }
 }
 
-.showcase-tab:hover {
-  transform: translateY(-1px);
-  border-color: var(--p);
-  color: var(--zx-ink);
+.edge {
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 1.2;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw 1.4s ease forwards;
 }
 
-.showcase-tab.active {
-  background: var(--zx-ink);
-  border-color: var(--zx-ink);
-  color: #fff;
+@keyframes draw {
+  to { stroke-dashoffset: 0; }
 }
 
-.showcase-tab.active .tab-dot {
-  background: var(--p);
+.node {
+  opacity: 0;
+  transform: scale(0.3);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
-.tab-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--p);
-  flex-shrink: 0;
+@keyframes pop {
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-.showcase-stage {
-  --p: var(--zx-brand);
-  --ps: var(--zx-brand-soft);
-  background: #ffffff;
-  border-radius: 22px;
-  border: 1px solid #f0e7d8;
-  border-top: 4px solid var(--p);
-  box-shadow: 0 28px 70px rgba(23, 32, 47, 0.1);
-  overflow: hidden;
-  transition: border-color 0.3s ease;
+.node .core {
+  filter: drop-shadow(0 0 7px currentColor);
 }
 
-.stage-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  background: var(--ps);
-  border-bottom: 1px solid #f3ece0;
-  transition: background 0.3s ease;
-}
-
-.stage-traffic {
-  display: flex;
-  gap: 7px;
-}
-
-.stage-traffic span {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #e3d9c8;
-}
-
-.stage-title {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--zx-ink);
-}
-
-.stage-en {
+.node-label {
   font-family: var(--zx-mono);
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  color: #a8a29e;
-  margin-left: 8px;
-  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 2px;
+  fill: #cfd6e4;
 }
 
-.stage-icon {
-  margin-left: auto;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+.halo {
+  opacity: 0.45;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: halo 3.2s ease-out infinite;
+}
+
+@keyframes halo {
+  0% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
+.traveler {
+  opacity: 0.9;
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+.fragment {
+  position: absolute;
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 18px;
-}
-
-.stage-body {
-  padding: 20px;
-  min-height: 208px;
-}
-
-.mock-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-
-.mock-note {
-  border-radius: 12px;
-  border: 1px solid #f0e7d8;
-  background: #fffdf8;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
   gap: 8px;
+  padding: 9px 14px 9px 10px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.07);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #e6e1d5;
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+  animation: fragment-float 5.5s ease-in-out infinite alternate;
 }
 
-.mock-line {
-  height: 8px;
-  border-radius: 999px;
-  background: #ece4d3;
+.fragment .el-icon {
+  font-size: 16px;
+  color: #ffb48a;
 }
 
-.mock-line.w60 { width: 60%; }
-.mock-line.w70 { width: 70%; }
-.mock-line.w75 { width: 75%; }
-.mock-line.w80 { width: 80%; }
-.mock-line.w90 { width: 90%; }
-
-.mock-note:first-child {
-  border-color: var(--p);
-  box-shadow: 0 8px 20px var(--zx-brand-ring);
+.fragment em {
+  font-family: var(--zx-mono);
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: #7c8aa5;
 }
 
-.mock-note:first-child .mock-line:first-child {
-  background: var(--p);
+@keyframes fragment-float {
+  from { transform: translateY(-7px); }
+  to { transform: translateY(9px); }
 }
 
-.mock-board {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-
-.mock-col {
-  border-radius: 12px;
-  background: #faf7f0;
-  border: 1px solid #f0e7d8;
-  padding: 12px;
+.scroll-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--zx-mono);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: #5b6b8c;
 }
 
-.mock-card {
-  height: 44px;
-  border-radius: 8px;
-  background: #fff;
-  border: 1px solid #eee4d2;
-  border-left: 3px solid var(--p);
-}
-
-.mock-card.short {
-  height: 30px;
-}
-
-.mock-scan {
-  display: flex;
-  justify-content: center;
-}
-
-.mock-doc {
+.scroll-hint i {
+  display: block;
+  width: 1px;
+  height: 34px;
+  background: linear-gradient(to bottom, #5b6b8c, transparent);
   position: relative;
-  width: 78%;
-  border-radius: 12px;
-  background: #fff;
-  border: 1px solid #f0e7d8;
-  padding: 22px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
   overflow: hidden;
 }
 
-.scanline {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  top: 12px;
-  height: 2px;
-  border-radius: 999px;
-  background: var(--p);
-  box-shadow: 0 0 12px var(--p);
-  animation: scan 2.6s ease-in-out infinite alternate;
-}
-
-@keyframes scan {
-  from { top: 12px; }
-  to { top: calc(100% - 14px); }
-}
-
-.mock-sync {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 22px;
-  padding: 30px 0;
-}
-
-.mock-device {
-  width: 92px;
-  height: 120px;
-  border-radius: 14px;
-  background: #fff;
-  border: 2px solid #eee4d2;
-  position: relative;
-}
-
-.mock-device::after {
+.scroll-hint i::after {
   content: '';
   position: absolute;
-  inset: 12px;
-  border-radius: 8px;
-  background: var(--ps);
-  border: 1px dashed var(--p);
-}
-
-.mock-device:first-child {
-  border-color: var(--p);
-}
-
-.mock-arrows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.mock-arrows span {
-  display: block;
-  width: 34px;
-  height: 3px;
-  border-radius: 999px;
-  background: var(--p);
-  animation: arrowsync 1.6s ease-in-out infinite;
-}
-
-.mock-arrows span:last-child {
-  animation-delay: 0.25s;
-  opacity: 0.55;
-}
-
-@keyframes arrowsync {
-  0%, 100% { transform: translateX(0); opacity: 1; }
-  50% { transform: translateX(7px); opacity: 0.5; }
-}
-
-.stage-points {
-  list-style: none;
-  padding: 0 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  margin-bottom: 18px;
-}
-
-.stage-points li {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 13.5px;
-  color: #374151;
-}
-
-.stage-points .el-icon {
-  color: var(--p);
-  font-size: 15px;
-  flex-shrink: 0;
-}
-
-.stage-progress {
-  height: 3px;
-  border-radius: 999px;
-  background: #f3ece0;
-  margin: 0 22px 16px;
-  overflow: hidden;
-}
-
-.stage-progress span {
-  display: block;
-  height: 100%;
+  left: 0;
+  top: -40%;
   width: 100%;
-  border-radius: inherit;
-  background: var(--p);
-  transform-origin: left;
-  animation: stagefill 5.5s linear forwards;
+  height: 40%;
+  background: #ffb48a;
+  animation: hint-drop 1.8s ease-in-out infinite;
 }
 
-@keyframes stagefill {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
-
-.stage-foot {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 22px 22px;
-}
-
-.stage-cta {
-  font-weight: 700;
-  border-radius: 12px;
-}
-
-.stage-coming {
-  font-family: var(--zx-mono);
-  font-size: 10px;
-  letter-spacing: 2px;
-  color: #a8a29e;
+@keyframes hint-drop {
+  to { top: 110%; }
 }
 
 /* ---------- 跑马灯 ---------- */
@@ -1384,88 +1263,332 @@ section {
   to { transform: translateX(-50%); }
 }
 
-/* ---------- 流水线 ---------- */
-.pipeline {
-  padding: 56px 48px;
-  background: #fff;
-  border-top: 1px solid #f3ece0;
-  border-bottom: 1px solid #f3ece0;
+/* ---------- 五步成序 ---------- */
+.how {
+  background: var(--zx-paper);
 }
 
-.pipeline-inner {
-  max-width: 1200px;
+.stepper {
+  max-width: 1080px;
   margin: 0 auto;
-}
-
-.pipeline-track {
-  display: flex;
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 28px;
   align-items: stretch;
 }
 
-.pipeline-node {
-  position: relative;
-  flex: 1;
-  text-align: center;
-  padding: 0 8px;
-}
-
-.pipeline-icon {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 12px;
-  border-radius: 18px;
+.step-list {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.step-btn {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 12px;
+  text-align: left;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid #f0e7d8;
+  background: #fff;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.step-btn:hover {
+  transform: translateX(3px);
+  border-color: #e8d5bd;
+}
+
+.step-btn.active {
   background: var(--zx-ink);
+  border-color: var(--zx-ink);
+}
+
+.step-btn.active .step-name {
   color: #fff;
-  font-size: 24px;
-  box-shadow: 0 10px 24px rgba(23, 32, 47, 0.18);
 }
 
-.pipeline-node:first-child .pipeline-icon {
-  background: var(--zx-brand);
-  box-shadow: 0 10px 24px var(--zx-brand-ring);
+.step-btn.active .step-num {
+  color: #ffb48a;
 }
 
-.pipeline-label {
-  font-size: 17px;
+.step-num {
+  font-family: var(--zx-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #c9bfae;
+}
+
+.step-name {
+  font-size: 16px;
   font-weight: 800;
   color: var(--zx-ink);
 }
 
-.pipeline-en {
+.step-en {
   font-family: var(--zx-mono);
-  font-size: 10px;
-  letter-spacing: 2px;
+  font-size: 9px;
+  letter-spacing: 1.5px;
   color: #a8a29e;
-  margin: 3px 0 6px;
 }
 
-.pipeline-desc {
-  font-size: 12.5px;
-  color: #6b7280;
-  line-height: 1.6;
+.step-panel {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 30px;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #f0e7d8;
+  border-top: 4px solid var(--zx-brand);
+  border-radius: 20px;
+  padding: 34px 36px;
+  box-shadow: 0 20px 50px rgba(23, 32, 47, 0.07);
 }
 
-.pipeline-link {
+.step-visual {
+  height: 190px;
+  border-radius: 14px;
+  background: #faf7f0;
+  border: 1px solid #f0e7d8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.mini-tray {
+  width: 110px;
+  height: 76px;
+  border-radius: 12px;
+  border: 2px dashed #d8c9ae;
+  position: relative;
+}
+
+.mini-chips {
   position: absolute;
-  top: 28px;
-  left: calc(50% + 44px);
-  width: calc(100% - 88px);
+  display: flex;
+  gap: 6px;
+}
+
+.mini-chips span {
+  width: 26px;
+  height: 34px;
+  border-radius: 6px;
+  background: var(--zx-brand);
+  box-shadow: 0 6px 14px var(--zx-brand-ring);
+}
+
+.mini-chips span:nth-child(2) {
+  background: var(--zx-iris);
+  transform: translateY(-8px);
+}
+
+.mini-chips span:nth-child(3) {
+  background: var(--zx-teal);
+  transform: translateY(4px);
+}
+
+.step-visual:has(.mini-tray) {
+  position: relative;
+}
+
+.mini-scan {
+  position: relative;
+  width: 130px;
+  background: #fff;
+  border: 1px solid #eee4d2;
+  border-radius: 10px;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: hidden;
+}
+
+.mini-line {
+  height: 7px;
+  border-radius: 999px;
+  background: #ece4d3;
+}
+
+.mini-line.w90 { width: 90%; }
+.mini-line.w65 { width: 65%; }
+.mini-line.w80 { width: 80%; }
+
+.mini-scanline {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 8px;
   height: 2px;
   border-radius: 999px;
-  background-image: repeating-linear-gradient(
-    to right,
-    var(--zx-brand) 0 8px,
-    transparent 8px 16px
-  );
-  opacity: 0.55;
-  animation: flow 1.2s linear infinite;
+  background: var(--zx-brand);
+  box-shadow: 0 0 10px var(--zx-brand);
+  animation: scan 2.4s ease-in-out infinite alternate;
 }
 
-@keyframes flow {
-  to { background-position: 16px 0; }
+@keyframes scan {
+  from { top: 8px; }
+  to { top: calc(100% - 10px); }
+}
+
+.mini-outline {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 130px;
+}
+
+.mini-outline span {
+  height: 9px;
+  border-radius: 999px;
+  background: #e3d5bc;
+}
+
+.mini-outline .l1 {
+  width: 100%;
+  background: var(--zx-ink);
+}
+
+.mini-outline .l2 {
+  width: 82%;
+  margin-left: 14px;
+}
+
+.mini-outline .l3 {
+  width: 64%;
+  margin-left: 28px;
+  background: var(--zx-brand);
+}
+
+.mini-graph {
+  position: relative;
+  width: 140px;
+  height: 110px;
+}
+
+.mini-graph::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 2px;
+  background: repeating-linear-gradient(to right, #d8c9ae 0 6px, transparent 6px 12px);
+}
+
+.mini-graph i {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 4px 12px rgba(23, 32, 47, 0.18);
+}
+
+.mini-graph .g1 { left: 4px; top: 45px; background: var(--zx-brand); }
+.mini-graph .g2 { left: 60px; top: 12px; background: var(--zx-iris); }
+.mini-graph .g3 { left: 60px; top: 78px; background: var(--zx-teal); }
+.mini-graph .g4 { right: 4px; top: 45px; background: var(--zx-amber, #d9930d); }
+
+.mini-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.bubble {
+  max-width: 88%;
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 9px 13px;
+  border-radius: 13px;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: var(--zx-brand-soft);
+  border: 1px solid #f5d9c6;
+  color: var(--zx-ink);
+  border-bottom-right-radius: 4px;
+}
+
+.bubble.ai {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid #eee4d2;
+  color: #374151;
+  border-bottom-left-radius: 4px;
+}
+
+.step-info-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--zx-ink);
+  color: #fff;
+  font-size: 22px;
+  margin-bottom: 14px;
+}
+
+.step-info h3 {
+  font-family: var(--zx-serif);
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: var(--zx-ink);
+  margin-bottom: 8px;
+}
+
+.step-info h3 em {
+  font-family: var(--zx-mono);
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #a8a29e;
+  margin-left: 10px;
+  font-weight: 400;
+}
+
+.step-desc {
+  font-size: 15px;
+  color: #4b5563;
+  margin-bottom: 16px;
+}
+
+.step-points {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.step-points li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.step-points .el-icon {
+  color: var(--zx-teal);
+  font-size: 15px;
+  flex-shrink: 0;
+  margin-top: 3px;
 }
 
 /* ---------- Stats ---------- */
@@ -1527,9 +1650,11 @@ section {
 .product-card {
   --p: var(--zx-brand);
   --ps: var(--zx-brand-soft);
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 30px 28px;
+  padding: 0 28px 30px;
   background: #ffffff;
   border-radius: 20px;
   border: 1px solid #f0e7d8;
@@ -1537,11 +1662,6 @@ section {
   transition:
     transform 0.22s ease,
     box-shadow 0.22s ease;
-}
-
-.product-card {
-  position: relative;
-  overflow: hidden;
 }
 
 .product-card::after {
@@ -1568,9 +1688,17 @@ section {
   box-shadow: 0 20px 44px rgba(23, 32, 47, 0.1);
 }
 
+.product-card.primary {
+  box-shadow: 0 16px 40px rgba(23, 32, 47, 0.08);
+}
+
+.product-card.coming {
+  background: #fffdf8;
+}
+
 .product-photo {
   position: relative;
-  margin: -30px -28px 18px;
+  margin: 0 -28px 20px;
   height: 150px;
   overflow: hidden;
 }
@@ -1606,14 +1734,6 @@ section {
   background: var(--p);
   border-radius: 999px;
   padding: 3px 10px;
-}
-
-.product-card.primary {
-  box-shadow: 0 16px 40px rgba(23, 32, 47, 0.08);
-}
-
-.product-card.coming {
-  background: #fffdf8;
 }
 
 .product-icon {
@@ -1837,7 +1957,7 @@ section {
 .case-stars {
   display: inline-flex;
   gap: 3px;
-  color: var(--zx-amber, #d9930d);
+  color: #d9930d;
   font-size: 17px;
 }
 
@@ -1967,10 +2087,6 @@ section {
   gap: 8px;
 }
 
-.resource-link .el-icon {
-  transition: none;
-}
-
 /* ---------- About ---------- */
 .about {
   background: #fff;
@@ -2082,7 +2198,7 @@ section {
 }
 
 .serif-quote {
-  font-family: 'Noto Serif SC', serif;
+  font-family: var(--zx-serif);
   font-size: 21px;
   font-weight: 600;
   line-height: 1.7;
@@ -2146,7 +2262,7 @@ section {
   padding-bottom: 20px;
 }
 
-/* ---------- CTA：书堆照片 + 黛夜渐变压暗 ---------- */
+/* ---------- CTA ---------- */
 .cta {
   position: relative;
   padding: 96px 48px;
@@ -2357,10 +2473,33 @@ section {
     transition: none;
   }
 
-  .scanline,
-  .mock-arrows span,
-  .pipeline-link,
-  .stage-progress span,
+  .stars-svg,
+  .edge,
+  .node,
+  .halo,
+  .fragment,
+  .scroll-hint i::after {
+    animation: none !important;
+  }
+
+  .edge {
+    stroke-dashoffset: 0;
+  }
+
+  .node {
+    opacity: 1;
+    transform: none;
+  }
+
+  .product-card:hover,
+  .solution-card:hover,
+  .download-card:hover,
+  .case-card:hover,
+  .resource-card:hover,
+  .step-btn:hover {
+    transform: none;
+  }
+
   .marquee-track {
     animation: none;
   }
@@ -2369,30 +2508,21 @@ section {
     display: none;
   }
 
-  .stage-progress {
-    display: none;
-  }
-
-  .showcase-tab:hover,
-  .product-card:hover,
-  .solution-card:hover,
-  .download-card:hover,
-  .case-card:hover,
-  .resource-card:hover {
-    transform: none;
+  .mini-scanline {
+    animation: none;
   }
 }
 
 @media (max-width: 1024px) {
-  .hero-inner {
+  .hero-dark-inner {
     flex-direction: column;
   }
 
-  .hero-content {
+  .hero-copy {
     max-width: 100%;
   }
 
-  .showcase {
+  .constellation {
     width: 100%;
     max-width: 560px;
   }
@@ -2406,6 +2536,28 @@ section {
 
   .case-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stepper {
+    grid-template-columns: 1fr;
+  }
+
+  .step-list {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+  }
+
+  .step-btn {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+    gap: 4px;
+    padding: 12px 8px;
+  }
+
+  .step-btn .step-en {
+    display: none;
   }
 
   .about-inner {
@@ -2439,12 +2591,13 @@ section {
     padding: 60px 22px;
   }
 
-  .hero {
-    padding: 40px 22px 48px;
+  .hero-dark {
+    padding: 56px 22px 60px;
   }
 
-  .hero h1 {
-    font-size: 38px;
+  .hero-dark h1 {
+    font-size: 52px;
+    letter-spacing: 3px;
   }
 
   .hero-actions,
@@ -2452,17 +2605,33 @@ section {
     flex-direction: column;
   }
 
-  .pipeline-track {
-    overflow-x: auto;
-    padding-bottom: 8px;
-  }
-
-  .pipeline-node {
-    min-width: 148px;
-  }
-
-  .pipeline-link {
+  .fragment {
     display: none;
+  }
+
+  .scroll-hint {
+    display: none;
+  }
+
+  .stepper {
+    grid-template-columns: 1fr;
+  }
+
+  .step-list {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .step-btn .step-name {
+    font-size: 13px;
+  }
+
+  .step-panel {
+    grid-template-columns: 1fr;
+    padding: 24px;
+  }
+
+  .step-visual {
+    height: 160px;
   }
 
   .product-grid,
