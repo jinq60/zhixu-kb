@@ -38,6 +38,7 @@ public class OAuthService {
     private final IdentityService identityService;
     private final AuthService authService;
     private final OAuthStateStore oAuthStateStore;
+    private final AuthCookieService authCookieService;
 
     public String authorizeUrl(String provider) {
         OAuthProperties.Provider config = getConfig(provider);
@@ -79,7 +80,12 @@ public class OAuthService {
         }
     }
 
-    public String callback(String provider, String code, String state) {
+    /**
+     * Cookie 会话模式：登录态直接写进 302 响应的 Set-Cookie，
+     * 回调地址不再携带任何 code——JWT 不再经过 URL/浏览器历史/日志。
+     */
+    public String callback(String provider, String code, String state,
+                           javax.servlet.http.HttpServletResponse response) {
         if (!StringUtils.hasText(code)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "授权码为空");
         }
@@ -90,20 +96,8 @@ public class OAuthService {
         OAuthUserInfo userInfo = fetchUserInfo(provider, code);
         SysUser user = findOrCreateUser(provider, userInfo);
         identityService.syncEmailIfEmpty(user.getId(), userInfo.getEmail());
-        String token = authService.generateTokenForUser(user);
-        String exchangeCode = oAuthStateStore.createToken(token);
-        return validateFrontendCallback() + "?code=" + exchangeCode;
-    }
-
-    /**
-     * 用一次性 exchange code 换取 JWT：code 60 秒有效且只能使用一次。
-     */
-    public String exchangeToken(String code) {
-        String token = oAuthStateStore.takeToken(code);
-        if (!StringUtils.hasText(token)) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED, "授权码无效或已过期，请重新登录");
-        }
-        return token;
+        authCookieService.addSessionCookie(response, authService.generateTokenForUser(user));
+        return validateFrontendCallback();
     }
 
     private String validateFrontendCallback() {

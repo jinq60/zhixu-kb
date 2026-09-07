@@ -171,10 +171,6 @@ const openOAuth = (provider: 'github' | 'google' | 'qq') => {
     ElMessage.warning('该登录方式暂不可用')
     return
   }
-  // P0-7 修复：标记本次 OAuth 由本页面发起，直跳回调无标记时拒绝（防 Login CSRF）
-  try {
-    sessionStorage.setItem('oauth_initiated', '1')
-  } catch { /* ignore */ }
   const url = oauthAuthorizeUrl(provider)
   const width = 560
   const height = 640
@@ -198,11 +194,12 @@ const openOAuth = (provider: 'github' | 'google' | 'qq') => {
     if (event.origin !== window.location.origin) return
     // 校验消息确实来自本次打开的 OAuth 弹窗，防止同域其他窗口干扰
     if (event.source !== popup) return
-    const { token, error } = event.data || {}
+    // Cookie 会话模式：弹窗只上报成功与否（不再传递 token），会话有效性以服务端为准
+    const { success, error } = event.data || {}
     if (error) {
       ElMessage.error(error)
-    } else if (token) {
-      auth.oauthLogin(token).then((ok) => {
+    } else if (success) {
+      auth.oauthRefresh().then((ok) => {
         if (ok) {
           ElMessage.success('登录成功')
           auth.closeLoginModal()

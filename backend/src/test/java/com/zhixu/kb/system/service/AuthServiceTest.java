@@ -87,7 +87,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void login_withValidCredentials_shouldReturnToken() {
+    void login_withValidCredentials_shouldReturnUserSummaryWithoutToken() {
         LoginRequest request = new LoginRequest();
         request.setUsername("admin");
         request.setPassword("123456");
@@ -96,13 +96,15 @@ class AuthServiceTest {
 
         LoginUser loginUser = new LoginUser(existingUser, Collections.singletonList("USER"));
         when(userDetailsService.loadUserByUsername("admin")).thenReturn(loginUser);
-        when(jwtUtils.generateToken(any(UserDetails.class))).thenReturn("jwt-token-123");
 
+        // Cookie 会话模式：响应体只含用户摘要，不再签发/返回 token（Cookie 由 Controller 层写）
         LoginResponse response = authService.login(request);
 
         assertNotNull(response);
-        assertEquals("jwt-token-123", response.getToken());
-        verify(jwtUtils).generateToken(any(UserDetails.class));
+        assertEquals(1L, response.getUserId());
+        assertEquals("admin", response.getUsername());
+        assertEquals(Collections.singletonList("USER"), response.getRoles());
+        verify(jwtUtils, never()).generateToken(any(UserDetails.class));
     }
 
     @Test

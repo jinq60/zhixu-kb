@@ -27,6 +27,16 @@ vi.mock('../router', () => ({
 
 import http from '../api/http'
 
+describe('API - Cookie session', () => {
+  it('axios instance should send HttpOnly session cookie (no manual Authorization header)', async () => {
+    const axios = (await import('axios')).default
+    const createMock = vi.mocked(axios.create)
+    expect(createMock).toHaveBeenCalled()
+    const config = createMock.mock.calls[0][0] as Record<string, unknown>
+    expect(config['withCredentials']).toBe(true)
+  })
+})
+
 describe('API - Auth', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

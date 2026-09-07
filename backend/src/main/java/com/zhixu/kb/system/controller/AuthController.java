@@ -1,6 +1,7 @@
 package com.zhixu.kb.system.controller;
 
 import com.zhixu.kb.common.result.Result;
+import com.zhixu.kb.system.auth.AuthCookieService;
 import com.zhixu.kb.system.auth.OAuthService;
 import com.zhixu.kb.system.model.*;
 import com.zhixu.kb.system.service.AuthService;
@@ -8,9 +9,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -19,10 +20,14 @@ public class AuthController {
 
     private final AuthService authService;
     private final OAuthService oAuthService;
+    private final AuthCookieService authCookieService;
 
     @PostMapping("/login")
-    public Result<LoginResponse> login(@Validated @RequestBody LoginRequest request) {
-        return Result.success(authService.login(request));
+    public Result<LoginResponse> login(@Validated @RequestBody LoginRequest request,
+                                       HttpServletResponse response) {
+        LoginResponse body = authService.login(request);
+        issueSession(response, body.getUsername());
+        return Result.success(body);
     }
 
     /**
@@ -38,8 +43,11 @@ public class AuthController {
      * 统一登录入口：通过 method 字段路由到具体适配器。
      */
     @PostMapping("/login/unified")
-    public Result<LoginResponse> unifiedLogin(@Validated @RequestBody UnifiedLoginRequest request) {
-        return Result.success(authService.unifiedLogin(request));
+    public Result<LoginResponse> unifiedLogin(@Validated @RequestBody UnifiedLoginRequest request,
+                                              HttpServletResponse response) {
+        LoginResponse body = authService.unifiedLogin(request);
+        issueSession(response, body.getUsername());
+        return Result.success(body);
     }
 
     @PostMapping("/email-code/send")
@@ -49,8 +57,11 @@ public class AuthController {
     }
 
     @PostMapping("/email-code/login")
-    public Result<LoginResponse> emailCodeLogin(@Validated @RequestBody EmailCodeLoginRequest request) {
-        return Result.success(authService.emailCodeLogin(request));
+    public Result<LoginResponse> emailCodeLogin(@Validated @RequestBody EmailCodeLoginRequest request,
+                                                HttpServletResponse response) {
+        LoginResponse body = authService.emailCodeLogin(request);
+        issueSession(response, body.getUsername());
+        return Result.success(body);
     }
 
     @PostMapping("/sms-code/send")
@@ -60,8 +71,11 @@ public class AuthController {
     }
 
     @PostMapping("/sms-code/login")
-    public Result<LoginResponse> smsCodeLogin(@Validated @RequestBody SmsCodeLoginRequest request) {
-        return Result.success(authService.smsCodeLogin(request));
+    public Result<LoginResponse> smsCodeLogin(@Validated @RequestBody SmsCodeLoginRequest request,
+                                              HttpServletResponse response) {
+        LoginResponse body = authService.smsCodeLogin(request);
+        issueSession(response, body.getUsername());
+        return Result.success(body);
     }
 
     @GetMapping("/oauth/{provider}/authorize")
@@ -75,25 +89,15 @@ public class AuthController {
                          @RequestParam String code,
                          @RequestParam(required = false) String state,
                          HttpServletResponse response) throws IOException {
-        String redirectUrl = oAuthService.callback(provider, code, state);
+        String redirectUrl = oAuthService.callback(provider, code, state, response);
         response.sendRedirect(redirectUrl);
     }
 
-    /**
-     * OAuth 回调换发：前端拿到回调 URL 中的一次性 code 后，用它换取 JWT。
-     */
-    @PostMapping("/oauth/exchange")
-    public Result<LoginResponse> exchange(@Validated @RequestBody OAuthExchangeRequest request) {
-        return Result.success(new LoginResponse(oAuthService.exchangeToken(request.getCode())));
-    }
-
     @PostMapping("/logout")
-    public Result<Void> logout(@RequestHeader(value = "Authorization", required = false) String authHeader) {
-        String token = null;
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            token = authHeader.substring(7);
-        }
-        authService.logout(token);
+    public Result<Void> logout(HttpServletRequest request, HttpServletResponse response) {
+        // Cookie → Authorization 头的顺序解析，保证 Cookie 登录态下登出能撤销正确 token
+        authService.logout(authCookieService.resolveToken(request));
+        authCookieService.clearSessionCookie(response);
         return Result.success("已退出", null);
     }
 
@@ -105,5 +109,12 @@ public class AuthController {
     @GetMapping("/me")
     public Result<UserInfoResponse> me() {
         return Result.success(authService.currentUser(null));
+    }
+
+    /**
+     * 会话签发：JWT 只写 HttpOnly Cookie，不进响应体。
+     */
+    private void issueSession(HttpServletResponse response, String username) {
+        authCookieService.addSessionCookie(response, authService.generateTokenForUsername(username));
     }
 }

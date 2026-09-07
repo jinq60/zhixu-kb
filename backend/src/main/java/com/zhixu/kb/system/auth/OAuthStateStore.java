@@ -10,23 +10,17 @@ import java.security.SecureRandom;
 import java.time.Duration;
 
 /**
- * OAuth 流程一次性凭证存储：
- * <ul>
- *   <li>authorize 时生成的 state（防登录 CSRF），10 分钟有效，callback 时一次性消费；</li>
- *   <li>callback 后换发给前端的一次性 exchange code（60 秒有效），前端凭它换取 JWT，
- *       避免 JWT 明文出现在重定向 URL / 浏览器历史 / Referer / 网关日志中。</li>
- * </ul>
+ * OAuth state 存储（防登录 CSRF）：authorize 时生成，10 分钟有效，callback 时一次性消费。
+ * Cookie 会话模式下登录态直接写 Set-Cookie，不再需要 exchange code 中转，相关方法已删除。
  * Redis 优先，故障时降级为 Caffeine 本地缓存（带 TTL 与容量上限）。
  */
 @Component
 public class OAuthStateStore {
 
     private static final Duration STATE_TTL = Duration.ofMinutes(10);
-    private static final Duration TOKEN_TTL = Duration.ofSeconds(60);
     private static final String STATE_PATTERN = "^[a-f0-9]{64}$";
 
     private final Cache<String, String> stateCache;
-    private final Cache<String, String> tokenCache;
     private final StringRedisTemplate redisTemplate;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -34,10 +28,6 @@ public class OAuthStateStore {
         this.redisTemplate = redisTemplateProvider.getIfAvailable();
         this.stateCache = Caffeine.newBuilder()
                 .expireAfterWrite(STATE_TTL)
-                .maximumSize(100_000)
-                .build();
-        this.tokenCache = Caffeine.newBuilder()
-                .expireAfterWrite(TOKEN_TTL)
                 .maximumSize(100_000)
                 .build();
     }
@@ -66,32 +56,6 @@ public class OAuthStateStore {
         }
         // asMap().remove 为原子取删，保证降级模式下同样只能消费一次
         return stateCache.asMap().remove(state) != null;
-    }
-
-    public String createToken(String token) {
-        String code = randomHex();
-        tokenCache.put(code, token);
-        redisSet("auth:oauth:token:" + code, token, TOKEN_TTL);
-        return code;
-    }
-
-    public String takeToken(String code) {
-        if (!isValidHex(code)) {
-            return null;
-        }
-        // 原子取删（GETDEL）：消除 GET 与 DELETE 两条命令之间并发兑换多份 JWT 的窗口；
-        // 本地副本无条件失效，防止跨实例二次兑换
-        if (redisTemplate != null) {
-            try {
-                String token = redisTemplate.opsForValue().getAndDelete("auth:oauth:token:" + code);
-                tokenCache.invalidate(code);
-                return token;
-            } catch (Exception ignored) {
-                // Redis 故障：降级为本地一次性兑换
-            }
-        }
-        // asMap().remove 为原子取删，保证降级模式下同样只能兑换一次
-        return tokenCache.asMap().remove(code);
     }
 
     private void redisSet(String key, String value, Duration ttl) {

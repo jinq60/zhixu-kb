@@ -20,31 +20,25 @@ export interface UserInfo {
 }
 
 interface AuthState {
-  token: string | null
   user: UserInfo | null
   showLoginModal: boolean
 }
 
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
-    token: null,
     user: null,
     showLoginModal: false
   }),
-  // P0-5 修复：Token 改存 sessionStorage（关闭标签即失效），降低 XSS 持久接管面；
-  // 长期应迁移 HttpOnly Cookie，此为过渡期最小加固
+  // Cookie 会话模式：只缓存用户信息（登录态以服务端 Cookie 为准），不再存任何 token
   persist: {
-    paths: ['token', 'user'],
+    paths: ['user'],
     storage: sessionStorage
   },
   getters: {
-    isLoggedIn: (state) => !!state.token,
+    isLoggedIn: (state) => !!state.user,
     displayName: (state): string => state.user?.username || ''
   },
   actions: {
-    setToken(token: string) {
-      this.token = token
-    },
     setUser(user: UserInfo) {
       this.user = user
     },
@@ -55,12 +49,17 @@ export const useAuthStore = defineStore('auth', {
       this.showLoginModal = false
     },
     /**
-     * 账号密码登录（账号不存在时自动注册）
+     * 账号密码登录（账号不存在时自动注册）：会话由 HttpOnly Cookie 承载
      */
     async login(form: { username: string; password: string }): Promise<boolean> {
       try {
-        const token = await apiLogin(form)
-        this.token = token
+        const summary = await apiLogin(form)
+        this.user = {
+          id: summary.userId,
+          username: summary.username,
+          email: '',
+          roles: summary.roles || []
+        }
         await this.refreshUser()
         return true
       } catch {
@@ -72,8 +71,13 @@ export const useAuthStore = defineStore('auth', {
      */
     async emailCodeLogin(form: { email: string; code: string }): Promise<boolean> {
       try {
-        const token = await apiEmailCodeLogin(form)
-        this.token = token
+        const summary = await apiEmailCodeLogin(form)
+        this.user = {
+          id: summary.userId,
+          username: summary.username,
+          email: '',
+          roles: summary.roles || []
+        }
         await this.refreshUser()
         return true
       } catch {
@@ -93,8 +97,13 @@ export const useAuthStore = defineStore('auth', {
      */
     async smsCodeLogin(form: { phone: string; code: string }): Promise<boolean> {
       try {
-        const token = await apiSmsCodeLogin(form)
-        this.token = token
+        const summary = await apiSmsCodeLogin(form)
+        this.user = {
+          id: summary.userId,
+          username: summary.username,
+          email: '',
+          roles: summary.roles || []
+        }
         await this.refreshUser()
         return true
       } catch {
@@ -110,13 +119,12 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     /**
-     * OAuth 弹窗登录成功后设置 token
+     * OAuth 回调确认：Cookie 已由后端 302 响应种下，这里只向服务端确认会话有效
      */
-    async oauthLogin(token: string): Promise<boolean> {
+    async oauthRefresh(): Promise<boolean> {
       try {
-        this.token = token
         await this.refreshUser()
-        return true
+        return !!this.user
       } catch {
         return false
       }
@@ -129,13 +137,12 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     async logout() {
-      // 先通知后端撤销 Token，再清理本地状态，避免会话在有效期内仍可用
+      // 先通知后端撤销会话并清除 Cookie，再清理本地状态
       try {
         await apiLogout()
       } catch {
         // 后端撤销失败不影响本地登出
       }
-      this.token = null
       this.user = null
       router.push('/home')
     }

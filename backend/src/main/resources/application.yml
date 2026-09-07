@@ -53,6 +53,15 @@ spring:
     port: ${REDIS_PORT:6379}
     timeout: 2000ms
 
+  flyway:
+    # 版本化迁移：新库 V1 建全，老库 baseline-on-migrate 跳过 V1、只跑增量；
+    # 老库首次启动会自动建 flyway_schema_history 并标记 V1 已基线，无需手动干预
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    encoding: UTF-8
+    validate-on-migrate: true
+
   # ---------- SMTP 邮件（QQ 邮箱等） ----------
   mail:
     host: ${SMTP_HOST:smtp.qq.com}
@@ -152,6 +161,11 @@ app:
   admin:
     bootstrap-key: ${ADMIN_BOOTSTRAP_KEY:}
     bootstrap-first-admin-only: true
+  # 会话 Cookie（HttpOnly，JS 不可读）：生产 HTTPS 必须 AUTH_COOKIE_SECURE=true
+  auth:
+    cookie-name: ZHIXU_SESSION
+    cookie-secure: ${AUTH_COOKIE_SECURE:false}
+    cookie-same-site: Lax
   oauth:
     frontend-callback: ${OAUTH_FRONTEND_CALLBACK:http://localhost:5173/oauth-callback}
     github:

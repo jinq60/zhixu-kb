@@ -95,6 +95,18 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Flyway 版本化迁移：V1 基线（新库）+ Java 增量（老库补列/补表，元数据幂等）。
+             Flyway 8.1+ 起数据库支持拆分为独立构件，MySQL 必须加 flyway-mysql，
+             否则启动报 Unsupported Database: MySQL（版本由 Boot 统一管理）。 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+
         <!-- Redis（Token 撤销 / 限流 / 检索缓存） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

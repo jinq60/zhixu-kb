@@ -43,9 +43,9 @@ describe('Router Guards (login required)', () => {
     expect(openSpy).toHaveBeenCalled()
   })
 
-  it('已登录（有 token）时直接放行受保护页面', async () => {
+  it('已登录（有用户态）时直接放行受保护页面', async () => {
     const auth = useAuthStore()
-    auth.setToken('valid-token')
+    auth.setUser({ id: 1, username: 'u', email: '', roles: ['user'] })
     const router = createTestRouter()
     await router.push('/categories')
     expect(router.currentRoute.value.path).toBe('/categories')
@@ -60,7 +60,7 @@ describe('Router Guards (login required)', () => {
 
   it('已登录访问 OAuth 回调页重定向到工作台', async () => {
     const auth = useAuthStore()
-    auth.setToken('valid-token')
+    auth.setUser({ id: 1, username: 'u', email: '', roles: ['user'] })
     const router = createTestRouter()
     await router.push('/oauth-callback')
     expect(router.currentRoute.value.path).toBe('/notes')

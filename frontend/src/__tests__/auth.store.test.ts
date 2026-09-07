@@ -20,7 +20,6 @@ vi.mock('../api/auth', () => ({
   smsCodeLogin: vi.fn(),
   sendSmsCode: vi.fn(),
   oauthAuthorizeUrl: vi.fn(),
-  oauthExchange: vi.fn(),
   fetchUserInfo: apiFetchUserInfo,
   fetchUserProfile: vi.fn(),
   updatePassword: vi.fn(),
@@ -33,22 +32,20 @@ describe('AuthStore', () => {
     setActivePinia(createPinia())
     pushMock.mockClear()
     apiLogin.mockClear()
-    apiLogin.mockResolvedValue('token-x')
+    // Cookie 会话模式：登录接口只返回用户摘要（无 token），会话由浏览器 Cookie 承载
+    apiLogin.mockResolvedValue({ userId: 1, username: 'user-1', roles: ['user'] })
     apiFetchUserInfo.mockResolvedValue({ id: 1, username: 'user-1', email: '', roles: ['user'] })
   })
 
   it('initial state should be logged out', () => {
     const auth = useAuthStore()
-    expect(auth.token).toBeNull()
     expect(auth.user).toBeNull()
     expect(auth.isLoggedIn).toBe(false)
   })
 
-  it('setToken should update token and isLoggedIn', () => {
+  it('should not hold any token (cookie session holds the credential)', () => {
     const auth = useAuthStore()
-    auth.setToken('test-jwt-token')
-    expect(auth.token).toBe('test-jwt-token')
-    expect(auth.isLoggedIn).toBe(true)
+    expect('token' in auth.$state).toBe(false)
   })
 
   it('setUser should update user info', () => {
@@ -59,30 +56,26 @@ describe('AuthStore', () => {
     expect(auth.user!.username).toBe('testuser')
   })
 
-  it('logout should clear state and redirect to /home', () => {
+  it('logout should clear state and redirect to /home', async () => {
     const auth = useAuthStore()
-    auth.setToken('test-jwt-token')
     auth.setUser({ id: 1, username: 'testuser', email: 'test@example.com', roles: ['user'] })
 
-    auth.logout()
+    await auth.logout()
 
-    expect(auth.token).toBeNull()
     expect(auth.user).toBeNull()
     expect(auth.isLoggedIn).toBe(false)
     expect(pushMock).toHaveBeenCalledWith('/home')
   })
 
-  it('isLoggedIn should be false when token is empty string', () => {
+  it('isLoggedIn should be false without user', () => {
     const auth = useAuthStore()
-    auth.setToken('')
     expect(auth.isLoggedIn).toBe(false)
   })
 
-  it('login should set token and refresh user info', async () => {
+  it('login should set user and refresh user info', async () => {
     const auth = useAuthStore()
     const ok = await auth.login({ username: 'u', password: 'p' })
     expect(ok).toBe(true)
-    expect(auth.token).toBe('token-x')
     expect(auth.user?.username).toBe('user-1')
     expect(apiLogin).toHaveBeenCalledWith({ username: 'u', password: 'p' })
   })
@@ -92,13 +85,13 @@ describe('AuthStore', () => {
     const auth = useAuthStore()
     const ok = await auth.login({ username: 'u', password: 'wrong' })
     expect(ok).toBe(false)
-    expect(auth.token).toBeNull()
+    expect(auth.user).toBeNull()
   })
 
-  it('oauthLogin should set token and refresh user info', async () => {
+  it('oauthRefresh should confirm session via user info', async () => {
     const auth = useAuthStore()
-    const ok = await auth.oauthLogin('oauth-jwt')
+    const ok = await auth.oauthRefresh()
     expect(ok).toBe(true)
-    expect(auth.token).toBe('oauth-jwt')
+    expect(auth.user?.username).toBe('user-1')
   })
 })

@@ -252,8 +252,8 @@
 
 ### 6.1 认证与授权
 
-- **JWT 认证**：登录后签发 Bearer Token，后续请求携带 `Authorization` Header。
-- **Token 撤销**：登出时将 Token 加入撤销列表，Redis + 本地 Caffeine 双写。
+- **JWT 认证**：登录后签发 JWT 并写入 HttpOnly Cookie（`ZHIXU_SESSION`，SameSite=Lax），浏览器自动携带，响应体不返回 token；非浏览器 API 调用仍可用 `Authorization: Bearer` 头。
+- **Token 撤销**：登出时将 Token 加入撤销列表，Redis + 本地 Caffeine 双写，并清除 Cookie。
 - **角色控制**：管理员接口使用 `@PreAuthorize("hasRole('admin')")`。
 - **注册限流**：单 IP 每日自动注册次数上限（默认 10）。
 - **验证码错误限流**：防止暴力破解。

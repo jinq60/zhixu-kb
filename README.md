@@ -21,7 +21,7 @@
 | 分享 | 笔记公开发布、公开发现大厅、分享阅读 | REST API |
 | 治理 | 系统总览、AI 引擎热切换（云端/本地）、用户角色管理、告警监控 | Redis + 限流 + Token 撤销 |
 
-安全体系：JWT 认证、Token 撤销（Redis + 本地双写）、接口限流、敏感数据加密（AES-GCM）与日志脱敏。
+安全体系：JWT 会话 Cookie（HttpOnly + SameSite=Lax，JS 不可读）、Token 撤销（Redis + 本地双写）、接口限流、敏感数据加密（AES-GCM）与日志脱敏；DB 结构变更走 Flyway 版本化迁移。
 
 ---
 
@@ -205,7 +205,7 @@ schtasks /Create /TN "zhixu-mysql-backup" /SC DAILY /ST 03:00 /TR "powershell -E
 - **数据隔离**：不同用户拥有独立的数据空间——笔记、问答、图谱互不干扰（后端按用户隔离）
 - **注册限流**：单 IP 每日自动注册次数上限（`app.registration.max-per-day`，默认 10），防刷号
 - **管理员**：注册时携带 `ADMIN_BOOTSTRAP_KEY` 创建管理员，或由管理员在管理后台变更角色
-- **安全**：JWT 认证、登出即撤销 Token、验证码错误次数限制、OAuth state 防 CSRF + 一次性 code 换发
+- **安全**：JWT 会话 Cookie（HttpOnly + SameSite=Lax，响应体不返回 token）、登出即撤销 Token（含 Cookie 清除）、验证码错误次数限制、OAuth 回调直接种 Cookie（无 code 经 URL 中转）
 
 ### AI 模型：云端 API（平台默认 + 用户自配）
 

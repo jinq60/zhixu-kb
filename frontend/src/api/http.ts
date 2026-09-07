@@ -4,16 +4,9 @@ import { useAuthStore } from '../stores/auth'
 
 const instance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '',
-  timeout: 60000
-})
-
-instance.interceptors.request.use((config) => {
-  const auth = useAuthStore()
-  if (auth.token) {
-    config.headers = config.headers || {}
-    config.headers.Authorization = `Bearer ${auth.token}`
-  }
-  return config
+  timeout: 60000,
+  // Cookie 会话模式：同源/可信跨域一律携带 HttpOnly 会话 Cookie，不再手写 Authorization 头
+  withCredentials: true
 })
 
 instance.interceptors.response.use(
@@ -31,8 +24,8 @@ instance.interceptors.response.use(
     const businessError = (error as { businessError?: boolean })?.businessError === true
     if (status === 401 && !businessError) {
       const auth = useAuthStore()
-      // 仅在仍有 token 时登出，避免多个并行请求同时 401 触发多次跳转
-      if (auth.token) {
+      // 仅在仍有登录态时登出，避免多个并行请求同时 401 触发多次跳转
+      if (auth.isLoggedIn) {
         auth.logout().catch(() => undefined)
       }
     } else if (status === 403) {

@@ -35,15 +35,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtUtils jwtUtils;
     private final TokenRevocationStore revocationStore;
     private final com.zhixu.kb.system.service.CustomUserDetailsService userDetailsService;
+    private final com.zhixu.kb.system.auth.AuthCookieService authCookieService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        String header = request.getHeader("Authorization");
-        String token = null;
-        if (StringUtils.hasText(header) && header.startsWith("Bearer ")) {
-            token = header.substring(7);
-        }
+        // Cookie 会话优先（浏览器），缺失时回落 Authorization 头（API 调用兼容）
+        String token = authCookieService.resolveToken(request);
 
         // Support token in query string ONLY for <img src="..."> resource loading:
         // 仅 GET /api/files/*/content 且 Accept 为图片时才允许，避免 token 进入

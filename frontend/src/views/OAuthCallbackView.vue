@@ -3,65 +3,37 @@ import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
-import { oauthExchange } from '../api/auth'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
 onMounted(async () => {
-  const code = route.query.code as string
+  // Cookie 会话模式：登录态已由后端 302 响应的 Set-Cookie 种下，回调地址不再带 code，
+  // 这里只向服务端确认会话有效（刷新用户信息），不存在凭证经 URL 传递。
   const error = route.query.error as string
-
-  // P0-7 修复：仅接受本次会话发起的 OAuth 回调，拒绝攻击者诱导访问的 code（Login CSRF）；
-  // 标记一次性消费，且兑换后立即清除 URL 中的 code 防重放/日志残留
-  let initiated = false
-  try {
-    initiated = sessionStorage.getItem('oauth_initiated') === '1'
-    sessionStorage.removeItem('oauth_initiated')
-  } catch { /* ignore */ }
-  // 弹窗模式由 opener 发起：允许无标记（父页面持有 source 校验）；直跳模式必须有标记
-  if (!window.opener && !initiated) {
-    ElMessage.error('请从登录页发起第三方登录')
-    router.replace({ path: '/home', query: {} })
-    return
-  }
-
   if (error) {
-    postResult('', error)
+    postResult(false, error)
     ElMessage.error(error)
     router.replace({ path: '/home', query: {} })
     return
   }
 
-  if (!code) {
-    postResult('', '未收到授权码')
-    router.replace({ path: '/home', query: {} })
-    return
-  }
-
-  try {
-    const token = await oauthExchange(code)
-    postResult(token, '')
-    const ok = await auth.oauthLogin(token)
-    if (ok) {
-      ElMessage.success('登录成功')
-      router.replace({ path: '/notes', query: {} })
-    } else {
-      ElMessage.error('登录失败')
-      router.replace({ path: '/home', query: {} })
-    }
-  } catch {
-    postResult('', '授权码无效或已过期')
-    ElMessage.error('授权码无效或已过期，请重新登录')
+  const ok = await auth.oauthRefresh()
+  postResult(ok, ok ? '' : '登录失败')
+  if (ok) {
+    ElMessage.success('登录成功')
+    router.replace({ path: '/notes', query: {} })
+  } else {
+    ElMessage.error('登录失败，请重新登录')
     router.replace({ path: '/home', query: {} })
   }
 })
 
-function postResult(token: string, error: string) {
+function postResult(success: boolean, error: string) {
   if (window.opener) {
-    // 弹窗模式：把结果 postMessage 给父页面
-    window.opener.postMessage({ token, error }, window.location.origin)
+    // 弹窗模式：只通知父页面成功与否，不再传递任何 token
+    window.opener.postMessage({ success, error }, window.location.origin)
     window.close()
   }
 }

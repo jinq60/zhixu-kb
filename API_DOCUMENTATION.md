@@ -12,7 +12,7 @@
 |---|---|
 | 基础路径 | `http://localhost:8080`（开发）；Docker 环境下前端 Nginx 反代 `/api`） |
 | 统一响应 | `Result<T>` 包装：`{ "code": 0, "message": "...", "data": T }`；非 0 为业务错误 |
-| 认证方式 | JWT Bearer Token，登录后获取；敏感接口在 Header 中携带 `Authorization: Bearer <token>` |
+| 认证方式 | JWT 会话 Cookie（`ZHIXU_SESSION`，HttpOnly + SameSite=Lax）：登录后由 Set-Cookie 下发，浏览器自动携带；非浏览器 API 调用仍可用 Header `Authorization: Bearer <token>` |
 | 内容类型 | `application/json`；文件上传使用 `multipart/form-data`；SSE 流式问答返回 `text/event-stream` |
 | 分页参数 | `page` 从 1 开始，`size` 默认 10 |
 
@@ -75,13 +75,15 @@
     "password": "password123"
   }
   ```
-- **响应**：
+- **响应**：`Set-Cookie: ZHIXU_SESSION=<jwt>; Path=/; HttpOnly; SameSite=Lax`（响应体不再含 token）
   ```json
   {
     "code": 0,
     "message": "ok",
     "data": {
-      "token": "eyJhbGciOiJIUzI1NiJ9..."
+      "userId": 1,
+      "username": "alice",
+      "roles": ["user"]
     }
   }
   ```
@@ -195,32 +197,16 @@
 - **HTTP**：`GET /login/oauth2/code/{provider}?code=...&state=...`
 - **权限**：公开
 
-#### 一次性 code 换 JWT
+#### 回调直接登录（无 code 中转）
 
-- **HTTP**：`POST /api/auth/oauth/exchange`
-- **权限**：公开
-- **请求体**：
-  ```json
-  {
-    "code": "one-time-code-from-callback"
-  }
-  ```
-- **响应**：
-  ```json
-  {
-    "code": 0,
-    "data": {
-      "token": "eyJhbGciOiJIUzI1NiJ9..."
-    }
-  }
-  ```
+- Cookie 会话模式下，第三方回调的 302 响应直接携带 `Set-Cookie`，前端回调页无需再用 code 换 token；
+  旧 `POST /api/auth/oauth/exchange` 接口已删除（JWT 不再经过 URL）。
 
 ### 3.7 登出
 
 - **HTTP**：`POST /api/auth/logout`
-- **权限**：登录用户
-- **请求头**：`Authorization: Bearer <token>`
-- **说明**：后端将 Token 加入撤销列表（Redis + 本地缓存双写）。
+- **权限**：登录用户（Cookie 自动携带，无需手动传 token）
+- **说明**：后端将当前会话 Token 加入撤销列表（Redis + 本地缓存双写），并下发清除 Cookie。非浏览器调用仍可传 `Authorization: Bearer <token>` 指定撤销对象。
 - **响应**：
   ```json
   {

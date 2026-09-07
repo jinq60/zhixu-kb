@@ -24,7 +24,7 @@ public class OAuthCallbackController {
                          @RequestParam String code,
                          @RequestParam(required = false) String state,
                          HttpServletResponse response) throws IOException {
-        String redirectUrl = oAuthService.callback(provider, code, state);
+        String redirectUrl = oAuthService.callback(provider, code, state, response);
         response.sendRedirect(redirectUrl);
     }
 }

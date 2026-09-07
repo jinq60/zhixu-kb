@@ -12,7 +12,12 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
-@SpringBootApplication
+// Neo4j 健康探针自动配置已排除：neo4j.enabled=false 时驱动 Bean 为 null，
+// Boot 2.7 的 Reactive 健康贡献器遇到空驱动直接抛错导致启动失败（README 承诺可关闭）。
+// 图谱可用性由业务层（Neo4jAccessor 降级 + 管理端总览）保障，不依赖 actuator 探针。
+@SpringBootApplication(exclude = {
+        org.springframework.boot.actuate.autoconfigure.neo4j.Neo4jHealthContributorAutoConfiguration.class
+})
 @MapperScan("com.zhixu.kb.**.mapper")
 @EnableConfigurationProperties({
         FileStorageProperties.class,

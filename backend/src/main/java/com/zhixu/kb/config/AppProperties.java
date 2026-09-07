@@ -16,6 +16,7 @@ public class AppProperties {
     private Monitor monitor = new Monitor();
     private Admin admin = new Admin();
     private ClientIp clientIp = new ClientIp();
+    private Auth auth = new Auth();
 
     public RateLimit getRateLimit() {
         return rateLimit;
@@ -47,6 +48,48 @@ public class AppProperties {
 
     public void setClientIp(ClientIp clientIp) {
         this.clientIp = clientIp;
+    }
+
+    public Auth getAuth() {
+        return auth;
+    }
+
+    public void setAuth(Auth auth) {
+        this.auth = auth;
+    }
+
+    /**
+     * 会话 Cookie 参数：JWT 改存 HttpOnly Cookie，JS 不可读，XSS 无法持久窃取。
+     * SameSite=Lax 阻断跨站 POST 携带（防 CSRF）；生产 HTTPS 必须开启 cookieSecure。
+     */
+    public static class Auth {
+        private String cookieName = "ZHIXU_SESSION";
+        private Boolean cookieSecure = false;
+        private String cookieSameSite = "Lax";
+
+        public String getCookieName() {
+            return cookieName;
+        }
+
+        public void setCookieName(String cookieName) {
+            this.cookieName = cookieName;
+        }
+
+        public Boolean getCookieSecure() {
+            return cookieSecure;
+        }
+
+        public void setCookieSecure(Boolean cookieSecure) {
+            this.cookieSecure = cookieSecure;
+        }
+
+        public String getCookieSameSite() {
+            return cookieSameSite;
+        }
+
+        public void setCookieSameSite(String cookieSameSite) {
+            this.cookieSameSite = cookieSameSite;
+        }
     }
 
     /**

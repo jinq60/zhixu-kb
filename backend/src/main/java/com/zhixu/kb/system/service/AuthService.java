@@ -167,13 +167,24 @@ public class AuthService {
     }
 
     public String generateTokenForUser(SysUser user) {
-        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername());
+        return generateTokenForUsername(user.getUsername());
+    }
+
+    public String generateTokenForUsername(String username) {
+        UserDetails userDetails = userDetailsService.loadUserByUsername(username);
         return jwtUtils.generateToken(userDetails);
     }
 
+    /**
+     * 登录响应只含用户摘要；会话 JWT 由 Controller 层经 {@code generateTokenForUser}
+     * 签发并写入 HttpOnly Cookie，响应体不再携带 token。
+     */
     private LoginResponse buildLoginResponse(SysUser user) {
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getUsername());
-        return new LoginResponse(jwtUtils.generateToken(userDetails));
+        List<String> roles = (userDetails instanceof LoginUser)
+                ? ((LoginUser) userDetails).getRoles()
+                : Collections.singletonList("user");
+        return new LoginResponse(user.getId(), user.getUsername(), roles);
     }
 
     public void logout(String token) {
