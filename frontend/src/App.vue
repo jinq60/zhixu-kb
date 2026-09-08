@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import {
   SwitchButton,
@@ -12,6 +12,10 @@ import {
 import { useAuthStore } from './stores/auth'
 import AppHeader from './components/AppHeader.vue'
 import LoginModal from './components/LoginModal.vue'
+import TaskCenterView from './views/TaskCenterView.vue'
+import { getActiveTasks, getRecentTasks, type ActiveTask, type RecentTask } from './api/file'
+import { listAIAnalysisTasks, type AiAnalysisTaskItem } from './api/note'
+import { listGraphTasks, type GraphTaskItem } from './api/graph'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,6 +23,101 @@ const auth = useAuthStore()
 
 const isLoggedIn = computed(() => auth.isLoggedIn)
 const isBlankLayout = computed(() => route.meta.layout === 'blank')
+/** 工作台布局是否展示（登录 + 非空白页）：任务轮询与悬浮球只在这里生效 */
+const isWorkspaceView = computed(() => auth.isLoggedIn && !isBlankLayout.value)
+
+/* ---------- 任务中心业务（工作台专属，原在导航栏，现已解耦至此） ---------- */
+const activeTasks = ref<ActiveTask[]>([])
+const recentTasks = ref<RecentTask[]>([])
+const aiActiveTasks = ref<AiAnalysisTaskItem[]>([])
+const aiRecentTasks = ref<AiAnalysisTaskItem[]>([])
+const graphActiveTasks = ref<GraphTaskItem[]>([])
+const graphRecentTasks = ref<GraphTaskItem[]>([])
+const taskDialogVisible = ref(false)
+let taskTimer: ReturnType<typeof setInterval> | null = null
+let taskLoading = false
+
+const loadActiveTasks = async () => {
+  if (!isWorkspaceView.value) return
+  // 上一次轮询未结束时跳过，防止慢网络下轮询请求堆积
+  if (taskLoading) return
+  taskLoading = true
+  try {
+    activeTasks.value = await getActiveTasks()
+    recentTasks.value = await getRecentTasks()
+  } catch {
+    // 忽略轮询失败
+  }
+  try {
+    const ai = await listAIAnalysisTasks()
+    aiActiveTasks.value = ai.active || []
+    aiRecentTasks.value = ai.recent || []
+  } catch {
+    // AI 整理任务列表轮询失败不影响文档任务
+  }
+  try {
+    const graph = await listGraphTasks()
+    graphActiveTasks.value = graph.active || []
+    graphRecentTasks.value = graph.recent || []
+  } catch {
+    // 图谱任务列表轮询失败不影响其他任务
+  }
+  taskLoading = false
+}
+
+/** 进行中的任务总数（文档 + AI 整理 + 知识图谱） */
+const activeCount = computed(() => activeTasks.value.length + aiActiveTasks.value.length + graphActiveTasks.value.length)
+/** 是否存在最近失败的任务（红点提醒） */
+const hasFailedTasks = computed(
+  () =>
+    recentTasks.value.some((t) => t.status === 'FAILED') ||
+    aiRecentTasks.value.some((t) => !!t.error) ||
+    graphRecentTasks.value.some((t) => !!t.error)
+)
+
+watch(
+  isWorkspaceView,
+  (inWorkspace) => {
+    if (inWorkspace) {
+      loadActiveTasks()
+      if (!taskTimer) {
+        taskTimer = setInterval(loadActiveTasks, 8000)
+      }
+    } else {
+      // 离开工作台（含登出）：无条件清理，防止跨账号数据残留
+      if (taskTimer) {
+        clearInterval(taskTimer)
+        taskTimer = null
+      }
+      // 登出必须连同 recent 一起清空：否则换账号登录后，
+      // 红点（hasFailedTasks）会显示上一个账号的失败任务
+      activeTasks.value = []
+      recentTasks.value = []
+      aiActiveTasks.value = []
+      aiRecentTasks.value = []
+      graphActiveTasks.value = []
+      graphRecentTasks.value = []
+      taskDialogVisible.value = false
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  if (taskTimer) {
+    clearInterval(taskTimer)
+    taskTimer = null
+  }
+})
+
+// 新任务出现时自动打开任务中心弹窗，让用户第一时间看到进度
+let lastActiveCount = 0
+watch(activeCount, (count) => {
+  if (count > lastActiveCount && !taskDialogVisible.value) {
+    taskDialogVisible.value = true
+  }
+  lastActiveCount = count
+})
 
 /** 需要缓存组件的页面（避免重复初始化 wangeditor 编辑器等重组件） */
 const CACHED_PAGES = ['NoteEdit']
@@ -95,11 +194,79 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
           </KeepAlive>
         </RouterView>
       </main>
+
+      <!-- 任务中心悬浮球：右下角常驻，点击打开任务中心弹窗 -->
+      <div class="task-fab">
+        <button
+          class="task-btn"
+          :title="activeCount > 0 ? `有 ${activeCount} 个任务进行中` : '任务中心'"
+          @click="taskDialogVisible = true"
+        >
+          <span v-if="activeCount > 0" class="task-btn-spinner" />
+          <span v-if="activeCount > 0" class="task-btn-count">{{ activeCount }}</span>
+          <span v-if="hasFailedTasks" class="task-btn-fail-dot" />
+          {{ activeCount > 0 ? '任务进行中' : '任务中心' }}
+        </button>
+      </div>
+
+      <!-- 任务中心弹窗：细粒度进度 + 失败重试 + 删除/清空任务记录 -->
+      <el-dialog
+        v-model="taskDialogVisible"
+        title="任务中心"
+        width="760px"
+        :destroy-on-close="true"
+        :append-to-body="true"
+        :close-on-click-modal="true"
+        align-center
+        class="task-dialog"
+      >
+        <TaskCenterView embedded />
+      </el-dialog>
     </div>
   </el-config-provider>
 </template>
 
 <style>
+/* ---------- 知序设计 token（落地页 + 控制台共享） ---------- */
+:root {
+  --zx-paper: #fffefa;
+  --zx-ink: #17202f;
+  --zx-brand: #f2641e;
+  --zx-brand-ink: #c25018;
+  --zx-brand-soft: #fef0e9;
+  --zx-brand-ring: rgba(242, 100, 30, 0.16);
+  --zx-iris: #7a5af8;
+  --zx-teal: #0ca789;
+  --zx-amber: #d9930d;
+  --zx-night: #111a2e;
+  --zx-display:
+    'Baloo 2', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  /* 中文展示衬线：只给大标题与引言，克制使用 */
+  --zx-serif:
+    'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+  --zx-mono:
+    ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  /* 落地页用柿色；工作台（.workspace 内）覆盖回 Element 默认蓝，见下方 */
+  --el-color-primary: var(--zx-brand);
+  --el-color-primary-light-3: #f69361;
+  --el-color-primary-light-5: #f9b18f;
+  --el-color-primary-light-7: #fbd1bc;
+  --el-color-primary-light-8: #fce0d2;
+  --el-color-primary-light-9: #fef0e9;
+  --el-color-primary-dark-2: #c25018;
+}
+
+/* ---------- 工作台恢复蓝白：Element 组件回到默认蓝 ---------- */
+.workspace {
+  --el-color-primary: #409eff;
+  --el-color-primary-light-3: #79bbff;
+  --el-color-primary-light-5: #a0cfff;
+  --el-color-primary-light-7: #c6e2ff;
+  --el-color-primary-light-8: #d9ecff;
+  --el-color-primary-light-9: #ecf5ff;
+  --el-color-primary-dark-2: #337ecc;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -306,6 +473,96 @@ body {
 .booting-text {
   color: #909399;
   font-size: 14px;
+}
+
+/* ---------- 任务中心悬浮球（工作台蓝白） ---------- */
+.task-dialog {
+  max-width: calc(100vw - 32px) !important;
+}
+
+.task-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  cursor: pointer;
+  filter: drop-shadow(0 10px 24px rgba(23, 32, 47, 0.16));
+}
+
+@media (max-width: 768px) {
+  .task-fab {
+    right: 16px;
+    bottom: 16px;
+  }
+}
+
+.task-fab .task-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #dbe3f0;
+  border-radius: 999px;
+  padding: 11px 18px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.task-fab .task-btn:hover {
+  border-color: #2563eb;
+  transform: translateY(-2px);
+}
+
+.task-fab .task-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.task-btn-count {
+  background: #2563eb;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
+.task-btn-fail-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f56c6c;
+  flex-shrink: 0;
+}
+
+.task-btn-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #c0c4cc;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: task-spin 0.8s linear infinite;
+}
+
+@keyframes task-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-fab .task-btn:hover {
+    transform: none;
+  }
+
+  .task-btn-spinner {
+    animation: none;
+  }
 }
 
 /* ---------- 身份管理弹窗 ---------- */
