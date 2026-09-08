@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { SITE_PRODUCTS } from '../config/products'
 import {
   ArrowRight,
   Download,
@@ -10,9 +11,6 @@ import {
   Share,
   MagicStick,
   Search,
-  Monitor,
-  SetUp,
-  DataLine,
   School,
   OfficeBuilding,
   EditPen,
@@ -113,59 +111,56 @@ const onHeroMove = (e: MouseEvent) => {
   el.style.setProperty('--py', (y * 10).toFixed(1))
 }
 
-/* ---------- 产品矩阵 ---------- */
-const products = [
+/* ---------- 产品矩阵：基础信息唯一来源 config/products，落地页只补展示字段 ---------- */
+import type { SiteProduct } from '../config/products'
+
+interface LandingProduct extends SiteProduct {
+  en: string
+  img: string
+  soft: string
+  longDesc: string
+  tags: string[]
+  action: string
+  primary?: boolean
+}
+
+const products: LandingProduct[] = [
   {
-    name: '知序智能知识库',
+    ...SITE_PRODUCTS[0],
     en: 'KNOWLEDGE BASE',
     img: '/img/kb-notes.jpg',
-    desc: 'OCR 识别、AI 整理、知识图谱、RAG 问答一站式个人知识管理平台。',
-    icon: Notebook,
-    color: '#f2641e',
     soft: '#fef0e9',
+    longDesc: 'OCR 识别、AI 整理、知识图谱、RAG 问答一站式个人知识管理平台。',
     tags: ['已上线', '免费版可用'],
     action: 'Web 体验',
-    path: '/notes',
     primary: true
   },
   {
-    name: '知序 AI 工作台',
+    ...SITE_PRODUCTS[1],
     en: 'TEAM SPACE',
     img: '/img/team-work.jpg',
-    desc: '面向团队的多人协作知识空间，权限管理、版本控制、AI 助手全集成。',
-    icon: Monitor,
-    color: '#7a5af8',
     soft: '#f1edfe',
+    longDesc: '面向团队的多人协作知识空间，权限管理、版本控制、AI 助手全集成。',
     tags: ['即将上线'],
-    action: '预约体验',
-    path: '/home',
-    coming: true
+    action: '预约体验'
   },
   {
-    name: '知序 OCR 工具箱',
+    ...SITE_PRODUCTS[2],
     en: 'OCR TOOLKIT',
     img: '/img/ocr-manuscript.jpg',
-    desc: '本地离线 OCR 识别套件，支持批量图片、PDF 与截图文字提取。',
-    icon: SetUp,
-    color: '#0ca789',
     soft: '#e6f7f4',
+    longDesc: '本地离线 OCR 识别套件，支持批量图片、PDF 与截图文字提取。',
     tags: ['客户端', 'Windows'],
-    action: '预约下载',
-    path: '/home',
-    coming: true
+    action: '预约下载'
   },
   {
-    name: '知序数据同步助手',
+    ...SITE_PRODUCTS[3],
     en: 'SYNC HELPER',
     img: '/img/sync-desk.jpg',
-    desc: '多端知识库同步工具，本地文件、云端与 NAS 一键同步备份。',
-    icon: DataLine,
-    color: '#d9930d',
     soft: '#fdf6e3',
+    longDesc: '多端知识库同步工具，本地文件、云端与 NAS 一键同步备份。',
     tags: ['即将上线'],
-    action: '预约体验',
-    path: '/home',
-    coming: true
+    action: '预约体验'
   }
 ]
 
@@ -564,21 +559,21 @@ const vReveal = {
       <div class="product-grid">
         <div
           v-for="p in products"
-          :key="p.name"
+          :key="p.key"
           v-reveal
           :class="['product-card', { primary: p.primary, coming: p.coming }]"
           :style="{ '--p': p.color, '--ps': p.soft }"
         >
           <div class="product-photo">
-            <img :src="p.img" :alt="p.name" loading="lazy" />
+            <img :src="p.img" :alt="p.label" loading="lazy" />
             <span class="product-photo-tag">{{ p.tags[0] }}</span>
           </div>
           <div class="product-icon">
             <el-icon><component :is="p.icon" /></el-icon>
           </div>
           <div class="product-en">{{ p.en }}</div>
-          <h3>{{ p.name }}</h3>
-          <p>{{ p.desc }}</p>
+          <h3>{{ p.label }}</h3>
+          <p>{{ p.longDesc }}</p>
           <div class="product-tags">
             <el-tag v-for="tag in p.tags" :key="tag" size="small" type="info" effect="plain">{{ tag }}</el-tag>
           </div>

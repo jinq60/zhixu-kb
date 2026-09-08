@@ -1,25 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+/**
+ * 官网导航栏：纯展示组件，不关联任何业务代码。
+ * - 导航/产品目录来自 config/products（上架新产品只改配置）
+ * - 任务轮询、任务弹窗等业务逻辑已搬到 App.vue（工作台布局内）
+ */
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { getActiveTasks, getRecentTasks, type ActiveTask, type RecentTask } from '../api/file'
-import { listAIAnalysisTasks, type AiAnalysisTaskItem } from '../api/note'
-import { listGraphTasks, type GraphTaskItem } from '../api/graph'
-import TaskCenterView from '../views/TaskCenterView.vue'
+import { navigateToProduct, SITE_PRODUCTS } from '../config/products'
 import {
   ArrowRight,
   ArrowDown,
   Download,
-  Document,
-  OfficeBuilding,
-  User,
-  Phone,
-  Monitor,
-  Menu,
-  Notebook,
-  SetUp,
-  DataLine,
-  Link
+  Menu
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -28,103 +21,8 @@ const auth = useAuthStore()
 
 const mobileMenuOpen = ref(false)
 
-/** 全局任务中心角标数据（文档处理 + AI 整理，登录且在工作台时轮询） */
-const activeTasks = ref<ActiveTask[]>([])
-const recentTasks = ref<RecentTask[]>([])
-const aiActiveTasks = ref<AiAnalysisTaskItem[]>([])
-const aiRecentTasks = ref<AiAnalysisTaskItem[]>([])
-const graphActiveTasks = ref<GraphTaskItem[]>([])
-const graphRecentTasks = ref<GraphTaskItem[]>([])
-const taskDialogVisible = ref(false)
-let taskTimer: ReturnType<typeof setInterval> | null = null
-let taskLoading = false
-
-const loadActiveTasks = async () => {
-  if (!auth.isLoggedIn || isHome.value) return
-  // 上一次轮询未结束时跳过，防止慢网络下轮询请求堆积
-  if (taskLoading) return
-  taskLoading = true
-  try {
-    activeTasks.value = await getActiveTasks()
-    recentTasks.value = await getRecentTasks()
-  } catch {
-    // 忽略轮询失败
-  }
-  try {
-    const ai = await listAIAnalysisTasks()
-    aiActiveTasks.value = ai.active || []
-    aiRecentTasks.value = ai.recent || []
-  } catch {
-    // AI 整理任务列表轮询失败不影响文档任务
-  }
-  try {
-    const graph = await listGraphTasks()
-    graphActiveTasks.value = graph.active || []
-    graphRecentTasks.value = graph.recent || []
-  } catch {
-    // 图谱任务列表轮询失败不影响其他任务
-  }
-  taskLoading = false
-}
-
-// 注意：以下 computed 必须在 watch 之前声明——watch(immediate) 会在 setup 阶段同步调用
-// loadActiveTasks()，其中引用了 isHome，声明顺序颠倒会触发 TDZ 错误（Cannot access before initialization）
 const isHome = computed(() => route.path === '/' || route.path === '/home')
 const isWorkspace = computed(() => !isHome.value)
-/** 进行中的任务总数（文档 + AI 整理 + 知识图谱） */
-const activeCount = computed(() => activeTasks.value.length + aiActiveTasks.value.length + graphActiveTasks.value.length)
-/** 是否存在最近失败的任务（红点提醒） */
-const hasFailedTasks = computed(
-  () =>
-    recentTasks.value.some((t) => t.status === 'FAILED') ||
-    aiRecentTasks.value.some((t) => !!t.error) ||
-    graphRecentTasks.value.some((t) => !!t.error)
-)
-
-// 登录后启动全局任务轮询（3s），退出登录停止
-watch(
-  () => auth.isLoggedIn,
-  (loggedIn) => {
-    if (loggedIn) {
-      loadActiveTasks()
-      if (!taskTimer) {
-        taskTimer = setInterval(loadActiveTasks, 8000)
-      }
-    } else {
-      // 未登录（含登出、首页未起轮询的场景）：无条件清理，防止跨账号数据残留
-      if (taskTimer) {
-        clearInterval(taskTimer)
-        taskTimer = null
-      }
-      // 登出必须连同 recent 一起清空：否则换账号登录后，
-      // 红点（hasFailedTasks）会显示上一个账号的失败任务
-      activeTasks.value = []
-      recentTasks.value = []
-      aiActiveTasks.value = []
-      aiRecentTasks.value = []
-      graphActiveTasks.value = []
-      graphRecentTasks.value = []
-      taskDialogVisible.value = false
-    }
-  },
-  { immediate: true }
-)
-
-onBeforeUnmount(() => {
-  if (taskTimer) {
-    clearInterval(taskTimer)
-    taskTimer = null
-  }
-})
-
-// 新任务出现时自动打开任务中心弹窗，让用户第一时间看到进度
-let lastActiveCount = 0
-watch(activeCount, (count) => {
-  if (count > lastActiveCount && !taskDialogVisible.value) {
-    taskDialogVisible.value = true
-  }
-  lastActiveCount = count
-})
 
 const enterWeb = () => {
   if (auth.isLoggedIn) {
@@ -142,12 +40,8 @@ const goDownload = () => {
   }
 }
 
-const products = [
-  { path: '/notes', label: '知序智能知识库', desc: 'OCR + AI 整理 + 知识图谱', icon: Notebook, color: '#f2641e' },
-  { path: '/home', label: '知序 AI 工作台', desc: '面向团队的智能协作平台', icon: Monitor, coming: true, color: '#7a5af8' },
-  { path: '/home', label: '知序 OCR 工具箱', desc: '本地离线 OCR 识别套件', icon: SetUp, coming: true, color: '#0ca789' },
-  { path: '/home', label: '知序数据同步助手', desc: '多端知识库同步工具', icon: DataLine, coming: true, color: '#d9930d' }
-]
+/** 产品目录唯一来源：config/products，上架新产品无需改本文件 */
+const products = SITE_PRODUCTS
 
 const navLinks = [
   { label: '产品', type: 'dropdown' },
@@ -212,8 +106,8 @@ const goHomeHash = (hash: string) => {
             <el-dropdown-menu class="product-menu">
               <el-dropdown-item
                 v-for="p in products"
-                :key="p.label"
-                @click="p.coming ? router.push('/home') : router.push(p.path)"
+                :key="p.key"
+                @click="navigateToProduct(router, p)"
               >
                 <div class="product-item">
                   <div
@@ -262,37 +156,6 @@ const goHomeHash = (hash: string) => {
       </div>
     </div>
 
-    <!-- 任务中心弹窗：细粒度进度 + 失败重试 + 删除/清空任务记录 -->
-    <el-dialog
-      v-model="taskDialogVisible"
-      title="任务中心"
-      width="760px"
-      :destroy-on-close="true"
-      :append-to-body="true"
-      :close-on-click-modal="true"
-      align-center
-      class="task-dialog"
-    >
-      <TaskCenterView embedded />
-    </el-dialog>
-
-    <!-- 任务中心悬浮球：右下角常驻（工作台内），点击打开任务中心弹窗 -->
-    <div
-      v-if="isWorkspace && auth.isLoggedIn"
-      class="task-fab"
-    >
-      <button
-        class="task-btn"
-        :title="activeCount > 0 ? `有 ${activeCount} 个任务进行中` : '任务中心'"
-        @click="taskDialogVisible = true"
-      >
-        <span v-if="activeCount > 0" class="task-btn-spinner" />
-        <span v-if="activeCount > 0" class="task-btn-count">{{ activeCount }}</span>
-        <span v-if="hasFailedTasks" class="task-btn-fail-dot" />
-        {{ activeCount > 0 ? '任务进行中' : '任务中心' }}
-      </button>
-    </div>
-
     <div v-show="mobileMenuOpen" class="mobile-menu">
       <a class="mobile-link" @click="router.push('/home'); mobileMenuOpen = false">首页</a>
       <a class="mobile-link" @click="goHomeHash('#products')">产品</a>
@@ -331,7 +194,7 @@ const goHomeHash = (hash: string) => {
   border-radius: 8px;
 }
 
-/* 工作台内恢复蓝白：品牌、主按钮、任务角标（落地页保持柿色身份） */
+/* 工作台内恢复蓝白（落地页保持柿色身份） */
 .app-header.in-workspace {
   --el-color-primary: #409eff;
   --el-color-primary-light-3: #79bbff;
@@ -350,25 +213,6 @@ const goHomeHash = (hash: string) => {
 .app-header.in-workspace .nav-item:hover {
   color: #2563eb;
   background: #f4f7fd;
-}
-
-.app-header.in-workspace .task-btn {
-  border-color: #dbe3f0;
-  background: #f8fafc;
-  color: #2563eb;
-}
-
-.app-header.in-workspace .task-btn:hover {
-  border-color: #2563eb;
-}
-
-.app-header.in-workspace .task-btn-count {
-  background: #2563eb;
-}
-
-.app-header.in-workspace .task-btn-spinner {
-  border-color: #c0c4cc;
-  border-top-color: #2563eb;
 }
 
 .header-inner {
@@ -579,82 +423,4 @@ const goHomeHash = (hash: string) => {
     display: block;
   }
 }
-.task-dialog {
-  max-width: calc(100vw - 32px) !important;
-}
-
-.task-fab {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 90;
-  cursor: pointer;
-  filter: drop-shadow(0 10px 24px rgba(23, 32, 47, 0.16));
-}
-
-@media (max-width: 768px) {
-  .task-fab {
-    right: 16px;
-    bottom: 16px;
-  }
-}
-
-.task-fab .task-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid #f0ddd0;
-  border-radius: 999px;
-  padding: 11px 18px;
-  background: rgba(255, 254, 250, 0.96);
-  color: var(--zx-brand-ink);
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    border-color 0.2s ease,
-    transform 0.2s ease;
-}
-
-.task-fab .task-btn:hover {
-  border-color: var(--zx-brand);
-  transform: translateY(-2px);
-}
-
-.task-btn:hover {
-  border-color: var(--zx-brand);
-}
-
-.task-btn-count {
-  background: var(--zx-brand);
-  color: #fff;
-  border-radius: 10px;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 6px;
-}
-
-.task-btn-fail-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #f56c6c;
-  flex-shrink: 0;
-}
-
-.task-btn-spinner {
-  width: 10px;
-  height: 10px;
-  border: 2px solid #e8c9b8;
-  border-top-color: var(--zx-brand);
-  border-radius: 50%;
-  animation: task-spin 0.8s linear infinite;
-}
-
-@keyframes task-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 </style>
