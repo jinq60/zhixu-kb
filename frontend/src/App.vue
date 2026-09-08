@@ -119,7 +119,7 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
     'Noto Serif SC', 'Songti SC', 'SimSun', serif;
   --zx-mono:
     ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
-  /* Element Plus 主色同步（控制台协调换肤的关键一行） */
+  /* 落地页用柿色；工作台（.workspace 内）覆盖回 Element 默认蓝，见下方 */
   --el-color-primary: var(--zx-brand);
   --el-color-primary-light-3: #f69361;
   --el-color-primary-light-5: #f9b18f;
@@ -127,6 +127,17 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
   --el-color-primary-light-8: #fce0d2;
   --el-color-primary-light-9: #fef0e9;
   --el-color-primary-dark-2: #c25018;
+}
+
+/* ---------- 工作台恢复蓝白：Element 组件回到默认蓝 ---------- */
+.workspace {
+  --el-color-primary: #409eff;
+  --el-color-primary-light-3: #79bbff;
+  --el-color-primary-light-5: #a0cfff;
+  --el-color-primary-light-7: #c6e2ff;
+  --el-color-primary-light-8: #d9ecff;
+  --el-color-primary-light-9: #ecf5ff;
+  --el-color-primary-dark-2: #337ecc;
 }
 
 * {
@@ -219,13 +230,13 @@ body {
 }
 
 .sidebar-item:hover {
-  background: var(--zx-brand-soft);
-  color: var(--zx-brand-ink);
+  background: #f4f7fd;
+  color: #2563eb;
 }
 
 .sidebar-item.active {
-  background: var(--zx-brand-soft);
-  color: var(--zx-brand-ink);
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
   font-weight: 600;
 }
 
@@ -250,7 +261,7 @@ body {
 }
 
 .user-block:hover {
-  background: var(--zx-brand-soft);
+  background: #f4f7fd;
 }
 
 .user-avatar {
@@ -260,7 +271,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--zx-brand);
+  background: #2563eb;
   color: #fff;
   font-size: 15px;
   font-weight: 700;
@@ -325,11 +336,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--zx-brand);
+  background: #2563eb;
   color: #fff;
   font-size: 18px;
   font-weight: 800;
-  box-shadow: 0 12px 28px var(--zx-brand-ring);
+  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.2);
 }
 
 .booting-text {

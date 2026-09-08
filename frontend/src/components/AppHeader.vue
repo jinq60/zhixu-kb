@@ -176,7 +176,7 @@ const goHomeHash = (hash: string) => {
 </script>
 
 <template>
-  <header class="app-header">
+  <header class="app-header" :class="{ 'in-workspace': isWorkspace }">
     <div class="header-inner">
       <div class="header-brand" @click="router.push('/home')">
         <div class="brand-logo">知序</div>
@@ -255,18 +255,6 @@ const goHomeHash = (hash: string) => {
           <el-icon class="btn-icon"><ArrowRight /></el-icon>
         </el-button>
 
-        <!-- 任务中心角标（登录 + 工作台时始终显示，点击打开任务中心弹窗） -->
-        <div
-          v-if="isWorkspace && auth.isLoggedIn"
-          class="task-badge"
-        >
-          <button class="task-btn" @click="taskDialogVisible = true">
-            <span v-if="activeCount > 0" class="task-btn-spinner" />
-            <span v-if="activeCount > 0" class="task-btn-count">{{ activeCount }}</span>
-            <span v-if="hasFailedTasks" class="task-btn-fail-dot" />
-            {{ activeCount > 0 ? '任务进行中' : '任务中心' }}
-          </button>
-        </div>
       </div>
 
       <div class="mobile-toggle" @click="mobileMenuOpen = !mobileMenuOpen">
@@ -287,6 +275,23 @@ const goHomeHash = (hash: string) => {
     >
       <TaskCenterView embedded />
     </el-dialog>
+
+    <!-- 任务中心悬浮球：右下角常驻（工作台内），点击打开任务中心弹窗 -->
+    <div
+      v-if="isWorkspace && auth.isLoggedIn"
+      class="task-fab"
+    >
+      <button
+        class="task-btn"
+        :title="activeCount > 0 ? `有 ${activeCount} 个任务进行中` : '任务中心'"
+        @click="taskDialogVisible = true"
+      >
+        <span v-if="activeCount > 0" class="task-btn-spinner" />
+        <span v-if="activeCount > 0" class="task-btn-count">{{ activeCount }}</span>
+        <span v-if="hasFailedTasks" class="task-btn-fail-dot" />
+        {{ activeCount > 0 ? '任务进行中' : '任务中心' }}
+      </button>
+    </div>
 
     <div v-show="mobileMenuOpen" class="mobile-menu">
       <a class="mobile-link" @click="router.push('/home'); mobileMenuOpen = false">首页</a>
@@ -324,6 +329,46 @@ const goHomeHash = (hash: string) => {
   outline: 2px solid var(--zx-brand);
   outline-offset: 2px;
   border-radius: 8px;
+}
+
+/* 工作台内恢复蓝白：品牌、主按钮、任务角标（落地页保持柿色身份） */
+.app-header.in-workspace {
+  --el-color-primary: #409eff;
+  --el-color-primary-light-3: #79bbff;
+  --el-color-primary-light-5: #a0cfff;
+  --el-color-primary-light-7: #c6e2ff;
+  --el-color-primary-light-8: #d9ecff;
+  --el-color-primary-light-9: #ecf5ff;
+  --el-color-primary-dark-2: #337ecc;
+}
+
+.app-header.in-workspace .brand-logo {
+  background: #2563eb;
+  box-shadow: none;
+}
+
+.app-header.in-workspace .nav-item:hover {
+  color: #2563eb;
+  background: #f4f7fd;
+}
+
+.app-header.in-workspace .task-btn {
+  border-color: #dbe3f0;
+  background: #f8fafc;
+  color: #2563eb;
+}
+
+.app-header.in-workspace .task-btn:hover {
+  border-color: #2563eb;
+}
+
+.app-header.in-workspace .task-btn-count {
+  background: #2563eb;
+}
+
+.app-header.in-workspace .task-btn-spinner {
+  border-color: #c0c4cc;
+  border-top-color: #2563eb;
 }
 
 .header-inner {
@@ -538,23 +583,42 @@ const goHomeHash = (hash: string) => {
   max-width: calc(100vw - 32px) !important;
 }
 
-.task-badge {
-  position: relative;
-  margin-left: 12px;
+.task-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
   cursor: pointer;
+  filter: drop-shadow(0 10px 24px rgba(23, 32, 47, 0.16));
 }
 
-.task-btn {
+@media (max-width: 768px) {
+  .task-fab {
+    right: 16px;
+    bottom: 16px;
+  }
+}
+
+.task-fab .task-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   border: 1px solid #f0ddd0;
-  border-radius: 8px;
-  padding: 6px 12px;
-  background: var(--zx-brand-soft);
+  border-radius: 999px;
+  padding: 11px 18px;
+  background: rgba(255, 254, 250, 0.96);
   color: var(--zx-brand-ink);
   font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.task-fab .task-btn:hover {
+  border-color: var(--zx-brand);
+  transform: translateY(-2px);
 }
 
 .task-btn:hover {
