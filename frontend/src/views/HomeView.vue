@@ -98,6 +98,7 @@ const FRAGMENTS = [
 
 /* ---------- Hero 视差 ---------- */
 const heroRef = ref<HTMLElement | null>(null)
+const starsSvg = ref<SVGSVGElement | null>(null)
 
 const onHeroMove = (e: MouseEvent) => {
   if (reduceMotion) return
@@ -312,7 +313,30 @@ const faqs = [
   }
 ]
 
-onMounted(startStepTimer)
+/* 产品卡聚光灯：高光跟随鼠标，减弱动效时不启用 */
+const setupSpotlight = () => {
+  if (reduceMotion) return
+  const grid = document.querySelector('.product-grid')
+  if (!grid) return
+  grid.addEventListener('mousemove', (e: Event) => {
+    const me = e as MouseEvent
+    const cards = grid.querySelectorAll<HTMLElement>('.product-card')
+    cards.forEach((card) => {
+      const rect = card.getBoundingClientRect()
+      card.style.setProperty('--mx', `${me.clientX - rect.left}px`)
+      card.style.setProperty('--my', `${me.clientY - rect.top}px`)
+    })
+  })
+}
+
+onMounted(() => {
+  startStepTimer()
+  setupSpotlight()
+  // SMIL 旅行粒子不受 CSS 减弱动效控制，手动暂停 SVG 时间线
+  if (reduceMotion) {
+    starsSvg.value?.pauseAnimations()
+  }
+})
 onBeforeUnmount(stopStepTimer)
 
 /* ---------- 滚动显现 ---------- */
@@ -377,7 +401,7 @@ const vReveal = {
         </div>
 
         <div class="constellation" aria-hidden="true">
-          <svg viewBox="0 0 600 520" class="stars-svg">
+          <svg ref="starsSvg" viewBox="0 0 600 520" class="stars-svg">
             <circle
               v-for="([sx, sy], i) in STARS"
               :key="`s${i}`"
@@ -907,6 +931,36 @@ section {
   margin-left: 6px;
 }
 
+/* 全站 CTA 按压回弹（对标 Wandor active:scale-95 的触感） */
+.hero-primary:active,
+.hero-ghost-dark:active,
+.stage-cta:active,
+.product-action:active,
+.download-btn:active,
+.cta-primary:active,
+.cta-ghost:active,
+.showcase-tab:active,
+.step-btn:active {
+  transform: scale(0.96);
+}
+
+.hero-primary,
+.hero-ghost-dark,
+.stage-cta,
+.product-action,
+.download-btn,
+.cta-primary,
+.cta-ghost,
+.showcase-tab,
+.step-btn {
+  transition:
+    transform 0.15s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+
 /* ---------- Hero：暗夜星图 ---------- */
 .hero-dark {
   --px: 0;
@@ -1127,6 +1181,7 @@ section {
   filter: drop-shadow(0 0 5px currentColor);
 }
 
+/* 真液态玻璃（对标 Wandor prompt 卡）：极低填充＋厚半透白边＋重 blur＋内高光 */
 .fragment {
   position: absolute;
   display: flex;
@@ -1134,14 +1189,16 @@ section {
   gap: 8px;
   padding: 9px 14px 9px 10px;
   border-radius: 13px;
-  background: rgba(255, 255, 255, 0.07);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
   color: #e6e1d5;
   font-size: 12.5px;
   font-weight: 600;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
   animation: fragment-float 5.5s ease-in-out infinite alternate;
 }
 
@@ -2162,11 +2219,13 @@ section {
   gap: 2px;
   padding: 14px 18px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.72);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.65);
-  box-shadow: 0 16px 40px rgba(23, 32, 47, 0.16);
+  background: rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  box-shadow:
+    0 16px 40px rgba(23, 32, 47, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .glass-chip strong {
@@ -2635,6 +2694,19 @@ section {
   .resource-grid,
   .case-grid {
     grid-template-columns: 1fr;
+  }
+
+  .stats-inner {
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+
+  .stat-item {
+    flex: 1 1 40%;
+  }
+
+  .stat-item strong {
+    font-size: 30px;
   }
 
   .download-enterprise {
