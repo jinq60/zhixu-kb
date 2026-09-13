@@ -229,12 +229,12 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
 <style>
 /* ---------- 知序设计 token（落地页 + 控制台共享） ---------- */
 :root {
-  --zx-paper: #fffefa;
-  --zx-ink: #17202f;
+  --zx-paper: #f6f1e7;
+  --zx-ink: #1a1a1a;
   --zx-brand: #f2641e;
-  --zx-brand-ink: #c25018;
-  --zx-brand-soft: #fef0e9;
-  --zx-brand-ring: rgba(242, 100, 30, 0.16);
+  --zx-brand-ink: #905831;
+  --zx-brand-soft: #f3e9d8;
+  --zx-brand-ring: rgba(144, 88, 49, 0.16);
   --zx-iris: #7a5af8;
   --zx-teal: #0ca789;
   --zx-amber: #d9930d;
@@ -246,14 +246,15 @@ const isActive = (path: string) => route.path === path || route.path.startsWith(
     'Noto Serif SC', 'Songti SC', 'SimSun', serif;
   --zx-mono:
     ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
-  /* 落地页用柿色；工作台（.workspace 内）覆盖回 Element 默认蓝，见下方 */
-  --el-color-primary: var(--zx-brand);
-  --el-color-primary-light-3: #f69361;
-  --el-color-primary-light-5: #f9b18f;
-  --el-color-primary-light-7: #fbd1bc;
-  --el-color-primary-light-8: #fce0d2;
-  --el-color-primary-light-9: #fef0e9;
-  --el-color-primary-dark-2: #c25018;
+  /* 落地页主按钮走墨黑药丸（对标 Wandor 黑钮）；
+     工作台（.workspace 内）覆盖回 Element 默认蓝，见下方 */
+  --el-color-primary: #1a1a1a;
+  --el-color-primary-light-3: #555555;
+  --el-color-primary-light-5: #808080;
+  --el-color-primary-light-7: #b3b3b3;
+  --el-color-primary-light-8: #cccccc;
+  --el-color-primary-light-9: #e9e4d8;
+  --el-color-primary-dark-2: #000000;
 }
 
 /* ---------- 工作台恢复蓝白：Element 组件回到默认蓝 ---------- */
