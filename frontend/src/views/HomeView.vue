@@ -24,8 +24,7 @@ import {
   Message,
   Location,
   QuestionFilled,
-  Upload,
-  Picture
+  Upload
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -52,64 +51,36 @@ const reduceMotion =
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-/* ---------- 星图数据：散落成序的现场 ---------- */
-interface StarNode {
-  x: number
-  y: number
-  r: number
-  color: string
-  label?: string
-  halo?: boolean
+/* ---------- 现场问答演示：打字机逐字回答 ---------- */
+const demoAnswer =
+  '这周你读的 3 篇论文，争的其实是同一件事：RAG 的上限不在模型，在召回。我把 5 处关键原文标出来了，点引用可以直接跳回去。'
+const typedText = ref('')
+const typedDone = ref(false)
+let typeTimer: ReturnType<typeof setInterval> | null = null
+
+const startTyping = () => {
+  if (reduceMotion) {
+    typedText.value = demoAnswer
+    typedDone.value = true
+    return
+  }
+  let i = 0
+  typeTimer = setInterval(() => {
+    i += 1
+    typedText.value = demoAnswer.slice(0, i)
+    if (i >= demoAnswer.length && typeTimer) {
+      clearInterval(typeTimer)
+      typeTimer = null
+      typedDone.value = true
+    }
+  }, 55)
 }
 
-const NODES: StarNode[] = [
-  { x: 300, y: 250, r: 11, color: '#f2641e', label: '个人知识库', halo: true },
-  { x: 180, y: 150, r: 7, color: '#7a5af8', label: 'OCR' },
-  { x: 420, y: 140, r: 7, color: '#0ca789', label: '问答', halo: true },
-  { x: 150, y: 320, r: 6, color: '#d9930d', label: '笔记' },
-  { x: 450, y: 330, r: 6, color: '#7a5af8', label: '图谱' },
-  { x: 250, y: 90, r: 5, color: '#0ca789' },
-  { x: 370, y: 80, r: 5, color: '#d9930d' },
-  { x: 90, y: 220, r: 5, color: '#f2641e' },
-  { x: 510, y: 230, r: 5, color: '#0ca789' },
-  { x: 220, y: 420, r: 6, color: '#f2641e', label: '整理' },
-  { x: 390, y: 430, r: 5, color: '#7a5af8' },
-  { x: 300, y: 350, r: 5, color: '#d9930d' },
-  { x: 480, y: 420, r: 4, color: '#0ca789' }
-]
-
-const EDGES: Array<[number, number]> = [
-  [0, 1], [0, 2], [0, 3], [0, 4], [0, 9], [0, 11],
-  [1, 5], [1, 7], [2, 6], [2, 8], [4, 9], [4, 10], [10, 11], [4, 11], [10, 12]
-]
-
-const STARS = [
-  [40, 60], [120, 420], [200, 40], [330, 30], [470, 60], [560, 140],
-  [60, 330], [130, 470], [250, 480], [420, 480], [540, 330], [30, 140],
-  [350, 200], [240, 300], [500, 90], [90, 90]
-]
-
-const FRAGMENTS = [
-  { icon: Document, label: 'PDF 报告', x: '2%', y: '12%', delay: '0s' },
-  { icon: Picture, label: '一张截图', x: '86%', y: '8%', delay: '0.8s' },
-  { icon: EditPen, label: '灵感速记', x: '0%', y: '66%', delay: '1.6s' },
-  { icon: Notebook, label: '读书笔记', x: '88%', y: '70%', delay: '2.4s' }
-]
-
-/* ---------- Hero 视差 ---------- */
-const heroRef = ref<HTMLElement | null>(null)
-const starsSvg = ref<SVGSVGElement | null>(null)
-
-const onHeroMove = (e: MouseEvent) => {
-  if (reduceMotion) return
-  if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) return
-  const el = heroRef.value
-  if (!el) return
-  const rect = el.getBoundingClientRect()
-  const x = (e.clientX - rect.left) / rect.width - 0.5
-  const y = (e.clientY - rect.top) / rect.height - 0.5
-  el.style.setProperty('--px', (x * 14).toFixed(1))
-  el.style.setProperty('--py', (y * 10).toFixed(1))
+const stopTyping = () => {
+  if (typeTimer) {
+    clearInterval(typeTimer)
+    typeTimer = null
+  }
 }
 
 /* ---------- 产品矩阵：基础信息唯一来源 config/products，落地页只补展示字段 ---------- */
@@ -332,12 +303,12 @@ const setupSpotlight = () => {
 onMounted(() => {
   startStepTimer()
   setupSpotlight()
-  // SMIL 旅行粒子不受 CSS 减弱动效控制，手动暂停 SVG 时间线
-  if (reduceMotion) {
-    starsSvg.value?.pauseAnimations()
-  }
+  startTyping()
 })
-onBeforeUnmount(stopStepTimer)
+onBeforeUnmount(() => {
+  stopStepTimer()
+  stopTyping()
+})
 
 /* ---------- 滚动显现 ---------- */
 const vReveal = {
@@ -367,110 +338,126 @@ const vReveal = {
   <div class="landing-page">
     <div class="grain-overlay" aria-hidden="true" />
 
-    <!-- Hero：活的星图 -->
-    <section
-      ref="heroRef"
-      class="hero-dark"
-      @mousemove="onHeroMove"
-    >
-      <div class="hero-dark-inner">
-        <div class="hero-copy">
-          <div class="hero-eyebrow-row">
-            <span class="seal" aria-hidden="true">知序</span>
-            <span class="hero-eyebrow">FROM CHAOS, TO COSMOS</span>
-          </div>
-          <h1>化散落<br><span class="h1-grad">为有序</span></h1>
-          <p class="hero-desc">
-            照片、截图、文档、灵感——散落的信息在这里被识别、整理、连成图谱，
-            变成一个随时可问的个人知识库。
-          </p>
-          <div class="hero-actions">
-            <el-button type="primary" size="large" class="hero-primary" @click="enterWeb">
-              免费开始整理
-              <el-icon class="btn-icon"><ArrowRight /></el-icon>
-            </el-button>
-            <el-button size="large" class="hero-ghost-dark" @click="router.push('/home#how')">
-              看看怎么运作
-            </el-button>
-          </div>
-          <div class="hero-trust">
-            <span><el-icon><Check /></el-icon> 免登录体验</span>
-            <span><el-icon><Check /></el-icon> 本地优先</span>
-            <span><el-icon><Check /></el-icon> 私有化部署</span>
-          </div>
+    <!-- Hero：纸上山水 + 现场问答 -->
+    <section class="hero-paper">
+      <div class="hero-center">
+        <div class="hero-eyebrow-row">
+          <span class="seal" aria-hidden="true">知序</span>
+          <span class="hero-eyebrow">ZHI XU · KNOWLEDGE OS</span>
         </div>
+        <h1>把散落的，变成<span class="h1-accent">可问的</span></h1>
+        <p class="hero-desc">
+          照片、截图、文档、灵感——知序把它们识别、整理、连成图谱，
+          变成一个随时能回答你的个人知识库。
+        </p>
+        <div class="hero-actions">
+          <el-button type="primary" size="large" class="hero-primary" @click="enterWeb">
+            免费开始整理
+            <el-icon class="btn-icon"><ArrowRight /></el-icon>
+          </el-button>
+          <el-button size="large" class="hero-ghost" @click="router.push('/home#how')">
+            看看怎么运作
+          </el-button>
+        </div>
+        <div class="hero-trust">
+          <span><el-icon><Check /></el-icon> 免登录体验</span>
+          <span><el-icon><Check /></el-icon> 本地优先</span>
+          <span><el-icon><Check /></el-icon> 私有化部署</span>
+        </div>
+      </div>
 
-        <div class="constellation" aria-hidden="true">
-          <svg ref="starsSvg" viewBox="0 0 600 520" class="stars-svg">
-            <circle
-              v-for="([sx, sy], i) in STARS"
-              :key="`s${i}`"
-              :cx="sx"
-              :cy="sy"
-              r="1.1"
-              fill="#ffffff"
-              opacity="0.35"
-            />
-            <line
-              v-for="([a, b], i) in EDGES"
-              :key="`e${i}`"
-              :x1="NODES[a].x"
-              :y1="NODES[a].y"
-              :x2="NODES[b].x"
-              :y2="NODES[b].y"
-              class="edge"
-              :style="{ animationDelay: `${0.3 + i * 0.12}s` }"
-              pathLength="1"
-            />
-            <g
-              v-for="(n, i) in NODES"
-              :key="`n${i}`"
-              class="node"
-              :style="{ animationDelay: `${0.5 + i * 0.1}s` }"
-            >
-              <circle
-                v-if="n.halo"
-                :cx="n.x"
-                :cy="n.y"
-                :r="n.r + 4"
-                :fill="n.color"
-                class="halo"
-                :style="{ animationDelay: `${i * 0.7}s` }"
-              />
-              <circle :cx="n.x" :cy="n.y" :r="n.r" :fill="n.color" class="core" />
-              <text
-                v-if="n.label"
-                :x="n.x"
-                :y="n.y - n.r - 10"
-                text-anchor="middle"
-                class="node-label"
-              >{{ n.label }}</text>
-            </g>
-            <circle class="traveler t1" r="2.6" fill="#ffb48a">
-              <animateMotion dur="7s" repeatCount="indefinite" path="M180,150 L300,250 L420,140" />
-            </circle>
-            <circle class="traveler t2" r="2.2" fill="#b9a5ff">
-              <animateMotion dur="9s" repeatCount="indefinite" path="M150,320 L220,420 L300,350 L390,430" />
-            </circle>
-            <circle class="traveler t3" r="2.2" fill="#5fd8c8">
-              <animateMotion dur="11s" repeatCount="indefinite" path="M450,330 L390,430 L300,350" />
-            </circle>
-          </svg>
-          <div
-            v-for="(f, i) in FRAGMENTS"
-            :key="f.label"
-            class="fragment"
-            :style="{ left: f.x, top: f.y, animationDelay: f.delay }"
-          >
-            <el-icon><component :is="f.icon" /></el-icon>
-            <span>{{ f.label }}</span>
-            <em>FRAGMENT_0{{ i + 1 }}</em>
+      <!-- 现场问答演示：玻璃卡 -->
+      <div class="demo-wrap" v-reveal>
+        <div class="demo-card">
+          <div class="demo-label">LIVE DEMO · 来自你的知识库</div>
+          <div class="demo-q">
+            <span class="demo-avatar">我</span>
+            <p>这周那 3 篇 RAG 论文，到底在争什么？</p>
+          </div>
+          <div class="demo-a">
+            <span class="demo-avatar ai">序</span>
+            <p>
+              {{ typedText }}<span v-if="!typedDone" class="typing-caret" aria-hidden="true" />
+            </p>
+          </div>
+          <div v-if="typedDone" class="demo-sources">
+            <span class="demo-src">引用 · RAG 调研笔记</span>
+            <span class="demo-src">引用 · 召回实验记录</span>
+            <a class="demo-go" @click="enterWeb">去亲自问一句 <el-icon><ArrowRight /></el-icon></a>
           </div>
         </div>
       </div>
-      <div class="scroll-hint" aria-hidden="true">
-        <span>SCROLL</span>
-        <i />
+
+      <!-- 知识山水：藏书阁、远山、浮书、落日 -->
+      <div class="panorama" aria-hidden="true">
+        <svg viewBox="0 0 1440 340" preserveAspectRatio="xMidYMax slice" class="panorama-svg">
+          <!-- 落日 -->
+          <circle cx="1150" cy="150" r="46" fill="#e8a13c" opacity="0.9" />
+          <circle cx="1150" cy="150" r="66" fill="none" stroke="#e8a13c" stroke-width="1.5" opacity="0.35" />
+          <!-- 远山 -->
+          <path d="M0,230 L140,120 L260,210 L400,90 L540,220 L700,130 L860,230 L1000,110 L1150,225 L1300,140 L1440,230 L1440,340 L0,340 Z" fill="#e7d6b8" />
+          <path d="M0,265 L180,170 L340,255 L520,150 L700,260 L880,165 L1060,260 L1240,175 L1440,260 L1440,340 L0,340 Z" fill="#d9c69c" opacity="0.85" />
+          <!-- 中景丘陵 -->
+          <path d="M0,300 L220,225 L460,295 L720,215 L980,295 L1220,220 L1440,295 L1440,340 L0,340 Z" fill="#8a9b6e" />
+          <!-- 云 -->
+          <g fill="#ffffff" opacity="0.85" class="cloud c1">
+            <ellipse cx="320" cy="80" rx="52" ry="14" />
+            <ellipse cx="360" cy="72" rx="38" ry="12" />
+          </g>
+          <g fill="#ffffff" opacity="0.7" class="cloud c2">
+            <ellipse cx="820" cy="60" rx="44" ry="12" />
+            <ellipse cx="855" cy="53" rx="30" ry="10" />
+          </g>
+          <!-- 飞鸟 -->
+          <path d="M620,90 q8,-8 16,0 q8,-8 16,0" fill="none" stroke="#17202f" stroke-width="2" stroke-linecap="round" />
+          <path d="M670,110 q6,-6 12,0 q6,-6 12,0" fill="none" stroke="#17202f" stroke-width="1.6" stroke-linecap="round" />
+          <!-- 藏书阁 -->
+          <g class="pavilion">
+            <rect x="986" y="252" width="148" height="10" rx="2" fill="#8a8a86" />
+            <rect x="1000" y="196" width="120" height="56" fill="#f3e7d3" />
+            <rect x="1000" y="196" width="120" height="10" fill="#e0cfae" />
+            <rect x="1012" y="214" width="22" height="38" fill="#7a4a2e" />
+            <rect x="1049" y="214" width="22" height="38" fill="#7a4a2e" />
+            <rect x="1086" y="214" width="22" height="38" fill="#7a4a2e" />
+            <path d="M988,198 L1060,164 L1132,198 Z" fill="#a84a26" />
+            <rect x="1054" y="150" width="12" height="18" fill="#7a4a2e" />
+            <path d="M1002,152 L1060,124 L1118,152 Z" fill="#c65a2e" />
+            <rect x="1058" y="112" width="4" height="14" fill="#7a4a2e" />
+          </g>
+          <!-- 柿子树 / 松树 -->
+          <g>
+            <rect x="880" y="252" width="10" height="48" rx="4" fill="#7a5a3e" />
+            <circle cx="885" cy="232" r="30" fill="#5f7355" />
+            <circle cx="862" cy="244" r="20" fill="#6e8b67" />
+            <circle cx="908" cy="244" r="20" fill="#56704f" />
+          </g>
+          <g>
+            <rect x="180" y="258" width="9" height="42" rx="4" fill="#7a5a3e" />
+            <circle cx="184" cy="240" r="26" fill="#f2641e" opacity="0.92" />
+            <circle cx="166" cy="250" r="16" fill="#e85a17" />
+            <circle cx="202" cy="250" r="16" fill="#ff8a4d" />
+          </g>
+          <!-- 浮书 -->
+          <g class="float-book b1">
+            <rect x="0" y="0" width="46" height="60" rx="4" fill="#f2641e" transform="rotate(-8)" />
+            <rect x="8" y="12" width="30" height="4" rx="2" fill="#ffffff" opacity="0.85" transform="rotate(-8)" />
+            <rect x="8" y="22" width="30" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(-8)" />
+            <rect x="8" y="32" width="20" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(-8)" />
+          </g>
+          <g class="float-book b2">
+            <rect x="0" y="0" width="40" height="54" rx="4" fill="#0ca789" transform="rotate(7)" />
+            <rect x="7" y="11" width="26" height="4" rx="2" fill="#ffffff" opacity="0.85" transform="rotate(7)" />
+            <rect x="7" y="20" width="26" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(7)" />
+            <rect x="7" y="29" width="17" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(7)" />
+          </g>
+          <g class="float-book b3">
+            <rect x="0" y="0" width="36" height="48" rx="4" fill="#7a5af8" transform="rotate(-5)" />
+            <rect x="6" y="10" width="24" height="4" rx="2" fill="#ffffff" opacity="0.85" transform="rotate(-5)" />
+            <rect x="6" y="19" width="24" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(-5)" />
+          </g>
+          <!-- 近景 -->
+          <path d="M0,315 L360,285 L760,315 L1080,288 L1440,315 L1440,340 L0,340 Z" fill="#2e3b2f" />
+        </svg>
       </div>
     </section>
 
@@ -933,25 +920,21 @@ section {
 
 /* 全站 CTA 按压回弹（对标 Wandor active:scale-95 的触感） */
 .hero-primary:active,
-.hero-ghost-dark:active,
-.stage-cta:active,
+.hero-ghost:active,
 .product-action:active,
 .download-btn:active,
 .cta-primary:active,
 .cta-ghost:active,
-.showcase-tab:active,
 .step-btn:active {
   transform: scale(0.96);
 }
 
 .hero-primary,
-.hero-ghost-dark,
-.stage-cta,
+.hero-ghost,
 .product-action,
 .download-btn,
 .cta-primary,
 .cta-ghost,
-.showcase-tab,
 .step-btn {
   transition:
     transform 0.15s ease,
@@ -961,40 +944,28 @@ section {
     color 0.2s ease;
 }
 
-/* ---------- Hero：暗夜星图 ---------- */
-.hero-dark {
-  --px: 0;
-  --py: 0;
+/* ---------- Hero：纸上山水 ---------- */
+.hero-paper {
   position: relative;
   overflow: hidden;
-  padding: 96px 48px 70px;
+  padding: 88px 48px 0;
   background:
-    radial-gradient(900px 480px at 82% -10%, rgba(242, 100, 30, 0.16), transparent 62%),
-    radial-gradient(700px 460px at 8% 20%, rgba(122, 90, 248, 0.14), transparent 60%),
-    radial-gradient(560px 420px at 50% 115%, rgba(12, 167, 137, 0.1), transparent 60%),
-    linear-gradient(180deg, #0d1424 0%, #111a2e 100%);
-  color: #fff;
+    radial-gradient(760px 380px at 50% -6%, rgba(242, 100, 30, 0.08), transparent 65%),
+    var(--zx-paper);
 }
 
-.hero-dark-inner {
-  position: relative;
-  max-width: 1200px;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 48px;
-}
-
-.hero-copy {
-  flex: 1;
-  max-width: 520px;
+.hero-center {
   position: relative;
   z-index: 2;
+  max-width: 820px;
+  margin: 0 auto;
+  text-align: center;
 }
 
 .hero-eyebrow-row {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 14px;
   margin-bottom: 24px;
 }
@@ -1004,7 +975,7 @@ section {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 3px;
-  color: #ffb48a;
+  color: var(--zx-brand-ink);
 }
 
 .seal {
@@ -1019,40 +990,58 @@ section {
   transform: rotate(-4deg);
   box-shadow:
     inset 0 0 0 1.5px rgba(255, 255, 255, 0.55),
-    0 8px 18px rgba(242, 100, 30, 0.35);
+    0 8px 18px var(--zx-brand-ring);
   letter-spacing: 2px;
   user-select: none;
 }
 
-.hero-dark h1 {
+.hero-paper h1 {
   font-family: var(--zx-serif);
-  font-size: clamp(56px, 7.4vw, 104px);
+  font-size: clamp(50px, 7vw, 96px);
   font-weight: 900;
-  line-height: 1.16;
-  letter-spacing: 6px;
-  color: #fff;
-  margin-bottom: 24px;
+  line-height: 1.18;
+  letter-spacing: 4px;
+  color: var(--zx-ink);
+  margin-bottom: 22px;
 }
 
-.h1-grad {
-  background: linear-gradient(100deg, #ff8a4d 0%, #f2641e 45%, #e8a13c 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.h1-accent {
+  position: relative;
+  color: var(--zx-brand);
+  white-space: nowrap;
+}
+
+.h1-accent::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 8px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--zx-brand-soft);
+  border: 1px solid #f5d9c6;
+  z-index: -1;
+}
+
+.hero-paper h1 {
+  position: relative;
+  z-index: 0;
 }
 
 .hero-desc {
   font-size: 16px;
   line-height: 1.9;
-  color: #b9c2d4;
-  margin-bottom: 32px;
-  max-width: 480px;
+  color: #4b5563;
+  margin: 0 auto 30px;
+  max-width: 600px;
 }
 
 .hero-actions {
   display: flex;
+  justify-content: center;
   gap: 14px;
-  margin-bottom: 28px;
+  margin-bottom: 26px;
 }
 
 .hero-primary {
@@ -1060,30 +1049,31 @@ section {
   border-radius: 14px;
   padding: 13px 30px;
   height: auto;
-  box-shadow: 0 14px 36px rgba(242, 100, 30, 0.4);
+  box-shadow: 0 14px 36px var(--zx-brand-ring);
 }
 
-.hero-ghost-dark {
+.hero-actions .hero-ghost {
   font-weight: 700;
   border-radius: 14px;
   padding: 13px 30px;
   height: auto;
-  background: transparent;
-  border-color: rgba(255, 255, 255, 0.28);
-  color: #fff;
+  background: #fff;
+  border-color: #e8ddc9;
+  color: var(--zx-ink);
 }
 
-.hero-actions .hero-ghost-dark:hover,
-.hero-actions .hero-ghost-dark:focus-visible {
-  border-color: #fff;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.07);
+.hero-actions .hero-ghost:hover {
+  border-color: var(--zx-brand);
+  color: var(--zx-brand-ink);
+  background: #fff;
 }
 
 .hero-trust {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 20px;
+  margin-bottom: 8px;
 }
 
 .hero-trust span {
@@ -1091,172 +1081,182 @@ section {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #cfd6e4;
+  color: #4b5563;
 }
 
 .hero-trust .el-icon {
-  color: #5fd8c8;
+  color: var(--zx-teal);
   font-size: 15px;
 }
 
-/* ---------- 星座 ---------- */
-.constellation {
+/* ---------- 现场问答玻璃卡 ---------- */
+.demo-wrap {
   position: relative;
-  width: 560px;
-  flex-shrink: 0;
-  transform: translate3d(calc(var(--px, 0) * 1px), calc(var(--py, 0) * 1px), 0);
-  transition: transform 0.35s ease-out;
+  z-index: 2;
+  max-width: 701px;
+  margin: 34px auto 0;
 }
 
-.stars-svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  animation: constellation-drift 11s ease-in-out infinite alternate;
-}
-
-@keyframes constellation-drift {
-  from { transform: translateY(-5px); }
-  to { transform: translateY(7px); }
-}
-
-.edge {
-  stroke: rgba(255, 255, 255, 0.2);
-  stroke-width: 1.2;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: draw 1.4s ease forwards;
-}
-
-@keyframes draw {
-  to { stroke-dashoffset: 0; }
-}
-
-.node {
-  opacity: 0;
-  transform: scale(0.3);
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-}
-
-@keyframes pop {
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.node .core {
-  filter: drop-shadow(0 0 7px currentColor);
-}
-
-.node-label {
-  font-family: var(--zx-mono);
-  font-size: 12px;
-  letter-spacing: 2px;
-  fill: #cfd6e4;
-}
-
-.halo {
-  opacity: 0.45;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: halo 3.2s ease-out infinite;
-}
-
-@keyframes halo {
-  0% {
-    transform: scale(1);
-    opacity: 0.45;
-  }
-  100% {
-    transform: scale(2.1);
-    opacity: 0;
-  }
-}
-
-.traveler {
-  opacity: 0.9;
-  filter: drop-shadow(0 0 5px currentColor);
-}
-
-/* 真液态玻璃（对标 Wandor prompt 卡）：极低填充＋厚半透白边＋重 blur＋内高光 */
-.fragment {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 14px 9px 10px;
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.08);
+.demo-card {
+  position: relative;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.55);
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
-  border: 1.5px solid rgba(255, 255, 255, 0.55);
-  color: #e6e1d5;
-  font-size: 12.5px;
-  font-weight: 600;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  border-radius: 44px;
   box-shadow:
-    0 12px 30px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.25);
-  animation: fragment-float 5.5s ease-in-out infinite alternate;
-}
-
-.fragment .el-icon {
-  font-size: 16px;
-  color: #ffb48a;
-}
-
-.fragment em {
-  font-family: var(--zx-mono);
-  font-style: normal;
-  font-size: 9px;
-  letter-spacing: 1.5px;
-  color: #7c8aa5;
-}
-
-@keyframes fragment-float {
-  from { transform: translateY(-7px); }
-  to { transform: translateY(9px); }
-}
-
-.scroll-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--zx-mono);
-  font-size: 9px;
-  letter-spacing: 3px;
-  color: #5b6b8c;
-}
-
-.scroll-hint i {
-  display: block;
-  width: 1px;
-  height: 34px;
-  background: linear-gradient(to bottom, #5b6b8c, transparent);
-  position: relative;
+    0 24px 60px rgba(23, 32, 47, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  padding: 30px 34px 28px;
   overflow: hidden;
 }
 
-.scroll-hint i::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: -40%;
-  width: 100%;
-  height: 40%;
-  background: #ffb48a;
-  animation: hint-drop 1.8s ease-in-out infinite;
+.demo-label {
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+  color: var(--zx-brand-ink);
+  margin-bottom: 16px;
 }
 
-@keyframes hint-drop {
-  to { top: 110%; }
+.demo-q,
+.demo-a {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.demo-q {
+  margin-bottom: 14px;
+}
+
+.demo-avatar {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--zx-ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.demo-avatar.ai {
+  background: var(--zx-brand);
+}
+
+.demo-q p {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--zx-ink);
+  padding-top: 4px;
+}
+
+.demo-a p {
+  flex: 1;
+  font-size: 15px;
+  line-height: 1.85;
+  color: #374151;
+  min-height: 56px;
+}
+
+.typing-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  vertical-align: -0.2em;
+  margin-left: 2px;
+  background: var(--zx-brand);
+  animation: caret-blink 0.9s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  50% { opacity: 0; }
+}
+
+.demo-sources {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding-left: 42px;
+}
+
+.demo-src {
+  font-size: 12px;
+  color: var(--zx-brand-ink);
+  background: var(--zx-brand-soft);
+  border: 1px solid #f5d9c6;
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+
+.demo-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--zx-ink);
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.demo-go:hover {
+  color: var(--zx-brand-ink);
+  gap: 8px;
+}
+
+/* ---------- 知识山水 ---------- */
+.panorama {
+  position: relative;
+  margin-top: -64px;
+  line-height: 0;
+}
+
+.panorama-svg {
+  display: block;
+  width: 100%;
+  height: clamp(220px, 26vw, 340px);
+}
+
+.cloud {
+  animation: cloud-drift 26s ease-in-out infinite alternate;
+}
+
+.cloud.c2 {
+  animation-duration: 34s;
+  animation-delay: -12s;
+}
+
+@keyframes cloud-drift {
+  from { transform: translateX(-26px); }
+  to { transform: translateX(30px); }
+}
+
+.float-book {
+  animation: book-bob 5s ease-in-out infinite alternate;
+}
+
+.float-book.b2 {
+  animation-duration: 6.5s;
+  animation-delay: -2s;
+}
+
+.float-book.b3 {
+  animation-duration: 7.5s;
+  animation-delay: -4s;
+}
+
+@keyframes book-bob {
+  from { transform: translateY(0); }
+  to { transform: translateY(-12px); }
 }
 
 /* ---------- 跑马灯 ---------- */
@@ -2527,22 +2527,10 @@ section {
     transition: none;
   }
 
-  .stars-svg,
-  .edge,
-  .node,
-  .halo,
-  .fragment,
-  .scroll-hint i::after {
+  .cloud,
+  .float-book,
+  .typing-caret {
     animation: none !important;
-  }
-
-  .edge {
-    stroke-dashoffset: 0;
-  }
-
-  .node {
-    opacity: 1;
-    transform: none;
   }
 
   .product-card:hover,
@@ -2568,19 +2556,6 @@ section {
 }
 
 @media (max-width: 1024px) {
-  .hero-dark-inner {
-    flex-direction: column;
-  }
-
-  .hero-copy {
-    max-width: 100%;
-  }
-
-  .constellation {
-    width: 100%;
-    max-width: 560px;
-  }
-
   .product-grid,
   .solution-grid,
   .download-grid,
@@ -2645,13 +2620,13 @@ section {
     padding: 60px 22px;
   }
 
-  .hero-dark {
-    padding: 56px 22px 60px;
+  .hero-paper {
+    padding: 56px 22px 0;
   }
 
-  .hero-dark h1 {
-    font-size: 52px;
-    letter-spacing: 3px;
+  .hero-paper h1 {
+    font-size: 46px;
+    letter-spacing: 2px;
   }
 
   .hero-actions,
@@ -2659,12 +2634,17 @@ section {
     flex-direction: column;
   }
 
-  .fragment {
-    display: none;
+  .demo-card {
+    border-radius: 28px;
+    padding: 22px 20px;
   }
 
-  .scroll-hint {
-    display: none;
+  .demo-sources {
+    padding-left: 0;
+  }
+
+  .demo-go {
+    margin-left: 0;
   }
 
   .stepper {
