@@ -8,6 +8,9 @@ const routes: RouteRecordRaw[] = [
   // OAuth 回调页
   { path: '/oauth-callback', component: () => import('../views/OAuthCallbackView.vue'), meta: { public: true, layout: 'blank' } },
 
+  // Wandor 1:1 复刻演示页（对照验证用，不挂导航）
+  { path: '/demo-wandor', component: () => import('../views/WandorDemo.vue'), meta: { public: true, layout: 'blank' } },
+
   // 用户工作台（需要登录）
   { path: '/notes', component: () => import('../views/NoteList.vue'), meta: { requiresAuth: true } },
   { path: '/notes/edit/:id', component: () => import('../views/NoteEdit.vue'), meta: { requiresAuth: true } },
