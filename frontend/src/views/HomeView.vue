@@ -246,10 +246,10 @@ const cases = [
 ]
 
 const resources = [
-  { title: '快速开始', desc: '5 分钟部署本地知识库', img: '/img/illus/quickstart.svg' },
-  { title: 'API 文档', desc: '开放的 RESTful 接口说明', img: '/img/illus/doc-api.svg' },
-  { title: '部署指南', desc: 'Docker 与离线安装教程', img: '/img/illus/deploy-sync.svg' },
-  { title: '更新日志', desc: '版本迭代与功能路线图', img: '/img/illus/changelog.svg' }
+  { title: '快速开始', desc: '5 分钟部署本地知识库', img: '/illus/quickstart.svg' },
+  { title: 'API 文档', desc: '开放的 RESTful 接口说明', img: '/illus/doc-api.svg' },
+  { title: '部署指南', desc: 'Docker 与离线安装教程', img: '/illus/deploy-sync.svg' },
+  { title: '更新日志', desc: '版本迭代与功能路线图', img: '/illus/changelog.svg' }
 ]
 
 const downloads = [
