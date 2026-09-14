@@ -12,7 +12,7 @@ import {
   Phone,
   Message,
   Location,
-  QuestionFilled
+  Plus
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -208,23 +208,31 @@ const pipeline = steps.map((s) => ({ icon: s.icon, label: s.label, en: s.en }))
 
 const solutions = [
   {
-    icon: 'graduation-cap',
+    img: '/img/persona/campus.jpg',
+    hue: '#e8a13c',
     title: '高校教研',
+    scene: 'ON CAMPUS',
     desc: '论文资料整理、课程讲义沉淀、科研成果可视化与智能答疑。'
   },
   {
-    icon: 'briefcase',
+    img: '/img/persona/enterprise.jpg',
+    hue: '#0ca789',
     title: '企业知识管理',
+    scene: 'IN PRODUCTION',
     desc: '内部文档统一归档、新员工快速检索、项目经验沉淀与共享。'
   },
   {
-    icon: 'pen-line',
+    img: '/img/persona/creator.jpg',
+    hue: '#7a5af8',
     title: '内容创作',
+    scene: 'IN THE STUDIO',
     desc: '素材收集、灵感整理、文章大纲生成与多平台内容分发。'
   },
   {
-    icon: 'brain',
+    img: '/img/persona/learner.jpg',
+    hue: '#f2641e',
     title: '个人学习',
+    scene: 'AT THE DESK',
     desc: '读书笔记、网课截图、技术碎片统一整理，构建第二大脑。'
   }
 ]
@@ -263,6 +271,8 @@ const downloads = [
   { platform: 'Linux', icon: 'terminal', version: 'v1.0.0', size: '约 170 MB', note: 'AppImage' },
   { platform: 'Docker', icon: 'container', version: 'latest', size: '一键部署', note: 'compose 模板' }
 ]
+
+const openIdx = ref(0)
 
 const faqs = [
   {
@@ -660,12 +670,21 @@ const vReveal = {
         <p>无论你是学生、教师、创作者还是企业技术团队，都能找到合适的落地方式</p>
       </div>
       <div class="solution-grid">
-        <div v-for="s in solutions" :key="s.title" v-reveal class="solution-card">
-          <div class="solution-icon">
-            <SvgIcon :name="s.icon" />
+        <div
+          v-for="s in solutions"
+          :key="s.title"
+          v-reveal
+          class="solution-card"
+          :style="{ '--h': s.hue }"
+        >
+          <div class="solution-photo">
+            <img :src="s.img" :alt="s.title" loading="lazy" />
+            <span class="solution-scene">{{ s.scene }}</span>
           </div>
-          <h3>{{ s.title }}</h3>
-          <p>{{ s.desc }}</p>
+          <div class="solution-body">
+            <h3>{{ s.title }}</h3>
+            <p>{{ s.desc }}</p>
+          </div>
         </div>
       </div>
     </section>
@@ -721,9 +740,14 @@ const vReveal = {
       </div>
       <div class="case-grid">
         <div v-for="c in cases" :key="c.org" v-reveal class="case-card">
-          <div class="case-org">{{ c.org }}</div>
-          <div class="case-role">{{ c.role }}</div>
-          <p class="case-result">“{{ c.result }}”</p>
+          <div class="case-who">
+            <span class="case-mono">{{ c.org.slice(0, 1) }}</span>
+            <div>
+              <div class="case-org">{{ c.org }}</div>
+              <div class="case-role">{{ c.role }}</div>
+            </div>
+          </div>
+          <p class="case-result">{{ c.result }}</p>
           <div class="case-tags">
             <el-tag v-for="tag in c.tags" :key="tag" size="small" type="primary" effect="light">{{ tag }}</el-tag>
           </div>
@@ -786,17 +810,25 @@ const vReveal = {
         <h2>你可能想了解的</h2>
       </div>
       <div class="faq-list" v-reveal>
-        <el-collapse>
-          <el-collapse-item v-for="(item, idx) in faqs" :key="idx">
-            <template #title>
-              <div class="faq-title">
-                <el-icon class="faq-icon"><QuestionFilled /></el-icon>
-                <span>{{ item.q }}</span>
-              </div>
-            </template>
+        <div
+          v-for="(item, idx) in faqs"
+          :key="idx"
+          :class="['faq-item', { open: openIdx === idx }]"
+        >
+          <button
+            type="button"
+            class="faq-q"
+            :aria-expanded="openIdx === idx"
+            @click="openIdx = openIdx === idx ? -1 : idx"
+          >
+            <span class="faq-num">0{{ idx + 1 }}</span>
+            <span>{{ item.q }}</span>
+            <el-icon class="faq-plus"><Plus /></el-icon>
+          </button>
+          <div class="faq-a-wrap">
             <div class="faq-answer">{{ item.a }}</div>
-          </el-collapse-item>
-        </el-collapse>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -1920,38 +1952,76 @@ section {
 }
 
 .solution-card {
-  padding: 30px 28px;
+  --h: #ffb48a;
+  overflow: hidden;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 18px;
   transition:
     background 0.22s ease,
-    transform 0.22s ease;
+    transform 0.22s ease,
+    border-color 0.22s ease;
 }
 
 .solution-card:hover {
   background: rgba(255, 255, 255, 0.08);
+  border-color: var(--h);
   transform: translateY(-4px);
 }
 
-.solution-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(242, 100, 30, 0.16);
-  color: #ffb48a;
-  font-size: 22px;
-  margin-bottom: 18px;
+.solution-photo {
+  position: relative;
+  height: 158px;
+  overflow: hidden;
+}
+
+.solution-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transform: scale(1.02);
+  transition: transform 0.45s ease;
+}
+
+.solution-card:hover .solution-photo img {
+  transform: scale(1.09);
+}
+
+.solution-photo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 52%, rgba(17, 26, 46, 0.55));
+}
+
+.solution-scene {
+  position: absolute;
+  left: 16px;
+  bottom: 12px;
+  z-index: 1;
+  font-family: var(--zx-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #fff;
+  background: rgba(10, 14, 26, 0.55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+
+.solution-body {
+  padding: 22px 24px 26px;
+  border-top: 3px solid var(--h);
 }
 
 .solution-card h3 {
-  font-family: var(--zx-display);
-  font-size: 19px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
+  font-family: var(--zx-serif);
+  font-size: 21px;
+  font-weight: 900;
+  letter-spacing: 1px;
   color: #ffffff;
   margin-bottom: 10px;
 }
@@ -2106,10 +2176,12 @@ section {
 }
 
 .case-card {
+  position: relative;
   padding: 30px 28px;
   background: #ffffff;
   border-radius: 18px;
   border: 1px solid #f0e7d8;
+  overflow: hidden;
   transition:
     box-shadow 0.22s ease,
     transform 0.22s ease;
@@ -2120,11 +2192,46 @@ section {
   transform: translateY(-4px);
 }
 
+.case-card::before {
+  content: '“';
+  position: absolute;
+  top: 2px;
+  right: 18px;
+  font-family: var(--zx-serif);
+  font-size: 92px;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--zx-brand-soft);
+  pointer-events: none;
+}
+
+.case-who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.case-mono {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--zx-ink);
+  color: #fff;
+  font-family: var(--zx-serif);
+  font-size: 18px;
+  font-weight: 900;
+}
+
 .case-org {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 800;
   color: var(--zx-ink);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .case-role {
@@ -2132,13 +2239,14 @@ section {
   font-size: 11px;
   letter-spacing: 1.5px;
   color: var(--zx-brand-ink);
-  margin-bottom: 14px;
 }
 
 .case-result {
-  font-size: 15px;
-  line-height: 1.8;
-  color: #374151;
+  font-family: var(--zx-serif);
+  font-size: 16.5px;
+  font-weight: 600;
+  line-height: 1.85;
+  color: #2b3547;
   margin-bottom: 18px;
 }
 
@@ -2347,47 +2455,72 @@ section {
   margin: 0 auto;
 }
 
-.faq-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #ffffff;
+.faq-item {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.faq-icon {
-  color: var(--zx-brand);
+.faq-item:first-child {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.faq-q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 4px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  text-align: left;
+}
+
+.faq-num {
+  font-family: var(--zx-mono);
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: #ffb48a;
+  flex-shrink: 0;
+}
+
+.faq-q > span:nth-child(2) {
+  flex: 1;
+}
+
+.faq-plus {
+  font-size: 18px;
+  color: #ffb48a;
+  flex-shrink: 0;
+  transition: transform 0.25s ease;
+}
+
+.faq-item.open .faq-plus {
+  transform: rotate(45deg);
+}
+
+.faq-a-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease;
+}
+
+.faq-item.open .faq-a-wrap {
+  grid-template-rows: 1fr;
 }
 
 .faq-answer {
+  overflow: hidden;
   font-size: 14px;
   line-height: 1.85;
-  color: #e6e1d5;
-  padding-left: 28px;
-}
-
-:deep(.el-collapse) {
-  border: none;
-}
-
-:deep(.el-collapse-item__header) {
-  background: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-  padding: 16px 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-:deep(.el-collapse-item__wrap) {
-  background: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-:deep(.el-collapse-item__content) {
   color: #a3adc2;
-  padding-bottom: 20px;
+  padding-left: 44px;
+}
+
+.faq-item.open .faq-answer {
+  padding-bottom: 22px;
 }
 
 /* ---------- CTA ---------- */

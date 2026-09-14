@@ -4,7 +4,7 @@
  * - 导航/产品目录来自 config/products（上架新产品只改配置）
  * - 任务轮询、任务弹窗等业务逻辑已搬到 App.vue（工作台布局内）
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { navigateToProduct, SITE_PRODUCTS } from '../config/products'
@@ -20,6 +20,22 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const mobileMenuOpen = ref(false)
+
+/* 滚动后导航加深阴影（被动监听，卸载时清理） */
+const scrolled = ref(false)
+
+const onScroll = () => {
+  scrolled.value = window.scrollY > 8
+}
+
+onMounted(() => {
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onScroll)
+})
 
 const isHome = computed(() => route.path === '/' || route.path === '/home')
 const isWorkspace = computed(() => !isHome.value)
@@ -70,7 +86,7 @@ const goHomeHash = (hash: string) => {
 </script>
 
 <template>
-  <header class="app-header" :class="{ 'in-workspace': isWorkspace }">
+  <header class="app-header" :class="{ 'in-workspace': isWorkspace, scrolled }">
     <div class="header-inner">
       <div class="header-brand" @click="router.push('/home')">
         <div class="brand-logo">知序</div>
@@ -192,6 +208,11 @@ const goHomeHash = (hash: string) => {
   outline: 2px solid var(--zx-brand);
   outline-offset: 2px;
   border-radius: 8px;
+}
+
+.app-header.scrolled {
+  background: rgba(255, 254, 250, 0.98);
+  box-shadow: 0 8px 28px rgba(23, 32, 47, 0.08);
 }
 
 /* 工作台内恢复蓝白（落地页保持柿色身份） */
