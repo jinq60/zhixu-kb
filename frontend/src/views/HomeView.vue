@@ -135,6 +135,7 @@ const steps = [
   {
     key: 'capture',
     icon: 'upload',
+    color: '#f2641e',
     label: '采集',
     en: 'CAPTURE',
     desc: '散落的信息，先有一个去处。',
@@ -143,6 +144,7 @@ const steps = [
   {
     key: 'recognize',
     icon: 'search',
+    color: '#0ca789',
     label: '识别',
     en: 'RECOGNIZE',
     desc: '图片里的字，一个不落变成文本。',
@@ -151,6 +153,7 @@ const steps = [
   {
     key: 'organize',
     icon: 'sparkles',
+    color: '#7a5af8',
     label: '整理',
     en: 'ORGANIZE',
     desc: '长文自己长出骨架。',
@@ -159,6 +162,7 @@ const steps = [
   {
     key: 'connect',
     icon: 'network',
+    color: '#d9930d',
     label: '图谱',
     en: 'CONNECT',
     desc: '孤立的笔记，连成网络。',
@@ -167,6 +171,7 @@ const steps = [
   {
     key: 'ask',
     icon: 'message-circle-question-mark',
+    color: '#c25018',
     label: '问答',
     en: 'ASK',
     desc: '只问你自己的知识库。',
@@ -253,10 +258,10 @@ const resources = [
 ]
 
 const downloads = [
-  { platform: 'Windows', version: 'v1.0.0', size: '约 180 MB', note: 'exe 安装包' },
-  { platform: 'macOS', version: 'v1.0.0', size: '约 210 MB', note: 'dmg 安装包' },
-  { platform: 'Linux', version: 'v1.0.0', size: '约 170 MB', note: 'AppImage' },
-  { platform: 'Docker', version: 'latest', size: '一键部署', note: 'compose 模板' }
+  { platform: 'Windows', icon: 'app-window', version: 'v1.0.0', size: '约 180 MB', note: 'exe 安装包' },
+  { platform: 'macOS', icon: 'command', version: 'v1.0.0', size: '约 210 MB', note: 'dmg 安装包' },
+  { platform: 'Linux', icon: 'terminal', version: 'v1.0.0', size: '约 170 MB', note: 'AppImage' },
+  { platform: 'Docker', icon: 'container', version: 'latest', size: '一键部署', note: 'compose 模板' }
 ]
 
 const faqs = [
@@ -529,6 +534,7 @@ const vReveal = {
       <div
         class="stepper"
         v-reveal
+        :style="{ '--sc': steps[stepIdx].color }"
         @mouseenter="stepPaused = true"
         @mouseleave="stepPaused = false"
         @focusin="stepPaused = true"
@@ -596,13 +602,13 @@ const vReveal = {
       </div>
     </section>
 
-    <!-- Stats -->
+    <!-- Stats：纸面证明条（衬线大数字＋细线分隔，替代模板式黑条） -->
     <section class="stats">
       <div class="stats-inner" v-reveal>
-        <div class="stat-item"><strong>10,000+</strong><span>知识库笔记</span><em>NOTES</em></div>
-        <div class="stat-item"><strong>99.2%</strong><span>OCR 识别准确率</span><em>ACCURACY</em></div>
-        <div class="stat-item"><strong>500ms</strong><span>AI 平均响应</span><em>RESPONSE</em></div>
-        <div class="stat-item"><strong>4</strong><span>产品矩阵</span><em>PRODUCTS</em></div>
+        <div class="stat-item"><strong>10,000+</strong><span>知识库笔记</span><em>NOTES ARCHIVED</em></div>
+        <div class="stat-item"><strong>99.2%</strong><span>OCR 识别准确率</span><em>RECOGNITION</em></div>
+        <div class="stat-item"><strong>500ms</strong><span>AI 平均响应</span><em>MEDIAN RESPONSE</em></div>
+        <div class="stat-item"><strong>4</strong><span>产品矩阵</span><em>PRODUCT FAMILY</em></div>
       </div>
     </section>
 
@@ -673,6 +679,9 @@ const vReveal = {
       </div>
       <div class="download-grid">
         <div v-for="d in downloads" :key="d.platform" v-reveal class="download-card">
+          <div class="download-icon">
+            <SvgIcon :name="d.icon" />
+          </div>
           <div class="download-os">{{ d.platform }}</div>
           <div class="download-version">{{ d.version }}</div>
           <div class="download-meta">
@@ -1411,7 +1420,7 @@ section {
 }
 
 .step-btn.active .step-num {
-  color: #ffb48a;
+  color: var(--sc, #ffb48a);
 }
 
 .step-num {
@@ -1442,10 +1451,11 @@ section {
   align-items: center;
   background: #fff;
   border: 1px solid #f0e7d8;
-  border-top: 4px solid var(--zx-brand);
+  border-top: 4px solid var(--sc, var(--zx-brand));
   border-radius: 20px;
   padding: 34px 36px;
   box-shadow: 0 20px 50px rgba(23, 32, 47, 0.07);
+  transition: border-color 0.3s ease;
 }
 
 .step-visual {
@@ -1633,10 +1643,11 @@ section {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--zx-ink);
+  background: var(--sc, var(--zx-ink));
   color: #fff;
   font-size: 22px;
   margin-bottom: 14px;
+  transition: background 0.3s ease;
 }
 
 .step-info h3 {
@@ -1687,39 +1698,50 @@ section {
   margin-top: 3px;
 }
 
-/* ---------- Stats ---------- */
+/* ---------- Stats：纸面证明条 ---------- */
 .stats {
-  padding: 52px 48px;
-  background: var(--zx-night);
-  color: #ffffff;
+  padding: 60px 48px;
+  background: var(--zx-paper);
+  border-top: 1px solid #ece1cb;
+  border-bottom: 1px solid #ece1cb;
 }
 
 .stats-inner {
-  max-width: 1020px;
+  max-width: 1060px;
   margin: 0 auto;
   display: flex;
-  justify-content: space-around;
-  gap: 24px;
+  justify-content: space-between;
+  gap: 32px;
 }
 
 .stat-item {
-  text-align: center;
+  flex: 1;
+  text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  padding-left: 28px;
+  border-left: 1px solid #ddd0b6;
+}
+
+.stat-item:first-child {
+  border-left: none;
+  padding-left: 0;
 }
 
 .stat-item strong {
-  font-family: var(--zx-display);
-  font-size: 42px;
-  font-weight: 800;
-  color: #ffb48a;
-  line-height: 1.1;
+  font-family: var(--zx-serif);
+  font-size: 52px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: var(--zx-ink);
+  line-height: 1.05;
 }
 
 .stat-item span {
   font-size: 14px;
-  color: #e6e1d5;
+  font-weight: 600;
+  color: #4b5563;
 }
 
 .stat-item em {
@@ -1727,7 +1749,7 @@ section {
   font-style: normal;
   font-size: 10px;
   letter-spacing: 2.5px;
-  color: #7c8aa5;
+  color: var(--zx-brand-ink);
 }
 
 /* ---------- Products ---------- */
@@ -1965,6 +1987,19 @@ section {
   border-color: var(--zx-brand);
   box-shadow: 0 14px 32px rgba(23, 32, 47, 0.08);
   transform: translateY(-4px);
+}
+
+.download-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 14px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--zx-ink);
+  color: #fff;
+  font-size: 22px;
 }
 
 .download-os {
@@ -2717,15 +2752,21 @@ section {
 
   .stats-inner {
     flex-wrap: wrap;
-    gap: 20px;
+    gap: 24px 20px;
   }
 
   .stat-item {
     flex: 1 1 40%;
+    padding-left: 18px;
+  }
+
+  .stat-item:nth-child(odd) {
+    border-left: none;
+    padding-left: 0;
   }
 
   .stat-item strong {
-    font-size: 30px;
+    font-size: 32px;
   }
 
   .download-enterprise {
