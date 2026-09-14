@@ -3,28 +3,16 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { SITE_PRODUCTS } from '../config/products'
+import SvgIcon from '../components/SvgIcon.vue'
 import {
   ArrowRight,
   Download,
-  Notebook,
-  ChatDotRound,
-  Share,
-  MagicStick,
-  Search,
-  School,
-  OfficeBuilding,
-  EditPen,
-  User,
   Star,
   Check,
-  Document,
-  DocumentCopy,
-  Connection,
   Phone,
   Message,
   Location,
-  QuestionFilled,
-  Upload
+  QuestionFilled
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -86,7 +74,9 @@ const stopTyping = () => {
 /* ---------- 产品矩阵：基础信息唯一来源 config/products，落地页只补展示字段 ---------- */
 import type { SiteProduct } from '../config/products'
 
-interface LandingProduct extends SiteProduct {
+interface LandingProduct extends Omit<SiteProduct, 'icon'> {
+  /** Lucide 图标名（assets/lucide/*.svg），线条风，颜色随主题色走 */
+  icon: string
   en: string
   img: string
   soft: string
@@ -99,6 +89,7 @@ interface LandingProduct extends SiteProduct {
 const products: LandingProduct[] = [
   {
     ...SITE_PRODUCTS[0],
+    icon: 'notebook-pen',
     en: 'KNOWLEDGE BASE',
     img: '/img/kb-notes.jpg',
     soft: '#fef0e9',
@@ -109,6 +100,7 @@ const products: LandingProduct[] = [
   },
   {
     ...SITE_PRODUCTS[1],
+    icon: 'users',
     en: 'TEAM SPACE',
     img: '/img/team-work.jpg',
     soft: '#f1edfe',
@@ -118,6 +110,7 @@ const products: LandingProduct[] = [
   },
   {
     ...SITE_PRODUCTS[2],
+    icon: 'scan-line',
     en: 'OCR TOOLKIT',
     img: '/img/ocr-manuscript.jpg',
     soft: '#e6f7f4',
@@ -127,6 +120,7 @@ const products: LandingProduct[] = [
   },
   {
     ...SITE_PRODUCTS[3],
+    icon: 'refresh-cw',
     en: 'SYNC HELPER',
     img: '/img/sync-desk.jpg',
     soft: '#fdf6e3',
@@ -140,7 +134,7 @@ const products: LandingProduct[] = [
 const steps = [
   {
     key: 'capture',
-    icon: Upload,
+    icon: 'upload',
     label: '采集',
     en: 'CAPTURE',
     desc: '散落的信息，先有一个去处。',
@@ -148,7 +142,7 @@ const steps = [
   },
   {
     key: 'recognize',
-    icon: Search,
+    icon: 'search',
     label: '识别',
     en: 'RECOGNIZE',
     desc: '图片里的字，一个不落变成文本。',
@@ -156,7 +150,7 @@ const steps = [
   },
   {
     key: 'organize',
-    icon: MagicStick,
+    icon: 'sparkles',
     label: '整理',
     en: 'ORGANIZE',
     desc: '长文自己长出骨架。',
@@ -164,7 +158,7 @@ const steps = [
   },
   {
     key: 'connect',
-    icon: Share,
+    icon: 'network',
     label: '图谱',
     en: 'CONNECT',
     desc: '孤立的笔记，连成网络。',
@@ -172,7 +166,7 @@ const steps = [
   },
   {
     key: 'ask',
-    icon: ChatDotRound,
+    icon: 'message-circle-question-mark',
     label: '问答',
     en: 'ASK',
     desc: '只问你自己的知识库。',
@@ -209,22 +203,22 @@ const pipeline = steps.map((s) => ({ icon: s.icon, label: s.label, en: s.en }))
 
 const solutions = [
   {
-    icon: School,
+    icon: 'graduation-cap',
     title: '高校教研',
     desc: '论文资料整理、课程讲义沉淀、科研成果可视化与智能答疑。'
   },
   {
-    icon: OfficeBuilding,
+    icon: 'briefcase',
     title: '企业知识管理',
     desc: '内部文档统一归档、新员工快速检索、项目经验沉淀与共享。'
   },
   {
-    icon: EditPen,
+    icon: 'pen-line',
     title: '内容创作',
     desc: '素材收集、灵感整理、文章大纲生成与多平台内容分发。'
   },
   {
-    icon: User,
+    icon: 'brain',
     title: '个人学习',
     desc: '读书笔记、网课截图、技术碎片统一整理，构建第二大脑。'
   }
@@ -252,10 +246,10 @@ const cases = [
 ]
 
 const resources = [
-  { title: '快速开始', desc: '5 分钟部署本地知识库', icon: Document },
-  { title: 'API 文档', desc: '开放的 RESTful 接口说明', icon: DocumentCopy },
-  { title: '部署指南', desc: 'Docker 与离线安装教程', icon: Connection },
-  { title: '更新日志', desc: '版本迭代与功能路线图', icon: Star }
+  { title: '快速开始', desc: '5 分钟部署本地知识库', img: '/img/illus/quickstart.svg' },
+  { title: 'API 文档', desc: '开放的 RESTful 接口说明', img: '/img/illus/doc-api.svg' },
+  { title: '部署指南', desc: 'Docker 与离线安装教程', img: '/img/illus/deploy-sync.svg' },
+  { title: '更新日志', desc: '版本迭代与功能路线图', img: '/img/illus/changelog.svg' }
 ]
 
 const downloads = [
@@ -587,9 +581,9 @@ const vReveal = {
             </template>
           </div>
           <div class="step-info">
-            <div class="step-info-icon">
-              <el-icon><component :is="steps[stepIdx].icon" /></el-icon>
-            </div>
+          <div class="step-info-icon">
+            <SvgIcon :name="steps[stepIdx].icon" />
+          </div>
             <h3>{{ steps[stepIdx].label }}<em>{{ steps[stepIdx].en }}</em></h3>
             <p class="step-desc">{{ steps[stepIdx].desc }}</p>
             <ul class="step-points">
@@ -632,7 +626,7 @@ const vReveal = {
             <span class="product-photo-tag">{{ p.tags[0] }}</span>
           </div>
           <div class="product-icon">
-            <el-icon><component :is="p.icon" /></el-icon>
+            <SvgIcon :name="p.icon" />
           </div>
           <div class="product-en">{{ p.en }}</div>
           <h3>{{ p.label }}</h3>
@@ -662,7 +656,7 @@ const vReveal = {
       <div class="solution-grid">
         <div v-for="s in solutions" :key="s.title" v-reveal class="solution-card">
           <div class="solution-icon">
-            <el-icon><component :is="s.icon" /></el-icon>
+            <SvgIcon :name="s.icon" />
           </div>
           <h3>{{ s.title }}</h3>
           <p>{{ s.desc }}</p>
@@ -737,9 +731,7 @@ const vReveal = {
       </div>
       <div class="resource-grid">
         <div v-for="r in resources" :key="r.title" v-reveal class="resource-card">
-          <div class="resource-icon">
-            <el-icon><component :is="r.icon" /></el-icon>
-          </div>
+          <img class="resource-art" :src="r.img" :alt="r.title" loading="lazy" />
           <h3>{{ r.title }}</h3>
           <p>{{ r.desc }}</p>
           <a class="resource-link" @click="router.push('/home')">
@@ -2150,17 +2142,12 @@ section {
   transform: translateY(-4px);
 }
 
-.resource-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--zx-ink);
-  color: #fff;
-  font-size: 20px;
-  margin-bottom: 16px;
+.resource-art {
+  display: block;
+  width: 100%;
+  height: 128px;
+  object-fit: contain;
+  margin-bottom: 18px;
 }
 
 .resource-card h3 {
