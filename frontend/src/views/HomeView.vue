@@ -397,128 +397,10 @@ const vReveal = {
         </div>
       </div>
 
-      <!-- 知识山水：藏书阁、远山、浮书、落日 -->
-      <div class="panorama" aria-hidden="true">
-        <svg viewBox="0 0 1440 360" preserveAspectRatio="xMidYMax slice" class="panorama-svg">
-          <!-- 落日 -->
-          <circle cx="1150" cy="140" r="44" fill="#e8a13c" opacity="0.92" />
-          <circle cx="1150" cy="140" r="62" fill="none" stroke="#e8a13c" stroke-width="1.5" opacity="0.35" />
-          <circle cx="1150" cy="140" r="80" fill="none" stroke="#e8a13c" stroke-width="1" opacity="0.18" />
-          <!-- 云 -->
-          <g fill="#ffffff" opacity="0.9" class="cloud c1">
-            <ellipse cx="300" cy="66" rx="56" ry="14" />
-            <ellipse cx="344" cy="58" rx="38" ry="12" />
-            <ellipse cx="262" cy="60" rx="28" ry="10" />
-          </g>
-          <g fill="#ffffff" opacity="0.75" class="cloud c2">
-            <ellipse cx="800" cy="48" rx="46" ry="12" />
-            <ellipse cx="838" cy="41" rx="30" ry="10" />
-          </g>
-          <g fill="#ffffff" opacity="0.6" class="cloud c3">
-            <ellipse cx="1350" cy="70" rx="40" ry="11" />
-            <ellipse cx="1382" cy="63" rx="26" ry="9" />
-          </g>
-          <!-- 飞鸟 -->
-          <g fill="none" stroke="#3a3a3a" stroke-linecap="round">
-            <path d="M600,76 q8,-8 16,0 q8,-8 16,0" stroke-width="2" />
-            <path d="M652,96 q6,-6 12,0 q6,-6 12,0" stroke-width="1.6" />
-            <path d="M900,100 q7,-7 14,0 q7,-7 14,0" stroke-width="1.8" />
-            <path d="M150,120 q6,-6 12,0 q6,-6 12,0" stroke-width="1.6" />
-          </g>
-          <!-- 远山（含雪顶主峰） -->
-          <path d="M0,236 L120,130 L210,210 L330,80 L400,130 L470,210 L610,110 L740,230 L880,140 L1010,235 L1140,120 L1260,220 L1360,150 L1440,215 L1440,360 L0,360 Z" fill="#e7d6b8" />
-          <path d="M330,80 L368,112 L344,124 L318,110 L296,122 L278,108 Z" fill="#fdf8ee" />
-          <path d="M1140,120 L1172,148 L1150,158 L1128,146 L1110,156 L1096,142 Z" fill="#fdf8ee" />
-          <path d="M0,272 L160,180 L320,262 L500,165 L680,266 L860,178 L1040,266 L1220,182 L1440,266 L1440,360 L0,360 Z" fill="#d9c69c" opacity="0.9" />
-          <!-- 山间雾带 -->
-          <ellipse cx="720" cy="252" rx="420" ry="16" fill="#ffffff" opacity="0.45" />
-          <!-- 中景丘陵 -->
-          <path d="M0,306 L200,232 L420,300 L680,224 L940,300 L1180,228 L1440,300 L1440,360 L0,360 Z" fill="#8a9b6e" />
-          <!-- 登山石阶小径（通往藏书阁） -->
-          <path d="M880,330 L920,306 L960,288 L1000,272 L1030,262" fill="none" stroke="#f3e9d2" stroke-width="7" stroke-linecap="round" stroke-dasharray="1 12" opacity="0.9" />
-          <!-- 三重塔（左） -->
-          <g>
-            <rect x="282" y="238" width="76" height="10" rx="2" fill="#8a8a86" />
-            <rect x="292" y="206" width="56" height="32" fill="#efe2c8" />
-            <path d="M284,208 L320,188 L356,208 Z" fill="#a84a26" />
-            <rect x="300" y="182" width="40" height="24" fill="#efe2c8" />
-            <path d="M294,184 L320,168 L346,184 Z" fill="#b8552f" />
-            <rect x="308" y="162" width="24" height="16" fill="#efe2c8" />
-            <path d="M302,164 L320,150 L338,164 Z" fill="#c65a2e" />
-            <rect x="318" y="138" width="4" height="14" fill="#7a4a2e" />
-            <circle cx="320" cy="134" r="3" fill="#d9930d" />
-          </g>
-          <!-- 藏书阁（右） -->
-          <g>
-            <rect x="986" y="252" width="148" height="10" rx="2" fill="#8a8a86" />
-            <rect x="1000" y="196" width="120" height="56" fill="#f3e7d3" />
-            <rect x="1000" y="196" width="120" height="10" fill="#e0cfae" />
-            <rect x="1012" y="214" width="20" height="38" fill="#7a4a2e" />
-            <rect x="1024" y="222" width="8" height="8" fill="#f3e7d3" opacity="0.7" />
-            <rect x="1049" y="214" width="22" height="38" fill="#7a4a2e" />
-            <rect x="1086" y="214" width="20" height="38" fill="#7a4a2e" />
-            <rect x="1096" y="222" width="8" height="8" fill="#f3e7d3" opacity="0.7" />
-            <path d="M988,198 L1060,164 L1132,198 Z" fill="#a84a26" />
-            <path d="M988,198 L1060,164 L1132,198" fill="none" stroke="#7e3a1e" stroke-width="2" />
-            <rect x="1054" y="150" width="12" height="18" fill="#7a4a2e" />
-            <path d="M1002,152 L1060,124 L1118,152 Z" fill="#c65a2e" />
-            <rect x="1058" y="112" width="4" height="14" fill="#7a4a2e" />
-          </g>
-          <!-- 松林（左） -->
-          <g>
-            <rect x="120" y="262" width="9" height="40" rx="4" fill="#5d4a36" />
-            <path d="M124,208 L100,262 L149,262 Z" fill="#4c6148" />
-            <path d="M124,226 L106,262 L143,262 Z" fill="#56704f" />
-            <rect x="160" y="270" width="8" height="32" rx="4" fill="#5d4a36" />
-            <path d="M164,224 L144,270 L184,270 Z" fill="#5f7355" />
-          </g>
-          <!-- 柿子树 -->
-          <g>
-            <rect x="180" y="258" width="9" height="42" rx="4" fill="#7a5a3e" />
-            <circle cx="184" cy="240" r="26" fill="#f2641e" opacity="0.92" />
-            <circle cx="166" cy="250" r="16" fill="#e85a17" />
-            <circle cx="202" cy="250" r="16" fill="#ff8a4d" />
-            <circle cx="184" cy="232" r="5" fill="#ffd9bd" opacity="0.8" />
-          </g>
-          <!-- 大松（右） -->
-          <g>
-            <rect x="880" y="252" width="10" height="48" rx="4" fill="#5d4a36" />
-            <circle cx="885" cy="232" r="30" fill="#5f7355" />
-            <circle cx="862" cy="244" r="20" fill="#6e8b67" />
-            <circle cx="908" cy="244" r="20" fill="#56704f" />
-          </g>
-          <!-- 浮书：外层 g 只管定位，内层做浮动（CSS transform 会覆盖属性定位，不可同层） -->
-          <g transform="translate(600,36)">
-            <g class="float-book b1">
-              <rect x="0" y="0" width="46" height="60" rx="4" fill="#f2641e" transform="rotate(-8)" />
-              <rect x="8" y="12" width="30" height="4" rx="2" fill="#ffffff" opacity="0.85" transform="rotate(-8)" />
-              <rect x="8" y="22" width="30" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(-8)" />
-              <rect x="8" y="32" width="20" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(-8)" />
-            </g>
-          </g>
-          <g transform="translate(742,120)">
-            <g class="float-book b2">
-              <rect x="0" y="0" width="40" height="54" rx="4" fill="#0ca789" transform="rotate(7)" />
-              <rect x="7" y="11" width="26" height="4" rx="2" fill="#ffffff" opacity="0.85" transform="rotate(7)" />
-              <rect x="7" y="20" width="26" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(7)" />
-              <rect x="7" y="29" width="17" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(7)" />
-            </g>
-          </g>
-          <g transform="translate(268,52)">
-            <g class="float-book b3">
-              <rect x="0" y="0" width="36" height="48" rx="4" fill="#7a5af8" transform="rotate(-5)" />
-              <rect x="6" y="10" width="24" height="4" rx="2" fill="#ffffff" opacity="0.85" transform="rotate(-5)" />
-              <rect x="6" y="19" width="24" height="4" rx="2" fill="#ffffff" opacity="0.6" transform="rotate(-5)" />
-            </g>
-          </g>
-          <!-- 近景 -->
-          <path d="M0,318 L360,288 L760,318 L1080,290 L1440,318 L1440,360 L0,360 Z" fill="#2e3b2f" />
-          <g stroke="#4a5a48" stroke-width="2" stroke-linecap="round">
-            <path d="M120,322 l4,-10 M128,322 l-3,-9 M136,322 l4,-11" />
-            <path d="M700,320 l4,-10 M708,320 l-3,-9" />
-            <path d="M1250,318 l4,-10 M1258,318 l-3,-9 M1266,318 l4,-11" />
-          </g>
-        </svg>
+      <!-- 全景实拍：云雾层叠（CSS 手绘已到天花板，换真照片；做暖色定级融入纸面） -->
+      <div class="panorama panorama-photo" aria-hidden="true">
+        <img src="/img/pano/pano-mist.jpg" alt="" loading="lazy" />
+        
       </div>
     </section>
 
@@ -1298,50 +1180,36 @@ section {
   gap: 8px;
 }
 
-/* ---------- 知识山水 ---------- */
+/* ---------- 全景照片 ---------- */
 .panorama {
   position: relative;
-  margin-top: -64px;
+  margin-top: -72px;
   line-height: 0;
 }
 
-.panorama-svg {
+.panorama-photo img {
   display: block;
   width: 100%;
-  height: clamp(230px, 27vw, 360px);
+  height: clamp(260px, 30vw, 400px);
+  object-fit: cover;
+  /* 暖色定级：把照片拉进纸面配色 */
+  filter: sepia(0.24) saturate(1.06);
 }
 
-.cloud {
-  animation: cloud-drift 26s ease-in-out infinite alternate;
+.panorama-photo {
+  position: relative;
 }
 
-.cloud.c2 {
-  animation-duration: 34s;
-  animation-delay: -12s;
-}
-
-@keyframes cloud-drift {
-  from { transform: translateX(-26px); }
-  to { transform: translateX(30px); }
-}
-
-.float-book {
-  animation: book-bob 5s ease-in-out infinite alternate;
-}
-
-.float-book.b2 {
-  animation-duration: 6.5s;
-  animation-delay: -2s;
-}
-
-.float-book.b3 {
-  animation-duration: 7.5s;
-  animation-delay: -4s;
-}
-
-@keyframes book-bob {
-  from { transform: translateY(0); }
-  to { transform: translateY(-12px); }
+.panorama-photo::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  /* 顶部融进纸面，底部压暗接入跑马灯黑条 */
+  background:
+    linear-gradient(to bottom, var(--zx-paper) 0%, transparent 26%),
+    linear-gradient(to bottom, transparent 52%, rgba(17, 26, 46, 0.62) 100%);
 }
 
 /* ---------- 跑马灯 ---------- */
@@ -2734,8 +2602,6 @@ section {
     transition: none;
   }
 
-  .cloud,
-  .float-book,
   .typing-caret {
     animation: none !important;
   }
